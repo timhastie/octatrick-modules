@@ -96,7 +96,7 @@
         .set    INDEX_SCALE, 2628        | 8 rad / 127 in cycles * 2^18 (offset = m_Q14 * I)
         .set    FB_SCALE, 516            | 0.25 cycle / 127 * 2^16
         .set    RAMP_STEP, 4096          | gain Q15: 0 -> 1.0 over 8 frames (2.9 ms)
-        .set    GLIDE_AT, 0x400d2cdc     | the GLIDE byte (modules/quantizer/manifest.py GLIDE_AT; 0 = off)
+        .set    GLIDE_AT, 0x100b14ed     | the GLIDE byte in battery RAM (modules/quantizer/manifest.py GLIDE_AT; 0 = off)
         .set    ST_STRIDE, 44
         .set    S_PHC, 0                 | carrier phase, Q32 cycles
         .set    S_PHM, 4                 | modulator phase

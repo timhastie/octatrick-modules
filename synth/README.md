@@ -1,5 +1,56 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
+**OCTATRICK2.8 (5 Oct 2026): pitch slides on sample tracks, and the chord
+table in Syntakt order.** A FLEX or STATIC track with **LEG MONO and GLIDE**
+slides every pitch change over the GLIDE time instead of jumping -- a live
+key over a held key, a sequenced trigless trig's PTCH lock, a knob turn, an
+LFO -- while a sample trig (a new note) still starts at its own pitch; LEG
+OFF is stock (instant), THRU / NEIGHBOR / PICKUP untouched. The CHRD table
+is reordered (`MIN MAJ SU2 SU4`, the sevenths, the rest, the two-note
+intervals last: a CHRD byte from 2.7 names another shape) and the
+recogniser prefers the shape with the fewest distinct notes among equal
+voicings -- **"Pitch slides on sample tracks"** and **"VOIC, CHRD"** below.
+**Transposing a step (4 Oct 2026)**: on a synth track in GRID RECORDING,
+hold a placed trig and press **FUNC + DOWN** or **FUNC + UP**: the step's
+PTCH lock moves an octave down or up (12 semitones, clamped -64..+63; a
+step without a lock starts from the Part's PTCH and gets one; every held
+trig moves), the PLAYBACK page shows the new value while the trig is held.
+With no trig held FUNC + UP / DOWN is still the trig-mode selector, byte for
+byte, and so is everything on a sample track -- **"Transposing a step"**
+below.
+**LEG (2 Oct 2026; every audio track since 3 Oct 2026)**: the AMP SETUP
+page (FUNC + AMP) of every audio track gains a sixth box, **LEG** -- the
+legato switch, a Part byte saved with the project (a stock Part reads OFF,
+so an existing track needs LEG = MONO for the legato it had from GLIDE):
+**OFF / MONO on a sample track** (FLEX, STATIC, THRU, NEIGHBOR, PICKUP:
+MONO is the trigless key legato of 2.6 -- instant pitch, no retrigger),
+**OFF / MONO / POLY on a synth track**; GLIDE is the slide time only,
+everywhere (it no longer switches legato on for a sample track), and **LEG
+OFF = no glide at all on a synth track** (sequenced trigless trigs step
+too). POLY at VOIC 2..4 slides the sounding chord to a new key -- **"LEG"**
+below.
+**The marker (30 Sep 2026)**: the marker file is `FMSYNTH.wav` -- a FLEX
+slot whose file name (after the last `/`) starts with `FMSYNTH` or `SYNTH`
+makes its track a synth (`sy_scanned` / `po_lp_scanned` in `poly.s`, the
+quantizer's `qz_is_synth`: a leading `FM` is skipped, then the five-byte
+`SYNTH` compare as before). The marker's length no longer bounds the note:
+`sy_render` keeps the voice struct's sample positions (`+64..+83`, saved to
+the track record's `T_POS` before the stock call and written back after it,
+mono and paraphonic alike), so the stock renderer never reaches the
+marker's end and a note ends only through the AMP envelope (HOLD / REL) or
+a key release; a plain FLEX sample track is untouched (the wrapper only
+saves and restores on a synth voice).
+**The tuning system (27 Sep 2026)**: on a synth track PTCH is semitones
+(-64..+63, one unit a semitone, a signed whole number on the page), RATE is
+FINE (-64..+63 cents), the CHROMATIC keyboard runs over octaves -4..+4 and
+records exact PTCH locks, and the chord shapes list their notes in priority
+order -- **"The tuning system"** below, first.
+**29 Sep 2026: chord shapes are four-note VOICINGS and the level is equal
+power** -- every shape but `----` plays 2 / 3 / 4 notes at VOIC 2 / 3 / 4
+(its own notes first, then octave doublings), a start with a shape is chord
+memory (the previous chord goes), a voice is `1 / sqrt(VOIC)` of the mono
+voice (-3 / -4.8 / -6 dB) and a soft limiter takes the in-phase excess --
+**"VOIC, CHRD, and the mono voice"** below.
 Phase 5 (24 Sep 2026) moves the FM voice engine into a DRAM unit (`poly.s`,
 the ROM cave `synth.s` kept for the record) and makes the synth paraphonic:
 the LFO page's VOIC slot (1..4) gives a synth track that many voices playing
@@ -18,6 +69,816 @@ FM voice"** below has the design, the parameter map and the numbers. Phase
 phase-2 section and marked in place).
 
 ---
+
+## Pitch slides on sample tracks (OCTATRICK2.8, 5 Oct 2026)
+
+**What.** On a FLEX or STATIC track whose Part LEG byte is MONO and whose
+project GLIDE is not 0, the pitch no longer jumps: a live CHROMATIC key
+played over a held key (the trigless legato path of 2.6), a sequenced
+trigless trig carrying a PTCH lock, the PTCH knob turned while the sample
+plays and an LFO on PTCH all slide to the new pitch with the synth's
+GLIDE curve (tau = 10 ms at 1, 100 ms at 64, 1 s at 127). A sample trig --
+a new note, a live key with LEG OFF, a trig with a PTCH lock -- starts at
+its own pitch, as a synth voice does at a start. LEG OFF, or GLIDE 0, is
+stock: instant. THRU, NEIGHBOR and PICKUP tracks are not touched (their
+kind-table entries are stock's).
+
+**How (`poly.s`).** The kind table `0x400d6434` (kind = machine: 0 STATIC,
+1 FLEX, 2 THRU, 3 NEIGHBOR, 4 PICKUP) routes every track's frame to a
+renderer; STATIC and FLEX share the stock sample renderer `0x40004008`,
+and since phase 5 the FLEX entry points at `sy_render`, which wraps the
+stock call. 2.8 points the **STATIC entry** at `sy_render` too -- a second
+`SymbolRef` in `manifest.py` (a stock pointer rewritten to our symbol; no
+displaced instruction, no cave byte: the main cave keeps its 168 B) -- and
+`sy_render` treats a kind-0 track as a sample track: the marker scan at a
+voice start runs for a FLEX machine only (`sy_machine` reads the Part's
+machine byte, `0x8eda2 + track`, before the scan; a STATIC voice is always
+a sample). The synth path is byte for byte 2.7's.
+On the frame's second call (the one whose recompute flag makes the stock
+rate arithmetic rebuild the increment from the record, REPITCH.md) a
+sample track goes through `sy_sample` before the stock call: the record's
+PTCH word (raw << 8, the curve's scale, 5 raw units a semitone, the LFO's
+fraction in the low byte) is the TARGET; `sy_slew` moves the track's
+`S_CUR` toward it -- the same routine and curve as the synth's, snapping
+when GLIDE is 0 or the track's LEG is OFF (`po_legbyte`) -- and the slewed
+word replaces the record's for the call, so the increment stock builds
+(shared by the source supplier and the DSP voice command) follows the
+slide. A voice START (the packer's event bit 4) on a non-synth track snaps
+`S_CUR` to the record's word first (`sy_no`: the trig's lock is in the
+record by then), so a new note never slides from the previous one; a
+trigless trig, a legato key, a knob or an LFO change the record's word
+without a start, and slide. Nothing is restored after the call: the record
+holds what stock leaves in it, as on a stock unit (until 2.8 the wrapper
+did nothing at all on a sample track).
+
+### Measured (5 Oct 2026, the octatrick-tuner BUILD 18 bus = OCTATRICK2.8 on ot_emu `--dsp-rt` through the panel; a copy of the OTLIVE card whose `third-0.wav` is a 2 s sine at 300.13 Hz (65 whole cycles in the slot's 9,551-frame marker window, LOOPMODE 1, so the tone holds while a key is held -- the slot's markers come from the project and keep the old length), T7 = FLEX slot 2 and T3 = STATIC slot 2 = that sine, 120 BPM, CHROMATIC keys with key 1 = C4 on T7 (key 1 = C3 on T3: 150 Hz); the session's `v28/slide2.py`, `v28/slide3.py`; pitch by zero crossings per 10 ms, "restart" from the stock voice's play position `0x800049d8 + 0xa8 * t + 68` (its wraps at 9,551 are the loop))
+
+- **T7 FLEX, LEG MONO, GLIDE 64**, C4 held and E4 130 ms later: 300.2 ->
+  377.9 Hz, ONE attack, the position runs on; the pitch leaves 300 within
+  6 ms of the E4 key; **t63 100 ms, t95 290 ms** (a second take 90 / 280;
+  the synth's own legato measures 90 / 290). GLIDE 127: 300.2 -> 371 Hz by
+  2.5 s, t63 810 ms and t95 2,030 ms from the 2 % point (88 ms after the
+  key): **tau ~1 s**. GLIDE 0 with LEG MONO: 300 -> 378 within one 10 ms
+  window, no restart (2.7's legato). **LEG OFF, GLIDE 64**: a restart (the
+  position back to 0) and 378 Hz at once -- stock.
+- **Sequenced on T7** (LEG MONO, GLIDE 64; the pattern record poked: a
+  sample trig on step 1, a trigless trig on step 5 with PTCH lock raw 99 =
+  +7 semitones): the pitch leaves at +520 ms (step 5), 378 -> 448.3 Hz, t63
+  80 ms, t95 260 ms -- **a trigless trig's lock slides** (the step-1 trig
+  played at the lane value the last chromatic key left, E4). **A sample
+  trig on step 9 with the +7 lock: 449.4 Hz from its first window** (the
+  attack at 1.01 s), no slide from the note before -- a start snaps.
+- **T3 STATIC, LEG MONO, GLIDE 64**: 150 -> 189.2 Hz (+4 semitones), one
+  attack, t63 100 ms, t95 300 ms; GLIDE 127: t63 790 ms, t95 1,930 ms; LEG
+  OFF, GLIDE 64: a restart and 189 Hz at once. The kind table read back
+  from the running unit: entries 0 and 1 = `sy_render` (`0x40a95600`), 2 /
+  3 / 4 = `0x40004424` / `0x4000466c` / `0x40004008`, stock's (THRU /
+  NEIGHBOR / PICKUP not exercised).
+- **The synth path** (T2 = FM SYNTH slot 5 on a copy of the OTLIVE card,
+  `v28/rec28.py`): a lone C4 261.7 Hz; LEG MONO, GLIDE 64, C4 held + E4:
+  261.7 -> 330 Hz, t63 90 ms, t95 290 ms -- as 2.7.
+- **The recogniser on 2.8's table** (T2, VOIC 3, CHRD `----`, LEG OFF,
+  GLIDE 0, chords rolled 30 ms apart during live recording, the CHRD lock
+  read back): C F `4TH`, C G `5TH`, C C5 `OCT`, C D `SU2`, C E G `MAJ`, C
+  Eb G `MIN`, D F A C `MI7`, C E A `MA6`, D# F G `AD2`, C F# `DIM`, C E
+  `3MA`, E G C5 `MAJ1`, C E D5 `AD9`, C F G `SU4`, and the two changed
+  ties C A `MI6` (was MA6), C A# D5 `MI9` (was DO9) -- 16 of 16 as the
+  Python model of `po_match` (`v28/chords.py`, which also ran every 2-,
+  3- and 4-key set within two octaves against 2.7's) predicts.
+
+## Transposing a step: FUNC + UP / DOWN with a trig held (4 Oct 2026)
+
+A synth track's PTCH is semitones, so an octave is 12 units of the lock --
+and the knob already knows it (FUNC + PTCH jumps 12, "The knobs" below).
+This gives the same jump to the keys: in GRID RECORDING, with a placed trig
+held for locking, **FUNC + DOWN** moves that step's PTCH lock **one octave
+down** and **FUNC + UP** one octave up; each further press moves another
+octave; the value is clamped to PTCH's range (-64..+63: from +60, FUNC +
+UP lands on +63 and stays there); a step that has no PTCH lock yet starts
+from the Part's PTCH and gets a lock (Part 0, FUNC + DOWN: -12); with
+several trigs held every one of them moves; and the PLAYBACK page, which
+prints the held step's locks, shows the new value at once. Without a trig
+held, FUNC + UP / DOWN is what it always was -- the trig-mode selector
+(manual 12.7: TRACKS / CHROMATIC / SLOTS / SLICES / QUICK MUTE / DELAY
+CONTROL) -- and it stays the selector on a sample track (trig held or not),
+with GRID RECORDING off, and while the selector's own window is open. The
+trig mode does not matter: in GRID RECORDING the [TRIG] keys place and
+hold steps in CHROMATIC, SLOTS and SLICES as in TRACKS, and the transpose
+works in every one of them (until 6 Oct 2026 it was gated on TRACKS, so
+Tim's CHROMATIC + held trig + FUNC + DOWN opened the selector on the
+hardware).
+
+- **The selector is a window.** Both keys' records in the FUNC layer's
+  key table (`0x400bf628` on the MKII, `0x400bf2b4` on the MKI; PANEL.md's
+  record shape) name one handler, `0x40051fc4(code, edge)`. Its first
+  test is the window's handle, the long `0x400bebae` (0 = closed): closed,
+  a press (edge 1) opens the window through the pointer `0x400bebca`
+  (`0x400586cc`: `0x4005829c` builds it, the handle is stored, the window's
+  key layer registered with `0x40031494`, the list drawn from the mode
+  `0x460d16f0`), any other edge returns; open, a press or a repeat (edge 2)
+  steps the mode (`0x40051f54` UP for code `0x33`, `0x40051ee4` DOWN for
+  any other) and the handler chains to the window's redraw (`0x400bebd2` =
+  `0x400359ac`). This is why a short FUNC + DOWN on stock opens the list
+  without changing the mode, and a held one steps it: the repeat does.
+- **The hook** (`modules/synth/manifest.py`, one 6-byte jmp detour at the
+  handle test `0x40051fce`, `tstl 0x400bebae`; `poly.s` `po_octave`,
+  published at **-32** before `sy_render`) takes a press with the window
+  CLOSED when the lock editor's own state says a trig is held for locking:
+  the held-trig mask `0x460d174a` (a word, bit n = [TRIG n + 1]; the PTCH
+  knob's lock editor `0x400508e4` walks exactly this word), the trig page's
+  first step `0x460d174c` (0 / 16 / 32 / 48), GRID RECORDING `0x460d1736`,
+  and `po_is_synth` on the current track `0x100b14cc`; the trig mode
+  `0x460d16f0` is not tested (the mask's writers -- the press at
+  `0x40050f88..`, the release at `0x4005fbb2..` -- gate on the edit state
+  `0x460d5db4` and the track's machine, not on the mode, and the mask reads
+  `0x1` with [TRIG 1] held in CHROMATIC). Anything else -- the window open,
+  no trig held, GRID RECORDING off, a sample track -- runs the displaced
+  test and its branch: the selector, byte for byte. A repeat or a release
+  with a trig held returns the way stock returns with the window closed
+  (`0x40052006`): one press, one octave, a long press does not run away.
+- **The store is the lock editor's**, not the live recorder's: the
+  recorder's writer `0x40042158` wants the recorder's context word and
+  refuses outside its block, while the knob editor writes the step
+  directly (`0x40050e60..`) -- the lock byte at the bank's RAM record
+  (`[0x46c82456] + track * 2330 + pattern(0x100b14d0) * 36568 + 0x59 +
+  step * 32 + 0`, PTCH = flat slot 0) and at its battery-RAM mirror
+  (`0x1001614e + the same + 0x59`), the bank's changed flag (`+635698` :=
+  1) and `0x100f8598` := 1, `0x40027e00` after each step; then its tail:
+  `0x4009da20(track)`, `0x460d173a` := 1, the six words `0x460d1a9e..` and
+  `0x460d10dc` cleared, `0x460d1750` := 1, `0x400418e0`, the redraw
+  `0x4004d948(-1)`, `0x40027de4`. A step without a lock reads the Part's
+  PTCH the way the editor does (`0x40050cf2..`: the Part, its machine byte
+  `0x8eda2 + track`, the PLAYBACK slots at `0x8edaa + machine * 6 + track *
+  30`). Why not the editor itself with a delta: it edits the slot on the
+  page being SHOWN (`0x460d1684`, flat slot = 6 * page + slot), so with the
+  AMP page up it would move ATK; and with the SCALE on the quantizer's
+  `qz_plock` turns a delta into scale degrees -- an octave is 12 semitones
+  whatever the scale, so the value is written as is (an octave keeps the
+  pitch class, so a quantized step stays in scale).
+- **Not done**: no LED or popup of its own (the page's PTCH box is the
+  readout); a sample track keeps the selector (its PTCH is not semitones:
+  an octave there is 60 raw units, 5 a semitone, and its FUNC + PTCH jumps
+  are the manual's fixed values); the CHROMATIC mode keeps the selector even with a
+  trig held (the trig keys are notes there); the MIDI-mode pages are not
+  touched (their FUNC + UP / DOWN is another table).
+
+### Measured (4 Oct 2026, the octatrick-tuner BUILD 18 bus = OCTATRICK2.8 on ot_emu `--dsp-rt` through the panel, a copy of the OTLIVE card, T2 = FM SYNTH slot 5, PTCH 0 / FINE 0 / INDX 0 / FDBK 0 (a sine), AMP HOLD INF REL 20, SCALE / GLIDE OFF, GRID RECORDING on, TRACKS mode; the session's `oct/rig_oct.py`, shots `oct/out_new/`; the lock read back from the bank's RAM record `[0x46c82456] + T * 2330 + pattern * 36568 + 0x59 + step * 32`, the selector's state from its handle `0x400bebae` while FUNC was still down)
+
+- **The octave**: a trig on step 1 with PTCH lock +3 (held trig + knob A).
+  Trig 1 held + FUNC + DOWN -> **-9**; again -> **-21**; FUNC + UP three
+  times -> -9, +3, **+15**. The selector stayed closed at every press (the
+  handle 0, the mode 0), the PLAYBACK page while the trig was still held
+  read PTCH **+15** (`02_lock_page_after_up3.png`).
+- **Playback follows**: the pattern played with the lock at +15 -> one
+  spectral line at **622.2 Hz** = D#5 (622.3 expected: +15 semitones from
+  C4), -27 dB the nearest other peak.
+- **The clamp**: the lock set to +60 (knob), FUNC + UP -> **+63**; again ->
+  +63.
+- **One press, one octave**: from 0, FUNC + DOWN with DOWN held 0.7 s
+  (the panel repeats) -> **-12**, not -24 or less; the selector closed.
+- **No lock yet**: trig 3 placed and held (no PTCH lock, the Part's PTCH
+  0), FUNC + DOWN -> the step gets the lock **-12**; the selector closed.
+- **Two trigs**: steps 1 (lock -12) and 5 (no lock) held together + FUNC +
+  UP -> step 1 **0**, step 5 **+12** (the Part's 0 + 12); both moved, the
+  page read the first held step's 0 (`06_two_trigs_held.png`); step 3
+  (not held) kept -12.
+- **No trig held**: FUNC + DOWN -> the selector window opened (handle
+  `0x46c7d34c`, TRACKS / CHROMATIC / SLOTS listed, closed again on FUNC
+  up), the locks untouched; the screenshot is **pixel-identical** (0 of
+  8,192 pixels differ, the text dump equal) to the 2.7 bus (modules
+  b44790b) taken in the same state on a second unit (`07_selector_new.png`
+  vs `out_ref/selector_ref.png`; a first comparison from a different page
+  state differed by 30 pixels behind the window -- FDBK 0 vs 127 and the
+  page arrow -- none of them the selector).
+- **CHROMATIC mode**, trig 1 held + FUNC + DOWN: the selector opened, the
+  lock unchanged (stock).
+- **T7 (a FLEX sample track)**, a trig on step 1 with a PTCH lock (raw 67)
+  held + FUNC + DOWN: the selector opened, the lock still 67 (stock).
+- **GRID RECORDING off**, trig 1 held + FUNC + DOWN: the held mask reads 0
+  (the trig keys are not lock holds then), the selector opened, the locks
+  unchanged (stock).
+- ROM: one 6-byte detour, no cave used (168 B left as before); the DRAM
+  unit grew by the routine (the bus 1,124,532 B). `tools/stock_scan.py`:
+  the same four hook-site `hex` rows as before (the direct jump's and the
+  page resolver's expects), everything else instruction idioms.
+
+## LEG: the legato switch on the AMP SETUP page (2 Oct 2026)
+
+**The page.** FUNC + AMP (or a double AMP press) opens the AMP SETUP window,
+manual 11.4.6: AMP (ANLG / RTRG / R+T / TTRG), SYNC, ATCK, FX1, FX2 and an
+empty sixth box. On every audio track the sixth box reads **LEG** and its F
+knob steps it, one value a detent, clamped at both ends: **OFF / MONO /
+POLY** on a synth track, **OFF / MONO** on any other audio track (3 Oct
+2026; the same clone, its count 3 or 2 by the current track, `po_amp_kind`).
+The master track (track 8 with USE TRACK 8 AS MASTER: another AMP record)
+and the MIDI-mode pages (another window) are stock.
+
+**The byte.** Behind the sixth box stock keeps a real parameter, p11
+`TRIG`: named, five values, never drawn (enable nibble 0), and a Part byte
+all the same -- the AMP page-2 array's byte 5, `Part + 0x8f078 + track *
+30 + 5` (`PARAM_PAGES.md` §5a: LFO p2, **AMP p2**, FX1 p2, FX2 p2 at 30 a
+track), with a battery-RAM shadow at `0x100a51c6 + part * 6322 + track *
+30 + 5` and the live lane byte `0x80000810 + track * 72 + 0x31`. LEG is
+that byte: **0 OFF, 1 MONO, 2 POLY** (3 and 4, a stock unit's reach with a
+blind knob turn, read as POLY). The stock page-2 editor (`0x4003adec`)
+writes it exactly as it writes AMP or SYNC: the Part, the shadow, the
+dirty flags, the lane -- so **PROJECT > SAVE writes it into the bank
+file** (`bank01.work`: part record `0x8eed6 + part * 0x18bb`, the byte at
+`+0x306 + track * 30` = `ot_project.P2_OFF - 6 + 5`), RELOAD and a load
+bring it back, a warm boot (the unit comes back from battery RAM) keeps it,
+and a Part copy carries it; nothing of ours touches storage. A stock Part
+has 0 there = OFF: an existing track needs LEG = MONO for the legato it
+had (GLIDE alone gave legato until 2 Oct 2026 on a synth track, until 3
+Oct 2026 on a sample track). On a sample track any nonzero byte reads and
+acts as MONO (a Part copied from a synth track with POLY, say).
+
+**The DSP.** The lane byte is what the frame builder's copier
+(`0x4000cb6a`) carries into the DSP record's AMP word 23, low byte. A
+synth track never shows the DSP its LEG: `sy_render` zeroes the lane byte
+every frame while a synth voice plays, and the editor's lane write
+(`po_amplane`, the sixth detour) stores 0 for slot 11 of a synth track, so
+the DSP reads 0 there as it does for a stock Part's TRIG (measured below:
+a note's envelope is the same with the byte at 2). What the DSP would do
+with the byte is unknown; a stock unit never sets it.
+
+**The clone, and the hooks.** The AMP SETUP window does not ask the page
+resolver for its descriptor: its staging (`0x40059d56`, `pea 0x400d3988`),
+its drawer (`0x40036794`: the names at `0x400d39c2`, the formatters and
+widgets at `0x400d3a6a`, the enable pair `0x400d3b12/16`) and the page-2
+editor (`0x4003ae40`: the handler, min and count) all address the stock
+AMP record. Six jmp detours (`manifest.py`, `po_ampstage`, `po_ampdraw1/2/3`,
+`po_ampedit`, `po_amplane`) hand a synth current track a CLONE of the stock
+record built on first use in the unit's RAM (`po_amp_desc`, as
+`po_lfodesc` and `po_pgdesc`: the stock bytes are read from the image at
+run time, never carried): slot 11 named LEG, its formatter `po_fmt_leg`,
+the PLAYBACK page's three-position select (`0x40046d9c`, the family the
+AMP box draws with; the SPRING TYPE dial `0x40047424` was tried first and
+prints its value only while its knob is being turned), count 3, default 0,
+nibble 1, and the count written on every hand-out (3 on a synth track, 2
+on a sample track); the F knob's handler is `po_legknob` (the editor's own
+clamp stays the stock 0..4, the handler clamps 0..2 or 0..1, `po_legmax`;
+the formatter clamps the same way). The master track gets the stock
+record's address, so its page draws as stock.
+
+**What LEG does (keys and MIDI notes alike; `po_legmode`, the LEG GATE).**
+A key (a MIDI note) pressed while another is held on the track. On a
+**sample track**: OFF = stock (the held note ends, the new one starts);
+MONO = the trigless path of 2.6 -- the pitch changes at once, the sample
+is not restarted, the AMP envelope not retriggered, the new key becomes
+the held key; GLIDE is not read (`po_lm_sample` reads the LEG byte). On a
+**synth track**:
+- **OFF**: a new key always starts -- the held note ends, the new one
+  starts with a fresh attack, whatever GLIDE (at VOIC 2..4 the keys are
+  polyphonic as before: a chord shape retriggers, "----" adds a voice).
+  **And no glide on the track at all**: the engine's per-frame slew
+  (`sy_slew`, the mono voice's `S_CUR` and every paraphonic voice's
+  `V_CUR`) reads the Part's LEG byte (`po_legbyte`) and snaps the word to
+  its target when it is 0, so a sequenced trigless trig with a PTCH lock,
+  a PTCH knob turn or a p-lock STEPS whatever the GLIDE row says (a stock
+  parameter slide still moves the word as stock does). GLIDE is the slide
+  time for LEG MONO and POLY only.
+- **MONO**: today's behaviour -- at VOIC 1 the press is legato (the
+  stock's FUNC + key trigless path: no voice restart, no AMP retrigger,
+  the mono voice slews to the new pitch over GLIDE, the new key becomes
+  the held key, the old key's MIDI note-off goes out), at VOIC 2..4 the
+  keys are polyphonic.
+- **POLY**: legato at any VOIC. At VOIC 1 as MONO. At VOIC 2..4 the key
+  joins the held set, the engine is told (`po_legkey`, the pointer block's
+  -28) and the trigless path follows; when its PTCH lock lands (the next
+  frame) `po_handover` moves the sounding chord: with a shape (chord
+  memory) the voicing of (shape, inversion) for VOIC notes at the new root
+  is assigned to the sounding voices in pitch order -- voice i slides
+  (`sy_slew`, from where it is, over GLIDE) to note i and belongs to the
+  new key; more sounding voices than notes: the extra release; fewer: the
+  missing notes start fresh voices; each note snapped onto the SCALE. With
+  "----" the NEWEST sounding voice slides to the key (last-note legato),
+  the others hold. No AMP retrigger (no START). Releasing works as before:
+  the old key's release finds nothing tagged to it, the chord goes with
+  the new key's release, the last key's release posts the stock AMP
+  release. GLIDE OFF + LEG: the pitch (the chord) changes at once, no
+  retrigger.
+- **Recording**: a legato press (mono or paraphonic, a key or a MIDI note)
+  records a TRIGLESS trig with its PTCH lock, as FUNC + key does
+  (`qz_leg3`'s trigless branch; MIDI: `po_mrec` through the stock trigless
+  recorder `0x4004271c`), so playback slides too: a sequenced trigless trig
+  with a PTCH lock moves T_W, and every voice of a paraphonic track follows
+  by the same interval (a chord slides in parallel -- the same voicing of
+  the same shape).
+The gate itself is one routine, `po_legmode(track)` -> 0 stock / 1 mono
+legato / 2 paraphonic / 3 paraphonic legato, from the Part's LEG byte and
+its VOIC; the quantizer's key hooks call it through the pointer block (-24
+of `sy_render`) so the ROM change there is a jsr and a compare
+(`modules/quantizer/README.md`, "The LEG gate"); `po_mon` calls it directly
+for a MIDI note-on and takes the trigless path itself (the lock byte set,
+`mailbox |= 0x119`, no START, `T_MLEG` for the recorder).
+
+### Measured (2 Oct 2026, the octatrick-tuner BUILD 17 bus = OCTATRICK2.7 on ot_emu `--dsp-rt` through the panel, a copy of the OTLIVE card, T2 = FM SYNTH slot 5 on MIDI channel 2, INDX 0 / FDBK 0, AMP HOLD INF REL 40, AMP = RTRG with ATK 40 so a fresh START shows as a new attack, 130 BPM, GLIDE 64 unless said, the CHROMATIC octave +1: key 1 = C4, 5 = E4, 8 = G4; the session's `leg/live.py`, `leg/chordpress.py`, `leg/audio.py`, `leg/storage.py`, `leg/warm.py`; pitches as spectral peaks per 10 ms, single voices by zero crossings, "retrigger" read from the engine's voice records -- a voice keeps its allocation stamp (`V_AGE`) across a legato press and gets a new one at a START)
+
+- **The page.** T2's AMP SETUP shows LEG in the sixth box: OFF / MONO / POLY
+  on the three-position dial as the F knob is turned (`leg_montage.png`
+  in the session's `leg/out/`), the Part byte 0 / 1 / 2, the knob clamped
+  at both ends (+7 detents from OFF read 2, -6 from POLY read 0). T7, a
+  sample track: the page is **pixel-identical** to the OCTATRICK2.6 bus
+  (0 differing pixels of 128 x 64), and its F knob leaves the Part byte.
+- **(3) OFF.** VOIC 1, C4 held, E4: the pitch steps 261.7 -> 330 Hz within
+  one 10 ms window, the level dips into a new attack (20 ms RMS -17.2 dB
+  before, -19.6 dB after). VOIC 3 "----": E4 gets a voice of its own beside
+  C4's (voice ages 1 -> 1, 2), no slide.
+- **(4) MONO.** VOIC 1, C4 held, E4: **261.6 -> 329.6 Hz, t63 100 ms, t95
+  290 ms** after the move starts (tau = 100 ms, the GLIDE 64 time), no
+  level dip (-18.9..-17.2 dB before, -19.6..-15.9 after, the beating of
+  the slide); recorded (E4 100 ms after C4) as **step 5 sample trig PTCH
+  C4, step 6 trigless trig PTCH E4**, and the playback slides the same
+  way (t63 90 / t95 290 ms). VOIC 3 "----": two voices, no slide (as OFF).
+- **(5) POLY.** VOIC 3 MAJ, C4 held, G4: the three voices **262 / 330 /
+  392 Hz slide to 392 / 494 / 587 Hz** (G B D), each with **t63 90..105
+  ms, t95 290..305 ms** (the outer voices tracked cleanly; the middle one
+  is masked by its neighbours' beating in the 40 ms windows), the voices
+  keep their ages 5 6 7 and change key 1 -> 8: **no new attack**; the
+  level stays within -24..-19 dB (20 ms RMS) through the change. Recorded
+  (G4 100 ms after C4): **step 6 sample trig PTCH C4, step 7 trigless trig
+  PTCH G4**; the playback slides 262/323/395 -> 392/494/587 over the same
+  ~100 ms. VOIC 3 "----": C4 + E4 pressed as a chord (40 ms apart) are two
+  voices; G4 400 ms later: **E4's voice slides 330 -> 392 Hz (t63 ~100
+  ms) and is G4's now (age 2, key 5 -> 8), C4's voice holds at 262 Hz**
+  (age 1, key 1); releasing E4 then releases nothing, C4 releases its
+  voice, G4 the last (chordpress2.log). A key inside 150 ms of the last
+  key start is a chord press (a voice of its own): the recorder's window,
+  `po_legmode`.
+- **(6) GLIDE OFF + POLY + MAJ.** C4 held, G4: the peaks read 262/329/391
+  in one 10 ms window and 392/494/587 two windows later (the 40 ms
+  analysis window smears the edge): the chord changes at once, the ages 9
+  10 11 stay, no new attack.
+- **(7) MIDI.** Notes 84 then 91 (600 ms apart) with LEG POLY + MAJ: the
+  same slide as the keys (voice 0 262 -> 392 Hz t63 90 / t95 290 ms, voice
+  2 392 -> 587 t63 105 / t95 305; ages 12 13 14 kept, identities 212 ->
+  219). LEG OFF + MAJ: a retrigger -- the chord jumps to 392/494/587 within
+  30 ms and the voices are new (ages 15 16 17 -> 18 19 20). LEG MONO at
+  VOIC 1: the mono voice slides 261.7 -> 392 Hz, t63 100 / t95 300 ms. LEG
+  POLY "----": 84 + 88 (30 ms apart) are two voices, 91 after 400 ms takes
+  88's voice (identity 216 -> 219), 84's holds.
+- **(8) The DSP.** With LEG = 2 stored: the Part byte 2, its shadow 2, the
+  live lane byte 0 and the DSP record's byte 47 (AMP word 23, low) 0, idle
+  and during a note (six reads each); a 1 s C4 at VOIC 1 with LEG 0 and
+  with LEG 2: the 10 ms envelopes differ by **0.7 dB at most, 0.05 dB on
+  average** over 72 windows (two LEG 0 takes: 12.8 dB at the release edge,
+  0.71 dB on average, the key-up jitter), so the DSP's envelope does not
+  depend on the byte. Before the lane fix the DSP saw the 2 and the
+  envelopes were the same within the repeat noise (0.9 / 0.06 dB), so the
+  DSP ignores the byte in any case.
+- **(9) Sequenced trigless trigs with LEG OFF.** The (4) recording played
+  back with LEG OFF on the first 2.7 build: 261.7 -> 329.6 Hz, t63 90 /
+  t95 290 ms -- GLIDE was the time. **Changed on the second 2.7 build
+  (BUILD 17b): LEG OFF = no glide** -- the same recording steps (the row
+  "LEG OFF, no glide" below); LEG MONO still slides it.
+- **Storage** (`storage.log`, `warm.py`; T2 set to POLY, the Part byte 2,
+  its battery-RAM shadow 2). **PROJECT > SAVE**: `bank01.work` on the card
+  gains the byte -- part record 0's T2 byte at file offset `0x8f1fa` (=
+  `0x8eed6 + 0x306 + 30`) reads 2 where the card's original read 0 (the
+  other 82 changed bytes are the take's recorded trigs and locks); the
+  card ejected and inserted (a cold boot that loads the saved project):
+  T2 LEG 2, the page reads POLY. **RELOAD**: LEG turned to OFF unsaved,
+  PROJECT > RELOAD -> 2 again. **Part copy**: PARTS menu, FUNC + REC on
+  part 1, FUNC + STOP on part 2 -> part 2's T2 AMP page-2 bytes `0 1 0 2 2
+  2`, LEG 2, and the page on the pasted part reads POLY. **Warm boot**: the
+  battery RAM the unit's quit dumped (`OT_SRAM_OUT`), preloaded into a
+  fresh emulator (`OT_SRAM_IN`, `OT_NO_LOAD`: no project load, as the
+  hardware's power-on) on a copy of the ORIGINAL card without the save:
+  T2 LEG Part byte 2, shadow 2, the page reads POLY -- it came back from
+  battery RAM, not the card (GLIDE 64 came back with it).
+
+### Measured (3 Oct 2026, LEG on every audio track: the octatrick-tuner BUILD 17 bus = OCTATRICK2.7 third pass, modules f53032c, on ot_emu `--dsp-rt` through the panel, a copy of the OTLIVE card, 130 BPM; T7 = FLEX slot 2 `third-0.wav`, a sample track, in the CHROMATIC trig mode with the project's SCALE (PHRYGN, so the E4 key sounds Eb4: rate 1.19 = +3 semitones); the session's `leg3/ui.py`, `leg3/t7.py`, `leg3/e.py`, `leg3/storage.py`; "retrigger" on T7 read from the stock voice's play position, `0x800049d8 + 0xa8 * 6 + 68`)
+
+- **The page.** T7's AMP SETUP shows LEG in the sixth box: **OFF / MONO**
+  (`leg3_montage.png`), the Part byte 0 / 1 and its shadow with it; the
+  F knob is clamped at both ends (+7 detents from MONO read 1, -9 from
+  there 0). T2, the synth track: OFF / MONO / POLY as before. **MIDI
+  mode**: FUNC + AMP opens MIDI ARP SETUP, and that page and the ARP page
+  are **pixel-identical to the OCTATRICK2.6 bus** (0 of 128 x 64 pixels
+  differ): the AMP SETUP window is not run there.
+- **(b) T7 LEG MONO, C4 held, E 100 ms later**: with **GLIDE OFF** and
+  with **GLIDE 64** alike the stock voice keeps playing -- its position
+  runs on (2217 -> 3016 -> 3806 ... in ~800 a poll, against ~664 a poll for
+  a lone C: the pitch changed, the sample did not restart), no new attack
+  at the second key, the new key is the held key (5). **T7 LEG OFF**:
+  with GLIDE 64 and with GLIDE OFF the position restarts (2225 -> 791 ->
+  1580 ...) and the 5 ms envelope shows a new attack 100 ms after the
+  first -- the stock retrigger. GLIDE is irrelevant on the sample track.
+- **(c) The DSP.** On T7 the LEG byte reaches the live lane
+  (`0x80000810 + 6 * 72 + 0x31`) and the DSP record's byte 47 (AMP word
+  23, low) through the stock copier: lane 0 / byte 0 at OFF, lane 1 /
+  byte 1 at MONO, idle and during the note (six reads each); no wrapper of
+  ours zeroes it on a sample track. A lone C4 on T7 at LEG 0, 1, 0, 1: the
+  10 ms envelopes and the 20 ms spectral peaks, aligned on the sample-exact
+  onset, are **identical -- 0.0 dB over every window (attack 0..70 ms,
+  body 70..310 ms, the whole 1.1 s), 16 of 16 peak windows the same** --
+  between LEG 0 and LEG 1 exactly as between two LEG 0 takes and two LEG 1
+  takes. The DSP does not read the byte for a FLEX sample track: no
+  neutralisation added.
+- **(d) Storage.** T7 set to MONO; PROJECT > SAVE writes the byte into
+  `bank01.work` (part record 0's T7 byte at file offset `0x8f290` = `0x8eed6
+  + 0x306 + 6 * 30`: 1 where the card's original read 0); the card ejected
+  and inserted (a cold boot that loads the saved project): T7 LEG Part
+  byte 1, shadow 1, the page reads MONO. LEG turned to OFF unsaved, PROJECT
+  > RELOAD: 1 again.
+- **(e) T2, the synth track, unchanged.** LEG OFF, VOIC 1, C4 held + E4:
+  the pitch steps 262 -> 330 Hz within one 10 ms window (t63 10 ms), a new
+  attack. LEG MONO: 261.7 -> 330 Hz, **t63 90 ms, t95 290 ms** (GLIDE 64),
+  no level dip. LEG POLY, VOIC 3 MAJ, C4 held + G4: the three voices slide
+  262 / 330 / 392 -> 392 / 494 / 587 Hz (370 / 461 / 545 after 170 ms), the
+  voices keep their ages 1 2 3 and change key 1 -> 8: no new attack.
+- **Fixed on the way**: `po_amplane` (the editor's lane write) lost the
+  lane index to `po_is_synth`'s flag, so a synth track's LEG clear and a
+  sample track's store landed on track 1's lane bytes 1 / 0 instead of the
+  track's own byte 5 (the first (c) run read the T7 lane at 1 with LEG 0:
+  the refresh from the Part had put it there and the editor never wrote
+  it). The index is kept across the call now.
+
+### What does not work, and what is left (LEG)
+
+- **The lane byte at idle.** A synth track's LEG reaches the live lane
+  (and so the DSP record) when the frame builder refreshes the lane's
+  page-2 bytes from the Part (a part or pattern change, `0x4000c54e`)
+  until the next frame a synth voice plays; the editor's write and the
+  playing frames keep it 0. Measured to make no difference to the DSP
+  (8); the refresh site is not hooked.
+- **A "----" legato on playback.** A recorded paraphonic legato is a
+  trigless trig with a PTCH lock, and a sequenced PTCH change moves every
+  voice of the track by the same interval (the engine's rule), so a
+  last-note legato played with "----" plays back as a parallel shift of
+  the whole chord; with a shape the recording and the live sound agree.
+- **The chord window is 150 ms** (KR_WIN, the recorder's): with "----" and
+  LEG POLY a key 150 ms or more after the last key start is legato, a key
+  inside it a chord press. With a shape every key over a held key is
+  legato.
+- **A sample track's legato is its LEG box now** (3 Oct 2026): `po_legmode`
+  returns 1 (mono legato) on a non-synth track when its LEG byte is
+  nonzero -- the quantizer's `qz_leg1` / `qz_leg2` take the trigless path
+  exactly as they did with GLIDE before (instant pitch, no retrigger, the
+  new key the held key) -- and 0 (stock) with LEG OFF; GLIDE is not read.
+  Until 3 Oct 2026 GLIDE != 0 was the sample track's switch; the
+  quantizer's bytes are the same. (The gate needs the engine's pointer
+  block, published by the FLEX renderer's first frame: a project whose
+  sample tracks are all STATIC before any FLEX frame would read 0 until
+  one runs.)
+- **A sample track's LEG byte reaches the DSP.** Nothing of ours zeroes the
+  lane byte of a non-synth track (`sy_render`'s zeroing and `po_amplane`'s
+  are for synth tracks): the stock copier carries the byte into the DSP
+  record's byte 47. Measured to make no difference (the 3 Oct 2026
+  section below).
+- Not measured: LEG with a SCALE on (the hand-over snaps every note of
+  the new voicing, po_snap), VOIC 2 / 4 (the code is VOIC-generic), a
+  legato press while a sequencer note sounds, and the unit itself (the
+  emulator's panel and DSP only).
+
+
+## MIDI IN: notes into a synth track behave like the panel keys (30 Sep 2026)
+
+**What.** Stock's STANDARD note map (appendix C.1; `AUDIO NOTE IN =
+STANDARD`, the default, or `FOLLOW TM` while the trig mode is TRACKS) plays
+notes 72..96 chromatically through the block at `0x4000e6e2` of the
+audio-track note-on `0x4000e018`: for every track listening on the message's
+channel it posts the voice command `0x1d` into the mailbox `0x46c80354[t]`
+and stores the PTCH lock byte `64 + 5 * (note - 84)` the frame builder applies
+at the START -- no note identity, one held note a track (`0x400d64c2[t]`),
+and the note-off `0x4000db98` releases only when that byte is the note. The
+engine saw every MIDI START as a sequencer trig (`qz_pkey[t]` 0): it
+released everything, a note-off ended nothing of its own, chords were
+impossible. Now, on a synth track only (sample tracks: the displaced
+instructions, byte for byte -- measured against the OCTATRICK9 image, below):
+
+- a note-on is a key of its own: raw = **note - 20** (semitones, the
+  tuning system's units: 84 = C6 in MIDI numbering = the synth's PTCH 0 =
+  261.6 Hz; 20..127 = -64..+43; 0..19 clamp to -64), stored as the lock
+  byte BEFORE the START (stock stores it after: a frame between the two
+  starts the voice on the previous note's lock -- seen once in the
+  emulator before the order was changed), the note joins the track's
+  held-note list (`po_mheld`, 8 in press order), its (identity `0x80 |
+  note`, raw) is queued in the track's ring (`po_mring`), the identity is
+  posted as the live key (`qz_pkey[t]`) and the START goes last;
+- the engine's START (`po_start`) drains the ring: one `po_start1` per
+  queued note-on at its own pitch (the frame's word plus SEMI per semitone
+  between the entry's raw and the record's raw, `T_RAWP`, read before the
+  halfword is neutralised for the stock call), with the key rules: "----"
+  = one voice a note and VOIC the polyphony (the oldest active voice is
+  stolen), a repeated note-on for a sounding note absorbed (`po_st_dkey`), a
+  shape = chord memory (the new note's chord replaces the old); two note-ons
+  inside one frame share one stock START and both play;
+- a note-off removes the note from the list (`po_moff`, at the note-off's
+  per-track compare); a paraphonic track (Part VOIC 2..4, the keys' rule)
+  releases that note's voice alone (`po_frame`'s scan; `po_st_live` for a
+  note-off that beat its START) and only the LAST note's release takes the
+  stock block (mailbox `|= 0x40`: the AMP release, as the last key's
+  release does); VOIC 1 keeps the stock rule (the mono voice ends with the
+  last note pressed);
+- the two octave switches (note-on `0x4000e452`, note-off `0x4000de10`)
+  send a note outside 72..96 whose channel addresses a synth track to the
+  chromatic block for the channel's synth tracks alone (the auto channel:
+  the active track when it is a synth): a synth track's channel is a
+  keyboard, the STANDARD functions of notes 24..71 do not run for it; a
+  channel without a synth track, and 72..96 on any channel: stock;
+- LIVE RECORDING: stock records a MIDI note through the `0x41` event
+  (`0x400625b8`: the ACTIVE track only, the manual's rule) -- the sample
+  trig recorder `0x40042d1c` and a PTCH lock of `5 * note - 356`. On a synth
+  track (`po_mrec`) the note goes through `po_keyrec` as a key of its own:
+  a note that JOINS the chord being recorded records no trig (the chord's
+  step gets PTCH / CHRD / VOIC), else the stock recorder places the trig,
+  the PTCH lock is the raw (semitones) and a new chord record starts; with
+  a trig held (`0x4006262a`, `po_mtrig`) the held trig's PTCH lock is the
+  raw too. Fingered chords from a MIDI keyboard are recognised exactly as
+  the panel's (the join window and the match rule are `po_keyrec`'s).
+
+Velocity is ignored (stock keeps none for audio tracks). MIDI note OUT,
+the panel keys and the quantizer's key hooks are untouched. `FOLLOW TM`
+with the CHROMATIC trig mode is stock's other path (`0x400500e8` -> the
+key handler `0x4004fb94` with key = note - 72: the 25-key paraphony of
+`qz_leg0/1/2`, notes 72..96 only) and is not changed.
+
+**Hooks** (six `jmp` detours into the DRAM unit, `manifest.py`; the
+quantizer's `qz_midi` at `0x4000e74c` is gone; ROM cave unchanged at 168 B
+left on the octatrick-tuner remix):
+
+| site | displaced | stub | a sample track |
+|---|---|---|---|
+| `0x4000e746` the chromatic block's START `moveq #29,%d1; move.l %d1,(%a5,%d2.l*4)` | 6 B | `po_mon` | the START, then the stock mapping at `0x4000e74c` |
+| `0x4000dfd4` the note-off's compare `mvs.b (%a0),%d1; mvs.b (%a3),%d0; cmp.l %d1,%d0; bne` | 8 B (+ nop) | `po_moff` | replayed |
+| `0x4000e452` the note-on's octave switch `move.l %d6,%d0; subq.l #2,%d0; moveq #5,%d2; cmp.l %d0,%d2` | 8 B | `po_mgate` | replayed |
+| `0x4000de10` the note-off's octave switch `subq.l #2,%d0; moveq #5,%d3; cmp.l %d0,%d3` | 6 B | `po_mogate` | replayed |
+| `0x400625e0` the `0x41` event's recorder entry `move.l 4(%a2),%d0; move.l %d0,0x46c7e956` | 10 B | `po_mrec` | replayed, `jmp 0x400625ea` |
+| `0x4006262a` its trig-held branch `mvs.b 2(%a2),%d2; movea.l %d2,%a0; lea (%a0,%d2.l*4),%a0` | 8 B | `po_mtrig` | replayed |
+
+The engine side (`poly.s`): `po_is_synth` / `po_polytrack` (the quantizer's
+predicates, read here from the Part and the settings table), the list
+(`po_mheld_of/add/del`, `po_held`: one predicate for a key's mask bit or a
+note's list entry, used by `po_frame`, `po_st_live`, `po_st_dseq` and both
+held tests of `po_keyrec`), the ring (`po_mring_push/pop/reset`; the mono
+start resets it and clears `qz_pkey`), `po_start` split into the drain and
+`po_start1`, `T_RAWP`. State: 64 + 128 + 16 B. `poly.s` is 12,148 B.
+
+### Measured (30 Sep 2026, the octatrick-tuner BUILD 15 bus on ot_emu `--dsp-rt` through the panel, a copy of the OTLIVE card, T2 = FM SYNTH slot 5 on MIDI channel 2, INDX 0 / FDBK 0, AMP HOLD INF REL 20, SCALE/GLIDE OFF, `AUDIO NOTE IN = STANDARD`; `midi_test.py`, notes as 0.5 s spectral lines, the engine's voice records read back)
+
+How MIDI was fed: the panel server has no MIDI endpoint, so ot_emu got a
+test rig -- `OT_MIDI_IN=<fifo>` is polled before every `run` and every
+paced slice: a line `midi 91 54 64` goes onto UART0 through
+`Rtos::midiIn` (the DIN MIDI IN path, the same bytes USB MIDI's decoder
+feeds `midi_rx_enqueue`), `poke <addr> <hex>` writes memory; the pipe also
+takes `midi <hex>...`. Uncommitted in the octatrick fork worktree
+(`tools/emu/ot_emu/main.cpp`).
+
+- **(a) VOIC 3, "----"**: 84 -> 261.6 Hz, 1 voice (`V_KEY 0xd4`); + 88 ->
+  261.6 + 329.6, 2; + 91 -> 261.6 / 329.6 / 392.0, 3 (list `d4 d8 db`);
+  note-off 88 -> 261.6 + 392.0, the E's voice alone released (states
+  `1 0 1 0`); 88 again -> 3; a 4th note 95 -> 329.6 / 392.0 / 493.9: the
+  oldest (84) stolen, 3 voices (keys `df db d8`), the list keeps 84; all
+  off -> silence (rms -999), states `0 0 0 0`, list empty, stock held byte
+  255, gate 0; 84 held and 84 sent again -> still ONE voice (states
+  `0 1 0 0`), 261.6.
+- **(b) range** (VOIC 3): 60 -> 65.4 Hz (-24 st), 48 -> 32.7 (-36), 108 ->
+  1046.5 (+24, -32.6 dBFS rms), 127 -> 3136.0 (+43; -54 dBFS: the track's
+  chain rolls the top off), 20 -> a 6.5 Hz wave (-64; -22 dBFS, below the
+  analysis window); each released cleanly (states 0, list empty). The
+  task's (b) figures (60 -> 130.8) assume 84 = 523.3; the centre stays 84 =
+  0 st = 261.6 Hz as before, so 60 is two octaves down.
+- **(c) VOIC 1**: 84 -> 261.6 (-17.3 dBFS, the mono voice's level); 96 ->
+  523.3; 84 while 96 held -> 261.6 alone (the mono retrigger); note-off 96
+  then -> 84 sounds on (the stock rule: the held byte is 84); all off ->
+  silence. The poly records stay 0 (the mono path).
+- **(d) MAJ, VOIC 3**: 84 -> 261.6 / 329.6 / 392.0 (three voices of key
+  `d4`); 86 -> 293.7 / 370.0 / 440.0, the chord replaced (chord memory,
+  three voices of `d6`).
+- **(e) LIVE RECORDING** (VOIC 3, "----", TRACKS mode, the pattern cleared):
+  84 88 91 sent 20 ms apart -> ONE trig, step 4, `PTCH 64 CHRD MAJ(36)
+  VOIC 3` (HOLD unlocked: 255), playback 261.6 / 329.6 / 392.0; a single 88
+  -> `PTCH 68`, no CHRD / VOIC lock, playback 329.6; 84 + 91 -> `PTCH 64
+  CHRD 5TH(8) VOIC 2`, playback 261.6 + 392.0.
+- **(f) a sample track, T7 (FLEX, `third-0.wav`) on channel 7**: 84 / 88 /
+  72 / 96 -> PTCH current value 64 / 84 / 4 / 124 (the stock `64 + 5 *
+  (note - 84)`), held byte = the note then 255, gate bit 0x40 then 0, the
+  sample's lines 5111 / 6439.5 / 2556 Hz (2^(4/12), 1/2); 84 on, 88 on, 84
+  off -> held 88 (monophonic, the earlier note's off does nothing); 108 and
+  48 -> nothing (outside the window); the poly records untouched. The
+  OCTATRICK9 image on the same rig, the same script: identical values and
+  lines (5111.2 / 6439.5 / 2556.0, rms -36.7 / -39.0 / -32.1 vs -36.9 /
+  -39.0 / -32.1 dBFS).
+- **(g) the panel keys** (CHROMATIC, VOIC 3): keys 13 + 16 -> 261.6 +
+  311.1, keys `13 16` in the records, released to 0. **`FOLLOW TM`** in
+  TRACKS mode: 84 + 91 -> 261.6 + 392.0, 60 -> 65.4 (the same block).
+
+### What does not work, and what is left
+
+- A MIDI note gets **no HOLD (note length) lock** when recorded (the keys'
+  `qz_leg4` / `qz_holdrel` are key-index based, in the ROM unit); the step's
+  HOLD stays the Part's.
+- **No legato over MIDI** at VOIC 1: every note-on restarts the mono voice
+  (the keys' GLIDE legato is the trigless-trig trick of `qz_leg1/2`).
+- A channel that addresses a synth track loses the STANDARD map's
+  **functions** for notes 24..71 (they are the keyboard's notes there); a
+  sample track sharing that channel loses them too.
+- The 6.5 Hz note (20) and the roll-off at +43 st are as measured; the
+  chain above ~3 kHz (-54 dBFS at 3136 Hz) was not looked into.
+- Not on hardware.
+
+## The knobs (30 Sep 2026)
+
+The FM SYNTH page's six knobs (PTCH RATO INDX FINE FDBK DEC) follow the
+manual's two knob layers on the synth's own units -- **5.2.1 QUICK PARAMETER
+EDITING** (the knob pressed while turned: 7 units a detent) and **5.2.2
+PARAMETER VALUE SKIP** ([FUNCTION] held: a jump to a relevant value) -- which
+the page had lost when its handlers became "0" for the tuning system (the
+stock caller reads a 0 slot as its default stepper `0x4003240c`: one unit a
+detent, x7 pressed, no FUNC layer at all).
+
+| knob | plain | pressed | FUNC held |
+|---|---|---|---|
+| PTCH | 1 semitone | 7 | **12** (an octave) |
+| RATO | the next table entry | 7 entries | the next **whole-number ratio**: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 = positions 3 9 12 14 17 19 21 23 24 25 26 27 28 29 30 31 of the 32-entry table (raw >> 2); below 1 the three sub-unity entries 0.75 0.5 0.25 (positions 2 1 0); off either end the value stays |
+| INDX, FDBK, DEC | 1 | 7 | **16** |
+| FINE | 1 cent | 7 | **10** cents |
+
+Every result goes through the stock caller's clamp to the slot's range, so
+FUNC from PTCH +60 lands on +63 and INDX 112 + 16 on 127. FUNC wins over the
+push. PERSONALIZE's **DISABLE FUNCTION + ENCODER** switches the FUNC layer
+off here as it does on stock pages.
+
+- **Where**: `poly.s` `po_knob(slot, detents, value) -> value`, the handler
+  signature the stock knob routine `0x40055008` uses (it resolves the Part
+  byte, calls `P+0x12a + 4*slot`, clamps d0 to `[P+0x6a, +P+0x9a-1]` and
+  stores). `po_pgdesc` finishes the page clone by planting `po_knob` in all
+  six slots after page.s's override list (page.s cannot name a DRAM
+  address; the unit knows its own), and publishes it at **-16** before
+  `sy_render` (with -12 `po_keyrec`, -8 `po_hold128`, -4 `po_pgdesc`). The
+  page cave is unchanged (1812 B pinned; its two zero handler overrides are
+  now moot and documented so).
+- **The flags, read as the stock handlers read them** (`0x40032d08`, the
+  sample tracks' PTCH, and `0x4003240c`, both in `docs/firmware/PARAM_PAGES.md`
+  §4 terms): [FUNCTION] = `tst.l 0x46c7dd26`; the encoder's push switch =
+  the key record of code `0x38 + slot` (`0x46c7d8de + code * 0x18`,
+  PANEL.md; `+0x10` nonzero while held -- the push switches are key-matrix
+  row 0x27, bits 0..5, `tools/panel/KEYMAP.md`); DISABLE FUNCTION + ENCODER
+  = `tst.l 0x800000a0` (the stock handlers take their FUNC path only while
+  it is 0). Nothing is copied: 92 instructions of our own.
+- **Stock, for the record** (read in the listing): the sample tracks' PTCH
+  handler with FUNC jumps among three fixed values (a table at
+  `0x400a8150`, the manual's "-64, 0, +64" kind) and, pressed, steps 5 x its
+  8.8 step; the 0..127 class handlers jump to 0 or 127. The sample tracks'
+  PLAYBACK page is stock and untouched here.
+- **With the SCALE on** (quantizer): its store hook `qz_knob` recomputes a
+  synth track's PTCH from the detent count by scale degree, for any handler
+  -- FUNC and the push then count degrees, not semitones. SCALE OFF: as the
+  table.
+### Measured (30 Sep 2026, the OCTATRICK2.4 BUILD 14 bus on ot_emu, a copy of the OTLIVE card, T2 = FM SYNTH slot 5, SCALE OFF; the BUILD 12 bus beside it as the baseline; `knobs_measure.py`, shots `knobs-shots/`)
+
+The clone's six handler slots read `po_knob` (`40a96582` x6, `po_pg_built` 1);
+the pointer block before `sy_render` reads `po_knob po_keyrec po_hold128
+po_pgdesc`; PERSONALIZE's DISABLE FUNCTION + ENCODER long is 0, the AUDIO CC
+OUT byte 3 (INT+EXT, the handler path). Every raw below is the T2 FLEX Part
+byte read back after the turn; the page's text is the shot.
+
+- **PTCH** from 0: plain +1 detent `+1` (65); FUNC + detent `+12` (76),
+  again `+24` (88); from +1, FUNC + detent `+13` (77), again `+25` (89);
+  FUNC + detent down x3 from 0 `-36` (28); pressed + detent `+7` (71),
+  pressed -2 `-7` (57); FUNC + detent x7 from 0: 76 88 100 112 124 127 127
+  (`+63`, the caller's clamp), down x7: 52 40 28 16 4 0 0 (`-64`); FUNC and
+  the push together from -64: raw 12 (FUNC wins).
+- **The pitch follows**: [TRIG 10] in TRACKS mode at PTCH 0 = 271.3 Hz, after
+  FUNC + detent (`+12`) = 542.6 Hz, ratio 2.0000 -- an octave (271.3 and not
+  261.6 because this card's T2 carries the stock RATE default 127 = FINE
+  +63c: 261.63 x 2^(63/1200) = 271.3).
+- **FINE** from 0c: plain `+1c`; FUNC + detent `+10c` (74), FUNC -2 `-10c`
+  (54); pressed `+7c` (71); FUNC x8 up: 74 84 94 104 114 124 127 127.
+- **RATO**: plain +1 detent from raw 0 = raw 1 (still `0.25`: four raws a
+  position), +3 more = raw 4 (`0.5`). FUNC + detent up from `0.25`, the
+  displayed values in order: **0.5 0.75 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+  16** (raws 4 8 12 36 48 56 68 76 84 92 96 100 104 108 112 116 120 124),
+  then 16 stays; FUNC + detent down from 16: **15 14 13 12 11 10 9 8 7 6 5 4
+  3 2 1 0.75 0.5 0.25**, then 0.25 stays. From raw 17 (position 4, `1.01`)
+  FUNC up lands on `2` (36), FUNC down on `1` (12); pressed + detent from
+  `1` = raw 19 = `1.01` (7 raws).
+- **INDX, FDBK, DEC** from 0, each: plain 1; FUNC + detent 16, again 32;
+  pressed 7; FUNC x9 up: 16 32 48 64 80 96 112 127 127; FUNC down from 127:
+  111; FUNC down from 0: 0. (DEC 16 prints `32`, its milliseconds; 127
+  `2.0s`.)
+- **The baseline (BUILD 12, handlers "0")**: pressed + detent on T2's PTCH
+  already gave 71 (`+7`: the stock default stepper `0x4003240c` reads the
+  push switch), FUNC + detent gave 65 (`+1`, no FUNC layer), FUNC + detent
+  on INDX 1. So the push came free of the stock stepper; FUNC is what this
+  build adds -- and both are this routine's now.
+- **A sample track is stock**: T5 (FLEX, `First-0`) PTCH on both builds,
+  reset then FUNC + detent, FUNC + detent, FUNC - detent x3, reset + pressed
+  detent, reset + plain detent: raws **64 124 124 64 4 4 69 64** on both
+  (the stock three-value skip `+12.0` / `+0.0` / `-12.0`, pressed = 5 units
+  `+1.0`, one plain detent swallowed by the stock accumulator), the eight
+  page shots equal but for the left column's T2 marker (a note was played
+  on the new unit's T2 earlier in the run).
+
+## The tuning system (27 Sep 2026)
+
+**On a synth track the PTCH byte is semitones: raw 64 = 0, one raw unit =
+one semitone, -64..+63.** Sample tracks keep the stock 5-units-a-semitone
+byte and the stock "+7.0" display, byte for byte. What changes, and where:
+
+- **The page** (`page.s`, the runtime clone `po_pgdesc` builds): PTCH's
+  minimum and count are 0 / 128 (stock 4 / 121), its formatter prints
+  raw - 64 as a signed whole number (`-12`, `0`, `+7`; `pg_fmt_ptch`), and
+  its knob handler is 0 -- one raw a detent (the stock PTCH handler
+  `0x40032d08` is an accumulator built for the 5-a-semitone scale: from
+  64 it steps `65 66 67 68 69 69 70`, a detent swallowed now and then).
+  **RATE is FINE**: same byte, -64..+63 cents (raw 64 = 0), the slot named
+  `FINE`, printed `+12c` / `0c` / `-64c` (four characters fit the box),
+  handler 0, default 64. A track that was a sample track before -- or any
+  stock Part -- carries the stock RATE default **127**, which reads as
+  FINE +63: turn it down to `0c` once (the OTLIVE card's T2 came up so).
+  The page cave is 1,800 B (was 1,672).
+- **The engine** (`poly.s`): `sy_word` turns the record's two halfwords
+  into the pitch word on the stock curve's scale (a semitone = SEMI = 5 <<
+  8): `w = 0x4000 + (ptch - 0x4000) * 5 + (fine - 0x4000) / 20`, at the
+  voice start (S_CUR, so a fresh note starts at its own pitch) and every
+  frame; both paths -- the VOIC 1 mono voice and the paraphonic voices --
+  then run unchanged on that word: GLIDE slews it (sy_slew, now with
+  arithmetic shifts, a word below -12 semitones being negative), the chord
+  shapes add SEMI per semitone, po_snap snaps it onto SCALE, and
+  `po_rate_fold` folds it into the curve's +-12 semitone window by octaves
+  before the stock rate arithmetic (the paraphonic path's fold since phase
+  5, shared by the mono path now) and shifts the increment back. RATE never
+  scales a synth voice (po_rate is handed 1.0; the neutralised stock call
+  and the restore of the true halfwords for the DSP stay as they were). The
+  8 kHz safety net is 19.8 kHz now (PTCH +63 alone is 9,956 Hz); more than
+  six octaves of folding (PTCH +63 with an octave shape) reads as "no
+  note" and the net silences the voice.
+- **An LFO on PTCH sweeps ONE SEMITONE per unit of depth on a synth track**
+  -- five times what it does on a sample track (0.2 st a unit); DEP +-12 is
+  an octave. A PTCH lock, a scene, a MIDI CC on PTCH: the same units.
+- **The CHROMATIC keyboard** (`modules/quantizer`): a key sets PTCH raw =
+  64 + note, note = the key's semitone (key 13 = 0 = C4, key 1 = -12) + 12
+  * octave, and the octave, FUNC + LEFT / RIGHT, runs **-4..+4** on a synth
+  track (stock: 0 or 1 -- FUNC + either arrow *toggles* a single word, 0
+  = keys 1..16 = C3..D#4, 1 = keys 1..13 = C4..C5 with 14..16 dead). The
+  number beside the keyboard shows the octave (`-4`..`4`, stock's own
+  `%d`), all 16 keys play at every octave, and a live-recorded key writes
+  that raw as the step's PTCH lock, so playback is exact. Sample tracks
+  keep the stock word and its two octaves.
+- **MIDI IN**: raw = note - 20 on a synth track (84 = 0), the full 20..127 =
+  -64..+43 since 30 Sep 2026 -- "MIDI IN" above.
+- **The chord shapes** list their notes in PRIORITY order, so the VOIC cap
+  keeps the essential notes -- "VOIC, CHRD" below has the table.
+
+Measured (27 Sep 2026, the panel on 8901, OCTATRIK12 = octatrick-tuner
+BUILD 12 with this tree, a copy of the OTLIVE card, T2 = FLEX slot 5
+SYNTH.wav, SCALE OFF, GLIDE OFF, INDX 0 / FDBK 0, AMP HOLD INF / REL 20;
+notes = spectral peaks over 0.3-0.5 s windows; `tuning/measure.py` in the
+session scratchpad, `report_*.txt`):
+
+- **Keyboard octaves** (VOIC 1, key 13): octave -2 = 65.4 Hz, -1 = 130.8,
+  0 = 261.6, +1 = 523.2, +3 = 2093.0; +4 = 4186.0 (key 16 = 4978.0, D#8);
+  at -4 key 13 = C0 (16.35 Hz, below the 30 Hz peak floor of the script);
+  RIGHT x3 from +3 clamps at +4, LEFT x10 at -4; the number beside the
+  keyboard reads `3` / `-4` (`chrom_oct+3.png`, `chrom_oct-4.png`). VOIC 2
+  (the paraphonic path) at +2 = 1046.5 Hz.
+- **Live recording**: a key 13 at octave +2 recorded on step 9 with PTCH
+  lock **88 (+24)** and a HOLD lock 44 (the played length); playback
+  1042.9 Hz (-6 cents, the 0.3 s window straddling the note's HOLD
+  release; the same word from a held key plays 1046.5). At octave -3: lock
+  **28 (-36)**, playback 32.7 Hz (C1).
+- **The PTCH knob** on T2: 7 detents = Part byte 71, the page prints `+7`
+  (`ptch_p7.png`), a sequencer trig plays 391.9 Hz; -12 = 130.8 Hz; +63 =
+  9,952.9 Hz (D#9); -64 = 6.5 Hz, nothing above the peak floor. T5 (a FLEX
+  sample track): 7 detents = byte 70, printed `+1.2` -- the stock handler
+  and formatter (`t5_ptch_p7.png`).
+- **T2's keys at VOIC 2 after the quantizer fix**: key 13 + key 16 = C4 +
+  D#4 (2 voices, mask `0x9000`), a third key (9) replaces the oldest: G#3
+  D#4 -- the two-note keyboard on T2, which the track*40 offset bug had
+  denied every track but T1.
+- **FINE** (T2, a sequencer trig at PTCH 0): +20 c = 264.6 Hz, -20 c =
+  258.6, +63 c (raw 127) = 271.3, -64 c (raw 0) = 252.1 (`fine_84.png`:
+  the box reads `+20c`); a FINE lock on step 1 (byte 84, the Part at 64)
+  plays 264.7 Hz. An LFO on FINE was not driven in the emulator (the LFO
+  SETUP page's PMTR is not scriptable through the panel yet): FINE is an
+  ordinary byte of the PLAYBACK page, so the frame builder's LFO, locks and
+  scenes reach it as they reach RATE, and the engine reads the modulated
+  halfword every frame (sy_word).
+- **Chords, priority order** (key 13 = C4): MAJ6 at VOIC 2 = C4 + A4
+  (440.0), VOIC 3 = C4 E4 A4, VOIC 4 = C4 E4 G4 A4; MAJ7 at VOIC 2 = C4 +
+  B4 (493.9), VOIC 3 = C4 E4 B4; DIM7 at VOIC 2 = C4 + F#4 (370.0); MAJ at
+  VOIC 2 = C4 E4 (unchanged).
+- **SCALE MAJOR on the extended keyboard**: octave +1 key 14 (C#5) plays
+  C5 (523.2: the tie goes down), key 15 D5 (587.3, in the scale); octave
+  -2 key 16 (D#2) plays D2 (73.4). **GLIDE 64 over two octaves**: key 1 at
+  octave +1 (C4) held, FUNC + RIGHT, key 13 (C6) legato: 261.6 -> 293.8,
+  480.7, 652.9, 785.1, 898.3 ... 1046.5 Hz over 50 ms steps (63 % of the
+  way in about 100 ms, the GLIDE 64 time constant).
+- **A sample track (T7, FLEX) in CHROMATIC mode**: FUNC + RIGHT takes the
+  stock word 0 -> 1 -> 0, FUNC + LEFT 0 -> 1 (the eor; `qz_oct` stays 0),
+  the number reads `0` / `1`, the 13-key picture shows at 1 and the page
+  reads `PTCH +0.0` / `RATE +63` -- stock (`t7_chrom_1.png`). Back on T2
+  the word is 0 again at the first draw.
+- **T1 made a synth track through the slot list** (FLEX, slot 5): the same
+  two-note keyboard at VOIC 2 as T2's (C4 + D#4; a third key replaces the
+  oldest). Its FINE byte came up 127 (+63 c): the stock RATE default, see
+  above.
+- MIDI IN is measured since 30 Sep 2026 (ot_emu's `OT_MIDI_IN` FIFO, "MIDI
+  IN" above); until then `qz_midi` was read from the listing. The p-lock value display (hold a trig in GRID RECORDING) goes
+  through the same formatter as the knob (`+7` measured); the shot taken
+  with REC off showed no lock highlight, as stock.
 
 ## Phase 5: paraphonic chords, and the engine in DRAM (24 Sep 2026)
 
@@ -73,19 +934,327 @@ tables at `0x400d7480..0x400d7594`.
   **reads 1**, so a fresh synth track is the mono synth; the first turn of the
   knob clamps the byte into 1..4 (it lands on 4 from 32). The engine latches
   the mode per note at the voice start from the current value (`0x80000810
-  + t*72 + 8`, locks honoured): 2..4 = paraphonic, that many notes of the
-  shape, the root first, dropped from the top (`T_POLY`); the key hooks read
-  the Part's byte. **VOIC 1 is the exact mono synth of OCTATRICK4**: this
+  + t*72 + 8`, locks honoured): 2..4 = paraphonic (`T_POLY`); the key hooks
+  read the Part's byte. **VOIC 1 is the exact mono synth of OCTATRICK4**: this
   file's mono path, GLIDE legato through the quantizer's hooks, the stock
   voice lifecycle, the same level.
-- **CHRD** is slot 5 (DEP3's byte): 0..127 -> `po_shapes[raw >> 2]`, 32
-  shapes x four knob values (`---- 4TH 5TH OCT MI3 MA3 MI7 MA7 PWR MAJ MIN
-  SUS2 SUS4 DIM AUG MAJ1 MAJ2 MIN1 MIN2 MAJS MINS MAJ6 MIN6 MAJ7 MIN7 DOM7
-  M7B5 DIM7 ADD9 5OCT OCT2 OCT3`), read at each voice start from the current
-  value (`+ 11`, so a step lock makes a progression). At VOIC 1 the page
-  prints `----` whatever the byte holds (the formatter reads the current
-  track's Part VOIC) and the byte has no effect; at 2..4 it prints the
-  shape's name. Locks on CHRD work at VOIC >= 2.
+- **The level: equal power, a voice is `1 / sqrt(VOIC)` of the mono voice,
+  and a peak limiter** (29 Sep 2026, Tim: "the volume difference between
+  mono and 2 voices and 3 voices is too drastic" -- the 1/VOIC level of 28
+  Sep, -6 / -9.5 / -12 dB a note, is kept below as the record). A
+  paraphonic voice's gain is Q15 like the mono voice's, and its full value
+  is `T_GMAX = 32768 / sqrt(VOIC)` from the table `po_gmax` (**23170 at
+  VOIC 2, 18919 at 3, 16384 at 4**), latched per track at every voice start
+  from the same VOIC read the cap uses; the sum of the voices goes through
+  the limiter and is then doubled into the mono format exactly as the mono
+  path doubles `c * gain` (the high word is the sample). **A single note is
+  3.0 dB below the mono voice at VOIC 2, 4.8 dB at VOIC 3, 6.0 dB at VOIC
+  4**, and a chord of notes that are not in phase (any interval that is
+  not an octave) has the mono voice's power -- its sum's peaks reach up to
+  `sqrt(VOIC)` times the mono voice's full scale whenever the notes' peaks
+  coincide (every beat period), and a stack of octaves at full gain sits
+  there (2.0 x at VOIC 4). The mono voice's full scale is the ceiling the
+  DSP chain wants (the 28 Sep measurement: sums above it clipped
+  downstream, the format's own guard never fired), so the excess is taken
+  by a limiter.
+  - **The peak limiter** (`po_fill`'s final pass, on the summed sample
+    before the doubling) is a **gain, not a curve**: with FS = `0x20000000`
+    (32768 x 0x4000, the mono voice's full scale in the sum's Q29) the
+    frame's peak `|x|` is scanned, the track's gain `g` (`T_LIM`, Q16)
+    **releases toward 1.0 by 1/2048 of the deficit a frame (tau = 0.74 s)
+    and is pulled down to `FS / peak` at once when this frame's peak would
+    pass FS** -- the attack is the frame itself (0.36 ms), so no sample ever
+    exceeds FS and there is no overshoot; the sum only grows over the
+    8-frame attack ramp or a beat, so the gain's steps are small. At `g =
+    1.0` the samples pass untouched: a single note peaks at 0.71 FS at most
+    (VOIC 2), chords until their peaks coincide. Else each sample is `x *
+    g` (one `mac.l`, the fractional EMAC as `po_rate` uses it). A silent
+    frame (peak 0: every voice freed) and `po_free` (a chord-memory start,
+    a mono or non-synth start) reset `g` to 1.0, so a note after a chord
+    starts at full level. What it does to a chord: two notes at VOIC 2
+    (0.71 each) sum to 1.41 at each coincidence, so `g` settles near 0.71
+    and the chord's notes sit at about the 1/VOIC level while the chord
+    peaks at the mono voice's full scale, clean; the slow release keeps the
+    beat-rate ripple of `g` small (sidebands -37 dB and below, measured:
+    "The level, measured (29 Sep)" below).
+    Cost: 6 instructions a sample for the scan, 4 for the multiply (only
+    while `g < 1.0`), a `divu.l` a frame while limiting, for the 16
+    samples a frame of a paraphonic track; `|x * g| <= FS` always, so the
+    hard saturation after the doubling is only a guard.
+  - **A soft-clip curve was simulated first and rejected** (numpy, the
+    fixed-point curve `y = x` to 0.6 FS then `y = 1 - 0.16 / (|x| - 0.2)`,
+    and a 0.71 knee): with equal-power gains any two notes at VOIC 2 sum to
+    1.41 FS at every coincidence, so any waveshaper that keeps the sum under
+    1.0 FS puts intermodulation at **-17..-19 dB** below the notes on
+    ordinary chords (4TH at VOIC 2 -18.8, MAJ at VOIC 4 -16.5, OCT3 at VOIC
+    4 -18.9 dB) -- the clipping of OCTATRIK11 again, only rounder -- and the
+    0.6 knee compresses a VOIC 2 single note (0.71 FS) to -3.3 dB with a
+    -41 dB third harmonic. A curve cannot be transparent here; a gain can.
+  - The rest of the envelope follows the scale: the attack ramp is `T_GMAX
+    / 8` a frame (8 frames = 2.9 ms as the mono voice's), the release `gain
+    -= gain * k` is a ratio and is unchanged, and a voice is freed below
+    gain 64 as before (Q15 64 / 32768 = **-54 dB re the mono voice's full
+    scale**; -51 / -49.4 / -48 dB re the voice's own full level at VOIC 2 /
+    3 / 4). A releasing tail is clamped to the `T_GMAX` latched by a later
+    start, so a VOIC change never leaves a louder tail. VOIC 1, the mono
+    path, is untouched. All of it is in the DRAM unit -- no ROM bytes.
+    Measured: **"The level, measured"** below.
+  - The record, 28 Sep 2026 (OCTATRIK12/13's 1/VOIC level): `T_GMAX =
+    32768 / VOIC` (16384, 10922, 8192), so VOIC in-phase voices summed to
+    at most the mono voice's full scale and the saturation never fired,
+    at the cost of -6.02 / -9.54 / -12.04 dB a note (measured); before
+    that (OCTATRIK11) every voice was 1/2 of the mono voice at any VOIC
+    and three or four saturated (intermodulation at -19..-14 dB).
+- **VOIC 2..4 is the track's voice cap** (27 Sep 2026, OCTATRIK12; before
+  it VOIC only counted the notes of the shape a start took, so four keys
+  sounded four voices at VOIC 2): **at most VOIC voices sound on the track
+  at once, keys and chords alike.** Since 29 Sep 2026 every shape but
+  `----` is a four-note voicing and **a start with a shape plays exactly
+  VOIC voices**: the shape's first VOIC notes (priority order, the table
+  below), after **every voice of the track's previous chord is cut**
+  (`po_free` in `po_start`: sounding, releasing, whatever key started it)
+  -- **chord memory**, so two keys never mix chords and a chord's release
+  never rings into the next. With `----` a key is one voice and **VOIC is
+  the keyboard polyphony**: when the voices already active (sounding or
+  releasing) plus one would exceed VOIC, the oldest active of them is cut
+  first (releasing ones before sounding ones, in `V_AGE` order), then the
+  note takes a free voice, else the oldest releasing, else the oldest
+  sounding. What that gives:
+  - CHRD `----` (a key = one voice): VOIC 2 is a duophonic keyboard -- a
+    third key held takes the oldest of the two; VOIC 3 holds three keys,
+    VOIC 4 four. Releasing a key releases only its own voice.
+  - a shape plays 2 notes at VOIC 2, 3 at VOIC 3, 4 at VOIC 4, always:
+    `4TH` = C4 F4 / C4 F4 C5 / C4 F4 C5 F5; `MAJ` = C4 E4 / C4 E4 G4 / C4
+    E4 G4 C5; `MAJ7` at VOIC 2 = C4 B4; `OCT` at VOIC 4 = C4 C5 C6 C7.
+    VOIC is how thick the chord is.
+  - chord memory: a second key with `MAJ` at VOIC 3 replaces the first
+    chord -- only the new three notes sound. There is no sounding two
+    chords at once on one track; use two tracks.
+  - the cap is read at each start (the current value, locks honoured);
+    with `----`, voices that a lower cap no longer allows are cut at the
+    next start, not when the knob turns.
+  (Before 29 Sep 2026 a start took k = min(notes of the shape, VOIC)
+  voices and only cut the oldest active + k - VOIC: a two-note `4TH` played
+  two voices at VOIC 4 and two `4TH` keys sounded together there.)
+
+  Measured (26 Sep 2026, the panel on a copy of the OTLIVE card, OCTATRIK12
+  = octatrick-tuner BUILD 12, SCALE OFF, GLIDE OFF, INDX 0 / FDBK 0, AMP HOLD
+  INF / REL 20; T1 = FLEX slot 5 SYNTH.wav for the live keys, see the note
+  below; notes = spectral peaks over 0.5 s windows, the engine's `V_STATE`
+  bytes read beside them): keys 13, 16, 9, 11 (C4 D#4 G#3 A#3) held in
+  sequence -- **VOIC 2**: C4; C4 D#4; **G#3 D#4** (the two newest, 2 voices);
+  **G#3 A#3** (2); **VOIC 3**: ... G#3 C4 D#4 (3); **G#3 A#3 D#4** (3);
+  **VOIC 4**: all four (4); **VOIC 1**: 261.6 alone, the engine idle (the mono
+  path). The same sequence on OCTATRIK11 at VOIC 2: 2, **3, 4** voices (the
+  report). Releasing key 13 of a held 13 + 16 leaves D#4 alone (1 voice),
+  releasing 16 leaves 0. CHRD MAJ, key 13: VOIC 2 = C4 E4 (2), VOIC 3 and 4
+  = C4 E4 G4 (3); CHRD 4TH: C4 F4 (2) at VOIC 2, 3 and 4 alike. VOIC 2 + MAJ,
+  key 13 then 16 held: C4 E4, then **D#4 G4 only** (2 voices: the first
+  chord replaced); at VOIC 4: D#4 G4 A#4 plus the first chord's G4 (4
+  voices). 20 random key events at VOIC 2 (`----`) never exceed 2 sounding
+  voices, at VOIC 3 (MAJ) 3, and every voice is free once all keys are up.
+  A sequencer trig with a CHRD MAJ lock at VOIC 3 (T2): C5 E5 G5 = 1 : 1.26
+  : 1.498 (3 notes). Level, as measured then: two voices in phase reached
+  full scale, so the sum's peaks clipped and third-order products sat at
+  about -26 dB (the phase 5 level design; **changed 28 Sep 2026, "The
+  level" below**). Scripts and captures: the session scratchpad
+  `voiccap/` (`measure.py`, `t1keys.py`, `ab.py`).
+
+  **The voicings and the level, measured (29 Sep 2026)** (the panel on
+  8906, `--sound on`, bus = octatrick-tuner BUILD 13 = OCTATRIK13 with
+  this tree, a copy of the flattened-T2 card of the 28 Sep pass, T2 = FM
+  SYNTH, INDX 0 / FDBK 0 sines, AMP HOLD INF / REL 20, SCALE OFF, GLIDE
+  OFF, CHROMATIC keys, key 13 = C4; the emulator's clock reads C4 as 271.3
+  Hz, ratio 1.037, every pitch below is scaled by it; peaks and lines over
+  the last 0.5 s of a 0.9 s hold, the engine's `V_STATE` / `V_GAIN` /
+  `T_LIM` read beside them; scripts and captures in the session scratchpad
+  `level2/` -- `measure4.py`, `diag.py`, `diag2.py`). The mono voice (VOIC
+  1) peaks at **-16.49 dBFS** at C4 and within 0.02 dB of it at E4 F4 G4 B4
+  C5 F5 C6 C7: the reference.
+  - **The shapes**: `4TH` at VOIC 2 = C4 F4 (271.3, 362.1 Hz; C5 and F5
+    absent, -61 / -71 dB re the mono voice), VOIC 3 = C4 F4 C5 (+542.6),
+    VOIC 4 = C4 F4 C5 F5 (+724.3), the states 2 / 3 / 4 voices sounding;
+    `MAJ` at VOIC 4 = C4 E4 G4 C5 (271.3 341.8 406.5 542.6); `MAJ7` at VOIC
+    2 = C4 B4 (512.1); `OCT` at VOIC 4 = C4 C5 C6 C7 (271.3 542.6 1085.2
+    2170.4). `----` at VOIC 2: keys 13 + 16 = C4 D#4 (2 voices); keys 13,
+    16, 9 in sequence = **D#4 G#3, the two newest** (C4 at -99 dBFS, 2
+    voices). **Chord memory**: `MAJ` at VOIC 3, key 13 held then key 16 --
+    G4 D#4 A#4 only, C4 -80.6 and E4 -59.9 dBFS against the notes at -26
+    (the first chord replaced, 3 voices sounding).
+  - **Single notes re the mono voice**: VOIC 2 **-3.01** dB (peak -19.50
+    dBFS), VOIC 3 **-4.77** (-21.26), VOIC 4 **-6.02** (-22.52): the design's
+    -3.0 / -4.8 / -6.0, the limiter idle (`T_LIM` 1.0), no other line above
+    -80 dBFS. Gains read 23170 / 18919 / 16384.
+  - **Chords, every one peaking at the mono voice's full scale** (the
+    limiter's frame-exact ceiling; the DSP chain then adds up to 0.15 dB,
+    its flattened filter's ripple): `4TH` at VOIC 2 peak +0.03 dB re the
+    mono peak, both notes -5.95 dB re the mono voice, `g` 0.725, the largest
+    line that is not a note **-55.3 dB** below the strongest note (452.6 Hz,
+    a sideband at the notes' beat, 90.8 Hz; -57.0 in a window fully inside
+    the hold); **`OCT3` at VOIC 4, the worst case**: peak **+0.04 dB** re the
+    mono peak (twice), every note -9.45 dB re the mono voice, `g` 0.676,
+    the largest other line **-62.6 / -60.8 dB** (814 Hz = 3 x C4; -60.4
+    in-hold; the 28 Sep 1/VOIC pass had -75.3 there, with the peak 1.7 dB
+    lower); `MAJ` at VOIC 4: peak +0.13 dB, notes -10.2 dB re mono, `g`
+    0.554, largest other line **-45.6 dB** (205.9 Hz, a beat sideband);
+    `OCT` at VOIC 3: +0.10 dB, notes -9.01, `g` 0.614, -62.3 dB; `OCT` at
+    VOIC 2: +0.12 dB, notes -5.28, `g` 0.770, -67.5 dB. The numpy model of
+    the exact fixed-point limiter gives -64 (OCT3), -56 (4TH VOIC 2) and
+    -49 dB (MAJ VOIC 4): the unit does what the model does.
+  - **The limiter idle against engaged, the same voices** (`----` at VOIC
+    4, 0.5 a voice): 2 keys (the sum never passes FS) -- `g` 1.0, **no
+    other line above -80 dBFS**, peak -0.01 dB re mono; 3 keys -- `g` 0.70
+    / 0.72, largest other line -48.9 / -50.4 dB; **4 keys -- `g` 0.63, peak
+    +0.12 dB, largest other line -37.2 dB**, the worst measured: four
+    equal-tempered notes have slow beats, so `g` recovers between the tall
+    crests and is pulled down again -- the sidebands are that ripple. A
+    hold stage (keep the pulled gain for ~64 frames before releasing) would
+    remove most of it for a few instructions a frame; not done.
+  - **All voices free after every release** (states 0 0 0 0 after each
+    line, `T_LIM` back to 1.0 at the end, the mono path idle).
+
+  **The level, measured** (28 Sep 2026, the panel on 8905, `--sound on`,
+  bus = octatrick-tuner BUILD 12 with the 1/VOIC level, a copy of the
+  OTLIVE card, T2 = FM SYNTH slot 5, INDX 0 / FDBK 0 sines, AMP HOLD INF
+  / REL 20, SCALE OFF, GLIDE OFF, CHROMATIC keys; T2's FX1 FILTER and FX2
+  DELAY flattened on the copy first -- the project's resonant filter lifts
+  C5 15 dB over C4 and the delay adds echoes, which had made the first pass
+  unreadable; the emulator's clock reads C4 as 271.3 Hz, ratio 1.037;
+  peaks and lines over the last 0.5 s of a 0.9 s hold; the session
+  scratchpad `level/measure3.py`). The mono voice (VOIC 1, key 13) peaks
+  at **-16.49 dBFS** at C4, and the same at C5, C6, C7, G4 and G5 through
+  the keyboard octave (the flat chain): that is the reference.
+  - single notes: VOIC 2 **-22.52** dBFS = **-6.02** dB re the mono voice,
+    VOIC 3 **-26.03** = **-9.54**, VOIC 4 **-28.53** = **-12.04** (the
+    design's 6 / 9.5 / 12);
+  - VOIC 2: keys 13 + 16 (C4 D#4) peak -16.50; CHRD OCT (C4 C5) -16.51,
+    both lines -6.02 re the mono voice at their pitch; OCT3 at VOIC 2 takes
+    C4 C5 (the cap), -16.96;
+  - VOIC 3: keys 13 + 16 + 9 peak -16.55, the three lines -9.54; OCT3 (C4 C5
+    C6) -16.58, each line -9.54;
+  - VOIC 4: keys 13 + 16 + 9 + 11 peak -16.87, the four lines -12.04; OCT3
+    (C4 C5 C6 C7, the worst case) **-18.15** twice, every line -12.04 re the
+    mono voice at its pitch; 5OCT (C4 G4 C5 G5) -16.69; OCT with keys 13 +
+    16 (C4 C5 D#4 D#5) -17.58.
+  - **No chord peaks above the mono voice** (all within 0.06 dB of or below
+    -16.49 dBFS) and **no new spectral products**: the largest line that is
+    not a note is -69.7 dB (5OCT, 478 Hz) and -75.3 dB (OCT3) below the
+    strongest note, the noise floor -- against -19..-14 dB before this
+    change. The engine's gains read 16384 / 10922 / 8192 per voice
+    (`po_voices + 256 + 64 i + 24`).
+
+  **A quantizer bug found by this measurement, fixed 27 Sep 2026
+  (`modules/quantizer`):** `qz_polytrack` (quantizer.s, the gate that makes
+  the CHROMATIC keys post to the engine) computed the Part's LFO-page
+  offset as track * 40, not track * 24, so on every track but T1 it read
+  an unrelated byte instead of VOIC and live keys were polyphonic on T2..T8
+  only if that byte happened to be 2..4 (on the OTLIVE card copy T2's read
+  47: every key start went down the sequencer-trig path, one voice at a
+  time -- the reason the live-key measurements above were made on T1).
+  Fixed: T2's keys at VOIC 2 measure as T1's ("The tuning system").
+- **CHRD** is slot 5 (DEP3's byte): 0..127 = **shape << 2 | inversion**
+  (26 Sep 2026, the second pass of the chord recording; before it the low two
+  bits were unused): 32 shapes, each at four detents -- the root position
+  and its first, second and third inversion -- so the knob walks `MIN MIN1
+  MIN2 MIN3 MAJ MAJ1 ...` (2.8's order; `MAJ MAJ1 ... MIN` until 2.7); a
+  pattern's knob-set byte from before has 0 in the low bits and still
+  means the root position. Read at each voice start
+  from the current value (`+ 11`, so a step lock makes a progression). At
+  VOIC 1 the page prints `----` whatever the byte holds (the formatter reads
+  the current track's Part VOIC) and the byte has no effect; at 2..4 it
+  prints the shape's name and, for an inversion, its digit (`MA71`: the
+  names are three characters at most so the digit fits the four-character
+  box; `----` prints no digit). Locks on CHRD work at VOIC >= 2. **Every
+  shape but `----` is a four-note VOICING in PRIORITY order**: the shape's
+  own notes first -- the root, then the note that names the shape (the 7th
+  of a MA7, the 6th of a MA6, the b5 of a DIM, the 9th of an AD9, the 2nd
+  of an AD2), then the 3rd, then the 5th; the ninths keep their 7th before
+  the 3rd; the spreads and stacks lowest first -- then octave doublings
+  until there are four. **The engine plays the voicing of (shape,
+  inversion) with VOIC notes** (`po_voicing`): the row's notes sorted by
+  pitch; a note whose pitch class a lower note already has is a doubling
+  (the octaves of 4TH, MAJ, ..., three of them in OCT); the distinct notes
+  are rotated so the inversion's note is the bass (inversion mod the
+  distinct count: MAJ3 plays as MAJ, 4TH1 is a 5TH, OCT never inverts) and
+  the notes below it go up by octaves until above it; each doubling becomes
+  an octave of a rotated note, in ascending order; every note is taken
+  relative to the bass, which is PTCH; and the VOIC notes of the highest
+  priority sound, ascending. So `MAJ1` at VOIC 3 from E4 is E4 G4 C5 (0 3
+  8), at VOIC 4 E4 G4 C5 E5; `MA71` from E4 is E4 G4 B4 C5 at VOIC 4 and E4
+  B4 C5 at VOIC 3 (the 5th is the lowest priority of a seventh chord);
+  `MA72` from G4 is G4 B4 C5 E5. `----` is the single note and VOIC is the
+  keyboard polyphony there. Nothing else reads a shape in order (po_snap
+  snaps each note alone). **The table's order is OCTATRICK2.8's (5 Oct
+  2026; Tim's, after Elektron's Syntakt convention: the common chords
+  first, the two-note intervals last) in FOUR PASSES**: row 0 `----`; pass
+  one the triads `MIN MAJ SU2 SU4` (rows 1..4); pass two the sevenths, the
+  adds and the sixths `MI7 DO7 MA7 7S4 DI7 AD2 MD2 AD9 MI6 MA6` (5..14);
+  pass three the rest `M75 DIM AUG MI9 DO9 MA9 M69 QUA` (15..22); pass four
+  the two-note intervals `4TH 5TH OCT 3MI 3MA 7MI 7MA` (23..29, named
+  digit-first so they cannot be read as the chords `MI7 MA7`) and the
+  spreads `MAS MIS` (30, 31). The notes of every row are 2.7's; only the
+  positions moved, so **a CHRD byte saved by 2.7 or earlier (a knob
+  setting in a Part, a lock in a pattern) names another shape on 2.8** --
+  2.7's byte 36 (`MAJ`) is 2.8's `DI7`, its 4 (`4TH`) is `MIN`; a project
+  made on 2.8 reads as 2.8's table. (2.7's table, for the record: `----
+  4TH 5TH OCT 3MI 3MA 7MI 7MA 7S4 MAJ MIN SU2 SU4 DIM AUG AD2 MD2 DO9 MI9
+  MAS MIS MA6 MI6 MA7 MI7 DO7 M75 DI7 AD9 MA9 M69 QUA`, the 24 rows of the
+  first table in their old slots and the eight of 26 Sep 2026 after them.)
+  The recogniser (below) tries every (shape, inversion) voicing against
+  the keys played, so the inversions of every shape are recognised, not
+  only the eight the old table listed; since 2.8 it prefers, among equal
+  voicings, the shape with the fewest distinct notes (a two-key C F is
+  `4TH`, not `SU4`'s root and fourth, now that `4TH` sits after `SU4`).
+
+  | # (byte) | name | the four notes in priority order (semitones over the root) | VOIC 2 / 3 / 4 from C4, root position |
+  |---|---|---|---|
+  | 0 (0) | ---- | 0 -- the single note; VOIC = keys held | C4 (a key a voice) |
+  | **pass one: the triads** | | | |
+  | 1 (4) | MIN | 0, 3, 7, 12 -- root, b3, 5th, octave | C4 D#4 / + G4 / + C5 |
+  | 2 (8) | MAJ | 0, 4, 7, 12 -- root, 3rd, 5th, octave | C4 E4 / + G4 / + C5 |
+  | 3 (12) | SU2 | 0, 2, 7, 12 -- root, 2nd, 5th, octave | C4 D4 / + G4 / + C5 |
+  | 4 (16) | SU4 | 0, 5, 7, 12 | C4 F4 / + G4 / + C5 |
+  | **pass two: sevenths, adds, sixths** | | | |
+  | 5 (20) | MI7 | 0, 10, 3, 7 | C4 A#4 / + D#4 / + G4 |
+  | 6 (24) | DO7 | 0, 10, 4, 7 | C4 A#4 / + E4 / + G4 |
+  | 7 (28) | MA7 | 0, 11, 4, 7 -- root, 7th, 3rd, 5th | C4 B4 / + E4 / + G4 |
+  | 8 (32) | 7S4 | 0, 5, 10, 7 -- 7sus4: root, 4th, b7, 5th | C4 F4 / + A#4 / + G4 |
+  | 9 (36) | DI7 | 0, 6, 3, 9 -- root, b5, b3, bb7 | C4 F#4 / + D#4 / + A4 |
+  | 10 (40) | AD2 | 0, 2, 4, 7 -- add2: root, 2nd, 3rd, 5th | C4 D4 / + E4 / + G4 |
+  | 11 (44) | MD2 | 0, 2, 3, 7 -- minor add2: root, 2nd, b3, 5th | C4 D4 / + D#4 / + G4 |
+  | 12 (48) | AD9 | 0, 14, 4, 7 -- root, 9th, 3rd, 5th | C4 D5 / + E4 / + G4 |
+  | 13 (52) | MI6 | 0, 9, 3, 7 | C4 A4 / + D#4 / + G4 |
+  | 14 (56) | MA6 | 0, 9, 4, 7 -- root, 6th, 3rd, 5th | C4 A4 / + E4 / + G4 |
+  | **pass three: the rest** | | | |
+  | 15 (60) | M75 | 0, 10, 6, 3 -- m7b5: root, b7, b5, b3 | C4 A#4 / + F#4 / + D#4 |
+  | 16 (64) | DIM | 0, 6, 3, 12 -- root, b5, b3, octave | C4 F#4 / + D#4 / + C5 |
+  | 17 (68) | AUG | 0, 8, 4, 12 -- root, #5, 3rd, octave | C4 G#4 / + E4 / + C5 |
+  | 18 (72) | MI9 | 0, 10, 14, 3 -- minor 9th: root, b7, 9th, b3 | C4 A#4 / + D5 / + D#4 |
+  | 19 (76) | DO9 | 0, 10, 14, 4 -- dominant 9th: root, b7, 9th, 3rd | C4 A#4 / + D5 / + E4 |
+  | 20 (80) | MA9 | 0, 11, 14, 4 -- major 9th: root, 7th, 9th, 3rd | C4 B4 / + D5 / + E4 |
+  | 21 (84) | M69 | 0, 9, 14, 4 -- 6/9: root, 6th, 9th, 3rd | C4 A4 / + D5 / + E4 |
+  | 22 (88) | QUA | 0, 5, 10, 15 -- quartal, stacked fourths | C4 F4 / + A#4 / + D#5 |
+  | **pass four: the intervals and the spreads** | | | |
+  | 23 (92) | 4TH | 0, 5, 12, 17 -- root, 4th, their octaves | C4 F4 / + C5 / + F5 |
+  | 24 (96) | 5TH | 0, 7, 12, 19 | C4 G4 / + C5 / + G5 |
+  | 25 (100) | OCT | 0, 12, 24, 36 | C4 C5 / + C6 / + C7 |
+  | 26 (104) | 3MI | 0, 3, 12, 15 -- the minor third, doubled | C4 D#4 / + C5 / + D#5 |
+  | 27 (108) | 3MA | 0, 4, 12, 16 -- the major third | C4 E4 / + C5 / + E5 |
+  | 28 (112) | 7MI | 0, 10, 12, 22 -- the minor seventh | C4 A#4 / + C5 / + A#5 |
+  | 29 (116) | 7MA | 0, 11, 12, 23 -- the major seventh | C4 B4 / + C5 / + B5 |
+  | 30 (120) | MAS | 0, 7, 16, 12 -- the major spread: root, 5th, 10th, octave | C4 G4 / + E5 / + C5 |
+  | 31 (124) | MIS | 0, 7, 15, 12 -- the minor spread | C4 G4 / + D#5 / + C5 |
+
+  The inversion notation: `NAME` = root position (byte = # x 4), `NAME1`
+  `NAME2` `NAME3` = the first, second, third inversion (byte + 1, 2, 3):
+  the bass (= PTCH) is the shape's second, third, fourth distinct note
+  and the notes below it go up an octave. The knob's detents, measured on
+  the LFO page (`v26/out/chrd_knob_grid.png`, 2.7's table): raw 0 and 1
+  `----`, 4 `4TH`, 36 `MAJ`, 37 `MAJ1`, 38 `MAJ2`, 39 `MAJ3`, 40 `MIN`, 92
+  `MA7`, 93 `MA71`, 95 `MA73`, 96 `MI7`, 124 `QUA`, 127 `QUA3` -- on 2.8
+  the same detents read `----`, `MIN`, `DI7`, `DI71`, `DI72`, `DI73`,
+  `AD2`, `4TH`, `4TH1`, `4TH3`, `5TH`, `MIS`, `MIS3` (the formatter walks
+  the same table the engine plays from).
 - **LFO 3 is muted on a synth track whatever VOIC** (`po_lfo3` / `po_lfo3b`,
   detours at the depth read of the LFO engine's two copies -- the routine at
   `0x40003b90`, site `0x40003ca4`, and the copy inlined in the frame builder
@@ -99,9 +1268,9 @@ tables at `0x400d7480..0x400d7594`.
 
 | what | where |
 |---|---|
-| `sy_render` +0 | the kind-table entry, phase 4's wrapper: marker scan at a start, `T_POLY` latched from VOIC, PTCH/RATE neutralised around the stock call; at VOIC 1 the mono path (`po_rate` is the stock rate arithmetic as a subroutine, `sy_slew` the glide) |
-| `po_frame` | paraphonic, the second call: the key mask diff (`qz_pmask`, released keys -> their voices release), the start (`po_start`: fold the PTCH delta into the sounding voices, read `qz_pkey`, a sequencer trig releases everything, the scale mask through `SCALE_AT` (only if a `jmp` is there: a remix without the quantizer snaps nothing), VOIC, the chord byte, the first VOIC notes of the shape each snapped by `po_snap` and given a voice through `po_alloc`: free, else the oldest releasing, else the oldest sounding), then per voice: target = `V_ROOT + (PTCH word - T_REF)`, `sy_slew` on the voice's own `V_CUR`, the word folded into `0x0400..0x7c00` by octaves and the increment shifted back, ratio, index envelope, the amplitude envelope (ramp 8 frames; release `gain -= gain * k`, `po_relk[REL]`: tau = 5 ms * 1000^(rel/126), 5 ms .. 5 s, 127 = INF; freed below 64/16384) |
-| `po_fill` | both calls: clear, every sounding voice adds `c * gain` (gain Q14), the sum doubled and saturated into the mono format, L and R |
+| `sy_render` +0 | the kind-table entry (FLEX, and STATIC since 2.8), phase 4's wrapper: marker scan at a start (FLEX only: `sy_machine` reads the Part's machine byte), `T_POLY` latched from VOIC, PTCH/RATE neutralised around the stock call; at VOIC 1 the mono path (`po_rate` is the stock rate arithmetic as a subroutine, `sy_slew` the glide); on a sample track `sy_sample` (2.8): the record's PTCH word slewed through `sy_slew` (S_CUR snapped at a start in `sy_no`) and written back for the stock call -- "Pitch slides on sample tracks" above |
+| `po_frame` | paraphonic, the second call: the key mask diff (`qz_pmask`, released keys -> their voices release), the start (`po_start`: fold the PTCH delta into the sounding voices, read `qz_pkey`, a sequencer trig releases everything, the scale mask through `SCALE_AT` (only if a `jmp` is there: a remix without the quantizer snaps nothing), VOIC, the chord byte, the cap: k = min(shape notes, VOIC), the oldest active + k - VOIC voices cut through `po_steal` (releasing before sounding), then the first k notes of the shape each snapped by `po_snap` and given a voice through `po_alloc`: free, else the oldest releasing, else the oldest sounding), then per voice: target = `V_ROOT + (PTCH word - T_REF)`, `sy_slew` on the voice's own `V_CUR`, the word folded into `0x0400..0x7c00` by octaves and the increment shifted back, ratio, index envelope, the amplitude envelope (Q15, full = `T_GMAX` = 32768 / VOIC latched at the start; ramp `T_GMAX / 8` a frame = 8 frames; release `gain -= gain * k`, `po_relk[REL]`: tau = 5 ms * 1000^(rel/126), 5 ms .. 5 s, 127 = INF, clamped to `T_GMAX`; freed below 64 = -54 dB re the mono voice) |
+| `po_fill` | both calls: clear, every sounding voice adds `c * gain` (gain Q15, at most 32768 / VOIC), the sum doubled into the mono format as the mono path does (`c * g << 1`) and saturated -- a guard, since VOIC voices in phase sum to at most the mono voice's full scale -- L and R |
 | `po_snap` | a note's word snapped onto the SCALE the quantizer's way (`qz_chrom`): its semitone number from PTCH raw 64 (the scale's root) mod 12, moved to the nearest degree of the mask, the lower candidate first at each distance; whole semitones only, the word's fraction kept. The mask comes from `qz_scale_mask` through the pinned trampoline `SCALE_AT = 0x400d2ca8` (`modules/quantizer/scale.s`) -- one copy of the table |
 | `po_lfopage` | the page resolver's kind-1 load `movel #0x400d37f6,%d0; bras` at `0x40031e62`: for a FLEX track whose assigned slot is a SYNTH* sample (page.s's test) a clone of the LFO descriptor built from the stock record on first use (no Elektron bytes in the repo): slot 2 VOIC (formatter `po_fmt_voic`, range 1..4, default 1, handler 0), slot 5 CHRD (formatter `po_fmt_chord`), both always shown (nibbles 2 and 5 = 5) |
 | state | 8 track records x 128 B (the mono voice's 44 + `T_REF T_LAST T_MASK T_DK T_RK T_RATIO T_I T_W T_SCALE T_POLY`), 32 voice records x 64 B (`V_PHC V_PHM V_ENV V_INC V_INCM V_IEFF V_GAIN V_FB V_LASTM V_STATE V_KEY V_CUR V_ROOT V_AGE`), the LFO descriptor clone |
@@ -227,6 +1396,248 @@ Measured (VOIC 3, CHRD MAJ, a chord live-recorded for 0.5 s -> HOLD 4.25):
 on playback the chord ends at 0.60 s after its onset against 0.55 s in the
 live take. `poly.s` 7,764 B.
 
+### One key = one voice (26 Sep 2026, Tim's report: a doubled note at VOIC 2..4)
+
+**Reported on hardware (2.3 and earlier):** with VOIC 2 or more and CHRD
+"----", a single key sometimes sounds as two copies of the same note, a
+slight delay between them. **Root cause, found in ot_emu:** the engine gave
+a held key a second voice whenever a second START reached it for that key.
+Two sources were measured. (1) A press the firmware sees while the key is
+still its held key (`HELD` = the key): a re-press inside one key scan --
+`/key` up and down 3 ms apart, which the key scanner reports as no change
+-- or, on hardware, a key bounce. On a paraphonic track `qz_leg1` skips the
+note-off (the other keys must keep sounding) and `qz_leg2` posts a fresh
+trig, so `po_start` allocated a second voice: **two sounding voices of key
+13, both at full gain, on every such re-press** (`chord/part1c.py`: 2
+allocations, voices `(1, 13) (1, 13)`). At VOIC 1 the same press goes down
+the stock note-off + retrig path and restarts the one mono voice, which is
+why the doubling only exists at VOIC 2..4. (2) During live recording, the
+pattern's own trigs replaying under the finger: the recorder quantizes a key
+to the nearest step and a recorded trig is a sequencer trig to the engine
+(`qz_pkey` 0), which released the key's voice and allocated its own -- the
+same note twice, tens of ms apart, on the next pass (`chord/part1.py`: 2-3
+allocations a press once the pattern had wrapped). The race the report
+guessed at (the key post and the START in the other order) cannot happen:
+`qz_leg2` writes `qz_pkey`/`qz_pmask` before it posts the mailbox, and a
+hand-posted key followed by a pattern trig gave one voice. Stopped or
+playing without recording: 60 of 60 presses at VOIC 2 / 3 / 4 gave exactly
+one allocation before the fix.
+
+**The fix (`po_start`, "----" only):** a START is ABSORBED -- no release,
+no allocation -- when (1) it carries a live key whose voice is already
+SOUNDING (`V_KEY` = the key); (2) it is a sequencer trig while keys are held
+and a held key's sounding voice is at the trig's pitch (`V_ROOT` after the
+fold = the frame's word) and was allocated less than half a step ago
+(`V_FRAME`, a new field, against `po_clock`'s frames and frames a step: the
+recorder's copy is never further than half a step); and in the other order
+(3) a live key at the pitch of a sequencer note started less than half a
+step ago ADOPTS that voice (`V_KEY` := the key, its HOLD gate cleared), so
+the note sustains while the key is held and releases with it. A shape
+(chord memory), VOIC 1 and every other START are untouched; the stock DSP
+voice still restarts on every trig word, as before.
+
+**Measured (26 Sep 2026, ot_emu on the OCTATRICK2.4 bus, T2 = FMSYNTH,
+SCALE/GLIDE OFF, INDX 0 / FDBK 0, AMP HOLD INF, `chord/part1_final.py`,
+`chord/part1_audio.py`; the engine's allocation stamp `po_seq` and the
+voice states read from RAM, key 13 = C4):**
+
+| case | allocations per press | sounding voices 150-250 ms after the press |
+|---|---|---|
+| stopped, a plain press, VOIC 2 / 3 / 4, 20 presses each | 1 x 60 | 1 x 60 |
+| playing (no recording), VOIC 2, 20 presses | 1 x 20 | 1 x 20 |
+| a re-press inside one key scan (up + down 3 ms apart), VOIC 2 / 3 / 4, 20 each | 1 when the scanner saw no release (absorbed), 2 when it did (a retrigger over the first voice's release) | 1 x 60 (before the fix: 2 sounding voices of key 13 on every such press) |
+| live recording, pass 2 pressing the key again 0 / +-30 / +-50 ms from its recorded copy (6 presses) | 0 or 1 | 1 x 6 (before: 2-3 allocations, two voices) |
+| `qz_pkey` hand-posted, then a pattern trig (the other order) | 1 | 1 (V_KEY = 13) |
+| VOIC 1, key 13 | 0 (the mono path) | 261.6 Hz, `S_ON` 1 |
+| a programmed trig with CHRD MAJ at VOIC 3 | 3 | lines 261.6 / 329.6 / 392.0 Hz |
+
+Audio (REL 20, 10 ms RMS from 40 to 200 ms after the press): a plain press
+at VOIC 2 / 3 / 4 has a flat sustain, the largest step between windows 0.2-
+0.5 dB on 30 of 30 presses; the bounce presses the scanner saw as a
+release + press show the first voice's 30 ms release tail (a 3-6 dB step),
+one sounding voice.
+
+### Recording fingered chords (26 Sep 2026; the second pass the same day, after 50 takes on 2.4)
+
+With VOIC 2..4 and CHRD "----", a chord played on the CHROMATIC keys (or
+over MIDI IN) during LIVE RECORDING is recognised and the first key's step
+gets it as locks: PTCH the played bass, CHRD the shape and its inversion,
+VOIC the voices that were heard. The first pass (OCTATRICK2.4) had a join
+window of one step from the first key, a pitch-class match against eight
+inversion rows, and no idea of melodies; its measured failures (rolls
+split above ~115 ms, seventh-chord inversions recorded root-only, legato
+melodies joined into dyads, clusters and spreads collapsed, the live and
+the recorded voice counts differing, two keys in one panel scan losing
+one, a stale trig after a short take) are what the rules below fix.
+
+- **The window.** A record per track (`po_chord`, 32 B) starts at a key
+  press and keeps that key's step; a later press JOINS it while the record
+  is open: **less than 150 ms (`KR_WIN`, 413 frames, whatever the tempo)
+  since the last key that joined**, rolling, and at least one key of the
+  record still held -- a released first key no longer closes it. The
+  record is its keys still held, in order, plus the new one, four at most;
+  the recognition re-runs at every join and the last result stands. A key
+  pressed later starts a new record on its own step.
+- **The hand-over (legato).** A join is provisional for **50 ms
+  (`KR_CONF`, 138 frames; the task said one key scan, about 20 ms, but the
+  legato test's 30 ms overlap plus the panel's few ms of jitter needed
+  more)**: when another key of the record goes up inside that time, the
+  new key was a melody's next note taken with the finger still on the last
+  -- legato, not a chord -- and `po_keyrel` (the quantizer's `qz_holdrel`
+  calls it at every key release; `po_moff` for a MIDI note-off) undoes the
+  join: the record's step gets its locks from the keys before it (the
+  earlier note's PTCH again, a CHRD/VOIC lock removed or the smaller chord
+  written), and the key gets the trig of its own it was denied -- placed
+  at its own time by the stock recorder (`REC_TRIG` with the recorder's
+  context word saved at the press; the timing nudge the recorder derives
+  from a stale context, bits 7..12 of the step's word at record + 0x89a +
+  step x 2, is cleared in the RAM record and the battery-RAM mirror, since
+  the sequencer honours it and played the note a step early), its PTCH
+  lock, and for a panel key a slot in the quantizer's HOLD table with its
+  press ticks, so its release writes its length as for any key. The next
+  record is that key alone on that step, so a legato run C D E records
+  three single trigs. After 50 ms both keys were held together and the
+  join stands; the provisional key's own release never undoes it (a tapped
+  note of a held chord).
+- **The match** (`po_match`, `po_voicing`): played intervals = each key's
+  raw minus the lowest, unreduced (E4 G4 B4 C5 = 0 3 7 8). FIRST an exact
+  voicing: the root position of every shape, then the inversions shape by
+  shape (1, 2, 3) -- the voicing of (shape, inversion) for n = the keys
+  held whose intervals EQUAL the played ones is the chord; **among the
+  equal voicings of a pass the shape with the FEWEST distinct notes wins,
+  table order among equals** (2.8: the intervals sit at the end of the
+  table now, and SU4's root and fourth equal 4TH's two notes -- C F is
+  4TH, C E 3MA, C F# DIM (3 distinct) rather than DI7 (4); until 2.7 the
+  table order alone decided, and the intervals came first). Root positions
+  first, so D F A C is MI7 and not MA6's third
+  inversion, C E A is MA6 (a sixth chord without its fifth), C D is SU2
+  and not the inversion of a minor seventh; then E G C5 is MAJ1, G C5 E5
+  MAJ2, E G B C MA71, G B C E MA72, B C E G MA73, C F A# 7S4, D# F G AD2,
+  G A A# MD2, C E D5 AD9, C4 G4 E5 MAS (the spread, exact). SECOND, no
+  exact voicing: the (shape, inversion) whose n notes are the played pitch
+  classes (mod 12) with the voicing span closest to the played span (C3 E4
+  G4 is MAS), the fewest distinct notes at the same distance, then table
+  order. Nothing: the root alone (C C# D). Two exact ties changed with
+  2.8's order (the notes played back are the same either way): C A reads
+  MI6 (was MA6: both have the sixth second in priority, and MI6 is the
+  earlier row now) and C A# D5 reads MI9 (was DO9: a ninth chord at three
+  notes is root, b7, 9th for both). The second pass's ties moved the same
+  way (SU2's inversions over 7S4's for C D G5 and C F G5, MI7's over MA6's
+  for C E G A5, MI9 over DO9); every such pair plays the same notes. Every (shape, inversion)
+  voicing goes through the same `po_voicing` the engine plays with, so
+  what is recognised is what plays back.
+- **The locks**, written on the first key's step with the stock writer
+  `0x40042158` (the recorder's context word, flat slots 0 / 11 / 8; the
+  writer refuses once the recorder is off): PTCH := the lowest key (the
+  bass of the voicing on playback); with a match CHRD := shape << 2 |
+  inversion and **VOIC := min(keys, the Part's VOIC)** -- the count that
+  was heard; without one no CHRD/VOIC lock (a lock this record wrote
+  before is removed, 0xff). A joined key leaves no trig of its own and no
+  HOLD lock: the chord's length is the first key's.
+- **The cap during a chord press** (`po_st_cpress`, the engine, whether
+  recording or not): a key that follows another key within 150 ms while
+  other keys are held, on a track whose VOIC voices are all held keys'
+  sounding notes, is DROPPED -- the bass survives -- instead of the
+  oldest note being stolen; a melody's run (the previous note releasing,
+  or the last start longer ago) steals the oldest as before. So VOIC 2 +
+  C E G sounds C E live, records MAJ with VOIC 2, and plays back C E. When
+  the live voices differ from the shape's chosen notes they are left as
+  they are: VOIC 3 + D F A C sounds D F A live (C dropped) and records
+  MI7 with VOIC 3, which plays back D F C5 (the priority order: root, b7,
+  b3 -- the fifth is the first note a seventh chord loses).
+- **Two keys in one panel scan** (`po_start`'s sweep): the key handler
+  posts one start a scan (`qz_pkey` names the last key, the staged PTCH
+  lock is its pitch), so the engine starts every held key that has not
+  had its start yet (`T_SMASK`) as a key of its own, at raw = 64 + (key -
+  12) + 12 x the CHROMATIC octave -- `qz_oct` moved into the quantizer's
+  pinned mailbox (`KEYS_AT + 44`) for it -- snapped by `po_snap`, with FINE
+  carried over from the last key's word. Three keys back to back sound
+  three voices, every time.
+- **Stale records**: a record is cleared when the recorder's flag
+  `0x460d172a` reads 0 (STOP, REC off; `po_frame` checks it every frame);
+  a record older than the window or with every key up cannot be joined
+  anyway. FUNC + PLAY (pattern clear) is not detected: a chord held across
+  it would write its locks on a cleared step (the stock writer places no
+  trig there). The quantizer's HOLD slots free themselves at the release
+  that reaches them and are not cleared.
+- **MIDI IN** goes through the same `po_keyrec` (`po_mrec`) with the
+  note's identity, the same rules; `po_moff` runs the hand-over check; a
+  MIDI hand-over note gets its trig and PTCH lock but no HOLD slot (MIDI
+  notes never had one).
+- **Live sound is unchanged** apart from the cap rule: the engine plays
+  the keys you hold.
+
+**Where it runs.** `po_keyrec` runs in the UI task at the key press,
+reached from the quantizer through the pointer block before `sy_render`
+(-20 `po_keyrel`, -16 `po_knob`, -12 `po_keyrec`, -8 `po_hold128`, -4 the
+page clone): `qz_leg3` asks (d0 = -1) whether the key JOINS; `qz_leg5`
+hands a key recorded as stock over with its step. `po_keyrel` runs at the
+release, from `qz_holdrel` (twelve bytes of ROM: `movea.l KIND_FLEX,%a1;
+movea.l -20(%a1),%a1; jsr (%a1)` after the track's four slots are
+computed, with a1 pushed around it; the quantizer's MIDI note-off code was
+folded into `qz_noteoff` for the room, and the unit is 3,224 B, 28 B less
+than 2.5's). The recognition, the record, the writes and the recorder
+calls live in this DRAM unit; the engine's audio-frame context never
+calls a writer (the cap rule and the sweep only allocate voices). The
+2.5 bus had a regression here: `po_held` (MIDI IN) took a key's identity
+as its index + 1 while `po_keyrec` stored the index, so no panel-key
+chord joined on 2.5 (2.4 had `btst` on the index; 2.5's verification
+measured MIDI chords only); the records hold identities now.
+
+**Measured (26 Sep 2026, the octatrick-tuner BUILD 16 bus = OCTATRICK2.6
+on ot_emu `--dsp-rt` through the panel on 8910, a copy of the level
+card, T2 = FM SYNTH, VOIC 3 unless said, CHRD "----", SCALE OFF, GLIDE OFF,
+AMP HOLD INF / REL 40, INDX 0 / FDBK 0, 130 BPM (a step = 115 ms),
+CHROMATIC octave +1 (key 1 = C4); keys held 0.5 s, the locks read back from
+the pattern record, the live lines from the engine's voices and the take,
+playback = the lines 0.03-0.4 s after the first onset; `v26/cases.py`,
+logs `v26/out_*.log`):**
+
+| keys | recorded (one step unless said) | live | playback |
+|---|---|---|---|
+| C E G rolled 0 / 30 / 60 / 100 / 140 ms apart | PTCH C, CHRD MAJ (36), VOIC 3, one step (all five) | 3 voices C E G | C E G |
+| C E G 200 ms apart | three plain trigs (steps 6, 8, 10): expected, past the window | 3 voices | C, then E, then G |
+| G E C rolled DOWN 60 ms apart | PTCH C, MAJ, VOIC 3 | C E G | C E G |
+| E G B C (5 8 12 13) | PTCH E (68), CHRD MA71 (93), VOIC 3 | E G B | E B C5 (the fifth dropped at VOIC 3) |
+| the same at VOIC 4 | PTCH E, MA71, VOIC 4 | E G B C | E G B C |
+| G B C E played from C (1 5 6 10) | PTCH C, MA72 (94), VOIC 3 | C E F | E F A (from C: the 5th dropped) |
+| B C E G played from C (1 2 6 9) | PTCH C, MA73 (95), VOIC 3 | C C# F | C C# F |
+| E G C5 (5 8 13) | PTCH E, MAJ1 (37), VOIC 3 | E G C5 | E G C5 |
+| G C5 E5 played from C (1 6 10) | PTCH C, MAJ2 (38), VOIC 3 | C F A | C F A |
+| D# F G (4 6 8) | PTCH D#, AD2 (60), VOIC 3 | D# F G | D# F G (close) |
+| G A A# (8 10 11) | PTCH G, MD2 (64), VOIC 3 | G A A# | G A A# |
+| C E D5 (1 5 15) | PTCH C, AD9 (112), VOIC 3 | C E D5 | C E D5 |
+| C4 G4 E5 (1 8, octave up, 5) | PTCH C, MAS (76), VOIC 3: the exact pass, the spread row | C G E5 | C G E5 |
+| C F A# (1 6 11) | 7S4 (32), VOIC 3 | | C F A# |
+| C E A (1 5 10) | MA6 (84), VOIC 3 | | C E A |
+| D F A C (3 6 10 13), VOIC 3 | PTCH D, MI7 (96), VOIC 3 | D F A (C dropped: the chord press cap) | D F C5 (the priority rule) |
+| VOIC 2, C E G | PTCH C, MAJ, VOIC 2 | C E (G dropped) | C E |
+| legato C then D 100 ms apart, C up 30 ms after D | two plain trigs (steps 6, 7), no SU2 | 1 voice | C, then D |
+| C held, D added, both held | PTCH C, SU2 (44), VOIC 2 | C D | C D |
+| legato run C D E 100 ms apart, each up 30 ms after the next | three plain trigs (6, 7, 8) | | C, D, E |
+| C and G in ONE scan (three trials) | 5TH, VOIC 2 | 2 voices, every trial | C G |
+| C E G in one scan (two trials) | MAJ, VOIC 3 | 3 voices | C E G |
+| a 0.2 s take of D, FUNC + PLAY, then C E G (two trials) | MAJ, VOIC 3 alone -- no stale trig | | C E G |
+| MIDI notes 84 88 91 20 ms apart while recording | PTCH 64, MAJ, VOIC 3 | 3 voices C E G | C E G |
+| SCALE DORIAN, keys G A B | G A A# -> MD2, VOIC 3 | G A A# | G A A# |
+
+Rig notes: the level card's T2 pattern holds four trigs at boot and the
+first FUNC + PLAY after the boot did not clear them (the second did); the
+2.4 investigation's "stale trig after a 0.2 s take" was this rig
+artefact read as a firmware one (the calibrating take's trig sat beside
+them). Three keys back to back (1 + 5 + 8) no longer produced the phantom
+panel events seen on 2.4.
+
+**Limits.** A chord whose first key is lifted within 50 ms of its last key
+is taken as a hand-over (staccato rolled chords: hold them a little). A
+record has four keys; a fifth is neither recorded nor provisional. With
+VOIC below the keys the recorded shape keeps its own priorities, so the
+playback may not be the notes that sounded live (D F A live, D F C5
+back). The second pass picks the closest-spanned voicing of the right
+pitch classes, not the played spacing. VOIC 1, a Part CHRD other than
+"----", sample tracks, programmed trigs and playing without recording are
+untouched.
+
 ### What does not work, and what is left
 
 - **A four-note chord steals every voice**: only chords of three or fewer
@@ -245,7 +1656,8 @@ live take. `poly.s` 7,764 B.
   next start, which is then tagged as that key and does not release the
   notes before it -- once.
 - **MIDI**: the note-on per key is stock's; a note-off per key goes out at
-  each release (`qz_leg0`), untested (the panel has no MIDI in).
+  each release (`qz_leg0`), untested (MIDI OUT is not captured). MIDI IN:
+  "MIDI IN" above (30 Sep 2026).
 - **Hardware**: the unit executes from the arena reserve inside the audio
   interrupt; the loader is Octakit's design (her runtime runs there on her
   units) but this unit has not. The emulator's voice-start burst (phase 2)
@@ -276,9 +1688,11 @@ on the slewed word, so RATE and the locks keep working. The per-track state
 grew from 40 to 44 bytes: `S_CUR` (+40) is the current word in Q12. At a
 voice start (`sy_set`, the marker resolved) `S_CUR := PTCH << 12`. The
 setting is read through ONE accessor, `sy_glide` (d2 = track → d0), from
-the fixed address `GLIDE_AT = 0x400d2cdc` where the quantizer pins its
-byte (`glide.s`): this cave is position independent with ratified bytes
-and cannot know where the floating quantizer unit lands.
+the fixed address `GLIDE_AT` -- since 26 Sep 2026 the battery RAM byte
+`0x100b14ed` (the quantizer's `NV_GLIDE`, survives a power cycle; before,
+`0x400d2cdc` in the OS image, `glide.s`, reset at every boot): this cave is
+position independent with ratified bytes and cannot know where the
+floating quantizer unit lands.
 
 **The lag.** `cur += (target − cur) · k` per frame (T = 16/44100 s =
 0.3628 ms), so τ = T/k. τ(g) = 10 ms · 100^((g−1)/126): **10 ms at 1, 31 ms
@@ -303,7 +1717,8 @@ phase 3 and turning GLIDE on mid-note starts from where the note is. Cost:
 index-1 form), this cave at 0x400d6d00, the page cave at 0x400d24d0
 (unchanged), the quantizer at 0x400d7480 (1,484 B), its tables at
 0x400d7a80/7b00/7b80, **168 B of the third run left** (was 172), the GLIDE
-byte at 0x400d2cdc (the second run: 112 B left between the page cave and it).
+byte at 0x400d2cdc (the second run: 112 B left between the page cave and it;
+the byte moved to battery RAM 0x100b14ed on 26 Sep 2026).
 
 ### Measurements (24 Sep 2026, the panel on 8593, `--sound on`, T2 = SYNTH slot 5 of a copy of the OTLIVE card; the session scratchpad's `glide_audio2/3.py`, `glide_seq2.py`)
 
@@ -705,7 +2120,7 @@ address), `montage.py`, `session3.py`, `slotlist_check.py`, `tim_check.py`,
 
 ## Phase 2: the FM voice
 
-**A FLEX track whose sample is named `SYNTH*` plays a two-operator FM
+**A FLEX track whose sample is named `FMSYNTH*` (or `SYNTH*`) plays a two-operator FM
 voice**: `out = sin(φc + I·sin(φm + fb·m_prev))`, the carrier at the
 track's pitch, the modulator at RATIO × that pitch, the index I falling
 from INDEX toward INDEX/16 at the DECAY rate from every trig, FEEDBACK the

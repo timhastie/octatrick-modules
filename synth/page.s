@@ -3,9 +3,9 @@
 | below (pg_over) carries absolute pointers to the formatters and widgets, so
 | the bytes depend on the address.
 |
-| WHAT: when the current track's FLEX slot holds a SYNTH*-named sample, the
+| WHAT: when the current track's FLEX slot holds an FMSYNTH*- (or SYNTH*-) named sample, the
 | PLAYBACK page presents the FM voice instead of a sample player -- the slot
-| names read PTCH RATO INDX RATE FDBK DEC (four characters: the boxes are 19 px), the values format as the voice
+| names read PTCH RATO INDX FINE FDBK DEC (four characters: the boxes are 19 px), the values format as the voice
 | understands them (RATIO from the ratio table "0.25".."16", INDEX and FDBK
 | 0..127, DECAY as "HOLD" / the milliseconds alone / "1.1s" -- four characters
 | at most, the width of the value field), the four synth slots show their
@@ -16,8 +16,18 @@
 | envelope, a falling curve whose length follows the value (DECAY). Every
 | icon keeps two pixels clear of the box's dividers (23 Sep 2026: the first
 | icons carried M and C letters, ran to the edges and crowded the boxes). The
-| footer reads FM SYNTH>FLEX. Non-synth tracks and every other page draw
-| exactly as stock.
+| footer reads FM SYNTH>FLEX. THE TUNING SYSTEM (27 Sep 2026): PTCH is
+| semitones on a synth track -- range 0..127 = -64..+63, one raw unit a
+| semitone (the engine, poly.s sy_word, reads it so), printed as a signed
+| whole number ("-12", "0", "+7"; the stock formatter's "+7.0" and its
+| 5-units-a-semitone stay on sample tracks) in place of the stock
+| semitone-snapping accumulator; RATE is FINE, -64..+63 cents (raw 64 = 0,
+| "+12c"), default 64. THE KNOBS (30 Sep 2026): all six slots' handlers are
+| poly.s's po_knob, planted by po_pgdesc when it finishes the clone -- one unit
+| a detent, seven with the knob pressed, and with FUNC held PTCH 12 semitones,
+| FINE 10 cents, INDX/FDBK/DEC 16, RATO the next whole-number ratio (the
+| stock caller clamps). Non-synth tracks and every other page draw exactly
+| as stock.
 |
 | HOW: the page descriptor resolver 0x40031da4(track, page kind) returns
 | tbl[machine] for the PLAYBACK page at 0x40031ece (`movel %a0@(0,%d0:l:4),%d0;
@@ -34,11 +44,12 @@
 | cave has no room for them and, pinned at a fixed address, no way to name the
 | unit -- so it takes the builder's address from the long before sy_render,
 | whose own address the kind table's FLEX entry 0x400d6438 holds) with only
-| the fields pg_over lists changed: the names, the title, the four A
-| formatters (P+0xca), the four B widgets (P+0xfa) and the enable nibbles
-| (P+0x18e: 5/7 = bit 2 "always show the value") -- ranges, defaults and knob
-| handlers are the stock's, so storage, locks, scenes, LFOs and MIDI behave
-| exactly as before. The stock record itself is never written, and this file
+| the fields pg_over lists changed: the names, the title, the six A
+| formatters (P+0xca), the four B widgets (P+0xfa), the enable nibbles
+| (P+0x18e: 5/7 = bit 2 "always show the value") and, since the tuning
+| system, PTCH's minimum and count (P+0x6a, P+0x9a: 0 and 128), FINE's
+| default (P+0x5e+3: 64) and the two knob handlers (P+0x12a, +12: 0) --
+| storage, locks, scenes, LFOs and MIDI reach the bytes exactly as before. The stock record itself is never written, and this file
 | carries none of its bytes (26 Sep 2026: until then pg_desc was a copy of the
 | 402-byte stock record with the fields patched, 347 of them Elektron's).
 |
@@ -112,6 +123,11 @@ pg_scan1:
         subql   #1,%d4
         bne     pg_scan
 pg_scanned:
+        movew   #0x464d,%d5              | "FM": FMSYNTH* is the marker name too
+        cmpw    %a1@,%d5
+        bne     pg_fm
+        addql   #2,%a1
+pg_fm:
         lea     pg_name(%pc),%a0
         moveq   #5,%d4
 pg_cmp:
@@ -136,33 +152,44 @@ pg_name:
 pg_over:
         .short  0x009, 9
         .long   pg_title                 | P+0x009: the title, "FM SYNTH" (the footer reads FM SYNTH>FLEX)
-        .short  0x01c, 12
-        .long   pg_names_a               | P+0x01c: slots 1 2 (STRT LEN) read RATO INDX
-        .short  0x02e, 12
-        .long   pg_names_b               | P+0x02e: slots 4 5 (RTRG RTIM) read FDBK DEC
-        .short  0x0ce, 8
-        .long   pg_fmts_a                | P+0x0ce: the A formatters of slots 1 2
-        .short  0x0da, 8
-        .long   pg_fmts_b                | P+0x0da: of slots 4 5
+        .short  0x01c, 30
+        .long   pg_names                 | P+0x01c: slots 1..5 (STRT LEN RATE RTRG RTIM) read RATO INDX FINE FDBK DEC
+        .short  0x061, 1
+        .long   pg_def64                 | P+0x05e+3: FINE's default, 64 = 0 cents (stock RATE: 127)
+        .short  0x06a, 4
+        .long   pg_zero                  | P+0x06a: PTCH's minimum, 0 (stock 4) ...
+        .short  0x09a, 4
+        .long   pg_l128                  | P+0x09a: ... and count, 128 (stock 121): raw 0..127 = -64..+63 semitones
+        .short  0x0ca, 24
+        .long   pg_fmts                  | P+0x0ca: the six A formatters
         .short  0x0fe, 8
         .long   pg_wids_a                | P+0x0fe: the B widgets of slots 1 2
         .short  0x10a, 8
         .long   pg_wids_b                | P+0x10a: of slots 4 5
+        .short  0x12a, 4
+        .long   pg_zero                  | P+0x12a: PTCH's knob handler, 0 (stock: the semitone-snapping
+        .short  0x136, 4                 | accumulator 0x40032d08, built for 5 a semitone) ...
+        .long   pg_zero                  | P+0x12a+12: FINE's, 0 (stock RATE: 0x400328e4) -- both moot since
+                                         | 30 Sep 2026: po_pgdesc finishes the clone by planting poly.s's
+                                         | po_knob in all six slots (one unit a detent, x7 pressed, FUNC's
+                                         | per-knob jump; the DRAM unit's address is unknown to this cave)
         .short  0x18e, 4
         .long   pg_nibbles               | P+0x18e: the enable nibbles
         .short  -1, 0
         .long   0
 pg_title:
         .asciz  "FM SYNTH"
-pg_names_a:
-        .ascii  "RATO\0\0INDX\0\0"
-pg_names_b:
-        .ascii  "FDBK\0\0DEC\0\0\0"
+pg_names:
+        .ascii  "RATO\0\0INDX\0\0FINE\0\0FDBK\0\0DEC\0\0\0"
+pg_def64:
+        .byte   64
         .align  4
-pg_fmts_a:
-        .long   pg_fmt_ratio, FMT_PLAIN
-pg_fmts_b:
-        .long   FMT_PLAIN, pg_fmt_decay
+pg_zero:
+        .long   0
+pg_l128:
+        .long   128
+pg_fmts:
+        .long   pg_fmt_ptch, pg_fmt_ratio, FMT_PLAIN, pg_fmt_fine, FMT_PLAIN, pg_fmt_decay
 pg_wids_a:
         .long   pg_wid_ratio, pg_wid_index
 pg_wids_b:
@@ -179,6 +206,28 @@ pg_nibbles:
 | ---- the formatters: fmt(buf, value), C convention ----------------------------
 | INDEX and FDBK print 0..127 as stored through the stock's own "%d" formatter,
 | FMT_PLAIN (26 Sep 2026: this cave's copy of it was the same 26 bytes).
+
+pg_fmt_ptch:                             | PTCH on a synth track: raw - 64 as a signed whole number, "-12" "0" "+7"
+        movel   %sp@(8),%d0              | raw
+        subil   #64,%d0
+        lea     pg_f_plus(%pc),%a0       | "+%d" above 0 ...
+        bgt     pg_fp_go
+        lea     FMT_D,%a0                | ... "%d" otherwise (0, and the minus sign is the number's own)
+pg_fp_go:
+        movel   %d0,%sp@-
+        movel   %a0,%sp@-
+        movel   %sp@(12),%sp@-           | buf
+        jsr     SPRINTF
+        lea     %sp@(12),%sp
+        rts
+
+pg_fmt_fine:                             | FINE: raw - 64 cents, "-64c" "0c" "+12c" (four characters at most)
+        movel   %sp@(8),%d0
+        subil   #64,%d0
+        lea     pg_f_plusc(%pc),%a0      | "+%dc"
+        bgt     pg_fp_go
+        lea     pg_f_dc(%pc),%a0         | "%dc"
+        bra     pg_fp_go
 
 pg_fmt_ratio:                            | the ratio table's entry: "0.25" "1" "1.41" "3.5" "16"
         movel   %d2,%sp@-
@@ -492,6 +541,12 @@ pg_f_s:
         .asciz  "%d.%ds"
 pg_f_hold:
         .asciz  "HOLD"
+pg_f_plus:
+        .asciz  "+%d"
+pg_f_plusc:
+        .asciz  "+%dc"
+pg_f_dc:
+        .asciz  "%dc"
 pg_env:                                  | 11 * exp(-i/5), i = 0..16; the floor is row 1
         .byte   11, 9, 7, 6, 5, 4, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 1
         .align  2

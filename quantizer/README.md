@@ -1,6 +1,8 @@
 # Scale quantizer
 
-(24 Sep 2026: polyphonic CHROMATIC keys on a paraphonic synth track -- "Paraphonic keys" below.)
+(24 Sep 2026: polyphonic CHROMATIC keys on a paraphonic synth track -- "Paraphonic keys" below.
+27 Sep 2026: the synth tracks' tuning units and the -4..+4 CHROMATIC octave -- "Synth tracks: semitone units" below.
+2 Oct 2026: the legato switch is the track's LEG setting (3 Oct 2026: on every audio track -- OFF / MONO on a sample track), GLIDE is the slide time only -- "The LEG gate" below.)
 
 **PROJECT > CONTROL > SEQUENCER gains a fourth row, SCALE** (OFF, then 24
 scales). With a scale on, the **PTCH knob** on the PLAYBACK page of a
@@ -12,7 +14,8 @@ becomes the pitch the voice, the recorded lock and the screen see. The
 Digitakt / Digitone scale quantizer, on the Octatrack's own parameters.
 **OFF is stock**: every detour replays what it displaced and does nothing
 else. The setting is saved with the project and comes back after a cold
-boot. RATE is a playback rate, not a semitone quantity, and is left alone.
+boot. RATE is a playback rate, not a semitone quantity, and is left alone
+(on a synth track it is FINE, cents, since 27 Sep 2026 -- `modules/synth`).
 
 **24 Sep 2026: a fifth row, GLIDE** (OFF, 1..127) — the SYNTH machine's
 glide time (`modules/synth`: 10 ms at 1, 100 ms at 64, 1 s at 127) and,
@@ -71,6 +74,58 @@ build).
 
 ## Where the setting lives, and how it persists
 
+**26 Sep 2026 -- the settings moved into battery-backed RAM** (Tim's MKI,
+OCTATRICK9: PROJECT > SAVE, power off, SCALE and GLIDE back to OFF). The
+serializer hooks were never the problem: SAVE writes `project.work` through
+the one serializer `0x40088288` (`0x4008fe40`, the same call SYNC TO CARD
+makes) and then copies every `.work` to its `.strd` file by file
+(`0x4008ee74`: project, markers, bank01-16, arr01-08 -- `0x40016388` per
+pair), so after SAVE `project.strd` == `project.work`, `#SEQUENCER_SCALE=n`
+and `#SYNTH_GLIDE=n` in both (measured, the three lines are the only
+difference from a stock-firmware SAVE of the same project, the binary files
+byte-identical). RELOAD copies `.strd` back over `.work` (`0x4008f180`) and
+loads; PROJECT > CHANGE / RELOAD load `project.work` through the one loader
+(`0x4009000c`: a parse-only pass, then `0x40025848` = the project defaults,
+then the storing pass). **A power cycle reads no project file.** The unit
+comes back from its battery RAM (CS1, `0x10000000..`): the boot
+(`0x4001fa24..0x4001fbb4`) checks the checksum at `0x100fff00` over
+`0x100fff04..ff` (cold -> the whole 1 MB cleared, `0x40025848`), sanitises
+the settings block (`0x4000fec8`: `0x100b14ae` = CHAIN AFTER clamped 0..16
+at `0x40010212..`) and memcpy's it to the live copy (`0x100b1480` -> `0x80000020`,
+0x4c bytes, `0x100b14cc` -> `0x80000000`, 0x16) -- CHAIN AFTER is back
+because its setter and the loader write the mirror `0x100b14ae` as well as
+`0x8000004e`. Our two bytes lived in the OS image (`qz_scale` in this unit,
+`qz_glide` pinned in `glide.s`), which the bootstrap copies from flash at
+every power-on: OFF. The emulator never showed it because its RAM is empty
+at every start and the rig loads the project through the loader, which
+reads the lines back. Now the setting IS a battery byte: **SCALE at
+`0x100b14ec`, GLIDE at `0x100b14ed`**, the linker's padding between the
+block's last long `0x100b14de..e1` and the 16-byte-aligned project record
+`0x100b14f0` (no reference in the OS; outside both memcpy'd blocks; a
+`watchmem` over `0x100b14e2..ef` through boot, load, menu, PLAY, SAVE and
+SYNC saw only the cold boot's whole-RAM clear). Every reader and writer uses
+the byte in place (`lea qz_scale,%a0` absolute, `qz_glide_of`, the synth's
+`sy_glide` at the same `GLIDE_AT`); two jsr detours keep it sane:
+`qz_boot` at `0x40010212` inside the sanitiser (out of range -> OFF, then the
+displaced `tst.b 0x100b14ae` so the caller's `bge` sees its flags) and
+`qz_defaults` at `0x40025ac2` inside the project defaults (OFF with the
+block: a cold boot, a boot with no project, every load before it stores, a
+new project). `glide.s` is gone; 424 B of cave left (`octatrick-usb`).
+Measured in `ot_emu` with the battery RAM dumped at the child's `quit` and
+preloaded at the next start, no LOAD PROJECT posted (the hardware's
+power-on; `OT_SRAM_OUT` / `OT_SRAM_IN` / `OT_NO_LOAD`, a test rig in the
+emulator): OCTATRICK9 after SAVE + power cycle: CHAIN AFTER DIRECT restored,
+SCALE 0, GLIDE 0 -- the report; this build: SCALE MIXOLYD (5) / GLIDE 82 /
+DIRECT on the SEQUENCER window of the warm-booted unit. SYNC TO CARD writes
+`project.work` only (6/80 there, `.strd` keeps SAVE's 5/82); SAVE 7/90, edit
+to 3/10, RELOAD -> 7/90, both files 7/90; set 8/100 unsynced, PROJECT >
+CHANGE to the same project -> the unit first writes the working state
+(`project.work` 8/100, every `.work` rewritten, `.strd` untouched at 7/90)
+and loads it back: 8/100, the lines following CHAIN AFTER through the same
+files. A cold-booted rig (fresh RAM, the load posted) reads the file's
+values every time: 5/82, 6/80, 7/90 after SAVE, SYNC, RELOAD.
+`make check REMIX=octatrick-usb` ALL GATES PASSED.
+
 The SEQUENCER window (`0x40065b14` draws it, `0x40065c7c` creates its
 list state at `0x460e43d8` with `pea 3; pea 3` = count / visible,
 `0x40065cec` handles keys, `0x40065c98` the LEVEL knob) is a generic list
@@ -88,8 +143,8 @@ lacked is indexing the tables from the scroll offset — it started at 0
 replaces that. [DOWN] three times shows `SCALE`, the LEVEL knob steps it
 (clamped: −4 from PHRYGN stays OFF, +30 stops at LYD.DOM, a single report
 of +3 from OFF is PHRYGN; `remix_menu.log`, `a*`), [YES] steps it with
-wrap-around like CHAIN AFTER. The value byte `qz_scale` lives in the unit
-(`0x400d6b80`; the main OS runs from DRAM) and is 0 in the image.
+wrap-around like CHAIN AFTER. The value byte `qz_scale` lived in the unit
+until 26 Sep 2026; it is the battery RAM byte `0x100b14ec` now (above).
 
 **The project file.** `project.work` is text, `KEY=value` lines. The
 loader (`0x400866c4`, a strcmp chain per line) **rejects an unknown key**
@@ -107,6 +162,53 @@ storing pass (`58(%sp)` = 0); and the loader's entry resets the byte to
 OFF for a storing pass (second argument ≠ 0), so a project without the
 line loads as OFF.
 
+## Synth tracks: semitone units, and the extended CHROMATIC octave (27 Sep 2026)
+
+`modules/synth`'s tuning system makes a synth track's PTCH byte semitones
+(raw 64 = 0, one unit a semitone, -64..+63; its page clone gives the slot
+the range 0..127) and its RATE byte FINE (cents). This unit follows those
+units on a synth track (`qz_is_synth` / `qz_ui_synth`: FLEX, the assigned
+slot's sample named SYNTH*) and leaves sample tracks byte for byte:
+
+- **The PTCH knob and the p-lock editor** (`qz_knob`, `qz_plock` ->
+  `qz_quant`): a degree is a raw whose pitch class (raw - 64) mod 12 is in
+  the scale, every raw a semitone (`qz_pcof` computes it; sample tracks
+  still look raw - 4 up in `qz_pcraw`, 5 a semitone); the range is the
+  descriptor's, 0..127 on the synth page.
+- **The CHROMATIC keys** (`qz_chrom`): on a synth track the key index the
+  stock handler carries is the physical key, 0..15 (key 12 = [TRIG 13] =
+  the root), and the pitch is raw = 64 + (key - 12) + 12 * octave, snapped
+  by pitch class onto SCALE (nearest degree, the lower first at each
+  distance -- the rule po_snap follows), a2 := that raw for the staged
+  lock byte, the live recorder's PTCH lock and the screen.
+- **The octave**: stock keeps one word, `0x460d16fc`, 0 or 1 -- FUNC +
+  LEFT and FUNC + RIGHT both `eor` it (0x40045918), the handler's caller
+  adds 12 * word to the key (0x40050254), the drawer chooses the 16- or
+  13-key picture by it (0x40044968), prints it with `%d` (0x400449b8) and
+  places the held-key marks with it (0x40044abe); at 1 keys 14..16 give
+  index 25..27, which the handler refuses. On a synth track the octave is
+  **`qz_oct`, -4..+4** (a byte of the pinned mailbox `keys.s`, `KEYS_AT +
+  44` = `0x400d2cdc`, since 26 Sep 2026 -- the synth engine reads it to
+  pitch a key the handler never posted; 0 at boot): `qz_octkey` steps
+  it (LEFT down, RIGHT up, key codes 0x34 / 0x21 read from the handler's
+  argument) and clears the stock word; `qz_keyidx` makes the caller's
+  index the key itself; `qz_octdraw` clears the word before the picture
+  choice, so the picture, the number and the marks draw at stock octave 0;
+  `qz_octnum` prints `qz_oct` instead of the word. So the stock handler's
+  range check, held-key byte, MIDI note out (72 + key: octave 0's notes,
+  whatever `qz_oct`) and this unit's key mask (bit = key) are unchanged.
+  Sample tracks: the displaced instructions.
+- **MIDI IN** is modules/synth's since 30 Sep 2026 (its `po_mon` at the
+  chromatic block's START `0x4000e746` replaced this unit's `qz_midi` at
+  `0x4000e74c`: raw = note - 20 on a synth track, the full range, the note
+  posted to the engine as a key of its own; sample tracks stock).
+
+Five more detours (all `jmp` + nop over 8 displaced bytes) and the
+`qz_polytrack` offset fix (track * 24, not track * 40, so VOIC is read on
+every track and T2..T8's keys reach the paraphonic engine as T1's did):
+the unit is 3,404 B (was 3,000). Measurements: `modules/synth/README.md`,
+"The tuning system".
+
 ## What was hooked, and what is displaced
 
 All addresses are the stock 1.40C main OS at `0x40000400` (listing:
@@ -120,6 +222,10 @@ stock bytes before anything is written (`manifest.py`).
 | `0x4004fc58` CHROMATIC key → pitch | `45f2 ac04 71b9 100b14cf` — `lea (4,%a2,%a2.l*4),%a2; mvz.b 0x100b14cf,%d0` | jsr + 2 nops | `qz_chrom` | the two, after snapping a2 |
 | `0x4004fbfe` CHROMATIC key handler, the note-off gate | `4ab9 46c7dd26 663e` — `tst.l 0x46c7dd26; bne 0x4004fc44` | jmp + nop | `qz_leg1` | the FUNC test; with GLIDE on and a key held: the old key's MIDI note-off, `jmp 0x4004fc44` (no voice note-off); else `jmp 0x4004fc06` / `0x4004fc44` as stock |
 | `0x4004fc94` the same handler, sample trig vs trigless | `4ab9 46c7dd26 6716` — `tst.l 0x46c7dd26; beq 0x4004fcb2` | jmp + nop | `qz_leg2` | the FUNC test; with GLIDE on and a key held: held := the new key, `jmp 0x4004fc9c` (the trigless trig); else `jmp 0x4004fcb2` / `0x4004fc9c` as stock |
+| `0x40050254` CHROMATIC key handler's caller | `2039 460d16fc 2200` — `move.l 0x460d16fc,%d0; move.l %d0,%d1` | jmp + nop | `qz_keyidx` | both; a synth track: d0 = d1 = 0; `jmp 0x4005025c` |
+| `0x40045918` FUNC + LEFT/RIGHT, CHROMATIC | `7401 b5b9 460d16fc` — `moveq #1,%d2; eor.l %d2,0x460d16fc` | jmp + nop | `qz_octkey` | both; a synth track: `qz_oct` +-1 (clamped -4..+4), the word := 0; `jmp 0x40045920` |
+| `0x40044968` CHROMATIC drawer, picture choice | `7201 b2b9 460d16fc` — `moveq #1,%d1; cmp.l 0x460d16fc,%d1` | jmp + nop | `qz_octdraw` | both (the compare last: the `bne` after reads its flags), after clearing the word on a synth track; `jmp 0x40044970` |
+| `0x400449b8` CHROMATIC drawer, the number | `2039 460d16fc 2f00` — `move.l 0x460d16fc,%d0; move.l %d0,-(%sp)` | jmp + nop | `qz_octnum` | both; a synth track pushes `qz_oct`; `jmp 0x400449c0` |
 | `0x40065bca` SEQUENCER draw loop | `4282 4fef 0020` — `clr.l %d2; lea 32(%sp),%sp` | jmp | `qz_draw` | the `lea`; d2 := scroll offset × 4; `jmp 0x40065bd0` |
 | `0x400866cc` project loader entry | `2c2f 05c0 202f 05c4` — `move.l 1472(%sp),%d6; move.l 1476(%sp),%d0` | jmp + nop | `qz_ld_entry` | both; `jmp 0x400866d4` |
 | `0x400867a2` project loader, the `#` check | `122f 048f 7101 7a23` — `move.b 1167(%sp),%d1; mvs.b %d1,%d0; moveq #35,%d5` | jmp + nop | `qz_ld_line` | the three; `jmp 0x400867aa` (or `0x40088224`, next line, when the line is ours) |
@@ -186,7 +292,50 @@ pushed; `qz_chrom`: d0, d1; `qz_quant` saves all but d2); ColdFire
 uses only ISA_A+ forms the stock code itself uses (`mvs/mvz`, `btst
 Dn,Dy`, long compares, `mulu.l Dy,Dx`).
 
+## The LEG gate (2 Oct 2026)
+
+**What a CHROMATIC key pressed while another key of the track is held does
+is the track's LEG setting** -- the AMP SETUP page's sixth box, a Part byte
+saved with the project (`modules/synth/README.md`, "LEG"): OFF / MONO /
+POLY on a synth track, **OFF / MONO on every other audio track** (3 Oct
+2026) -- not GLIDE any more, on any track: GLIDE is the slide time only
+(the synth's; a sample track's legato has no slide), and with LEG OFF the
+synth engine does not glide at all (sequenced trigless trigs step). **The
+gate reads LEG on every track**: a sample track with LEG MONO takes the
+trigless path below (instant pitch, no retrigger, as GLIDE != 0 did in
+2.6); `po_legmode` returns 1 on a non-synth track with a nonzero LEG byte,
+0 with LEG OFF -- the engine's rule, this unit's bytes unchanged (2.7's
+first build returned 0 there, its second read GLIDE). The two legato detours ask the
+synth engine: `qz_legmode` reads the engine's pointer block (-24 of
+`sy_render`, whose address the kind table's FLEX entry holds; `qz_clock`
+nonzero says the engine is there) and jumps to `po_legmode(track)`, which
+returns **0 stock** (a sample track with LEG OFF, or a synth track at
+VOIC 1 with LEG OFF: the held note ends, the new one starts), **1 mono
+legato** (VOIC 1, LEG MONO or POLY, or a sample track with LEG MONO:
+the section below, unchanged), **2 paraphonic** (VOIC
+2..4, LEG OFF or MONO: "Paraphonic keys" below, unchanged) or **3
+paraphonic legato** (VOIC 2..4, LEG POLY: the key joins the held mask as a
+paraphonic key does, the engine's `po_legkey` (-28) is told the key -- the
+flag first, then the trigless trig it waits for -- `qz_legato` is set so
+the live recorder writes a trigless trig, and the stock trigless path
+follows; the engine slides the sounding chord to the key, "----" the
+newest voice). `qz_leg1` (the note-off block): 0 -> stock, the held key's
+HOLD lock written on a synth track; 1 -> the old key's MIDI note-off, no
+voice note-off; 2 / 3 -> no note-off at all (a key's comes with its
+release). `qz_leg2` (the trig): 0 -> the stock trig; 1 -> the trigless trig,
+the new key the held key, the chain continued; 2 -> the mask, `qz_pkey`,
+the stock trig; 3 -> the mask, `po_legkey`, `qz_legato`, the trigless trig;
+a first key (no other key in the mask) takes the fresh trig whatever the
+mode. `qz_leg0` (the release) and the recorder hooks are unchanged. The
+unit grew from 3,224 to 3,268 bytes (`qz_legmode` 24 B, the two hooks
++20 B); the main cave's 168 B are untouched (the build's ledger line).
+`qz_polytrack` is the release path's alone now; `qz_glide_of` serves the
+SEQUENCER row's getter and the project writer.
+
 ## GLIDE and legato (24 Sep 2026)
+
+(2 Oct 2026: the legato below is LEG MONO / POLY at VOIC 1 now; GLIDE no
+longer switches it. The measurements stand.)
 
 **The row.** `PROJECT > CONTROL > SEQUENCER`, [DOWN] ×4: `GLIDE OFF`; the
 LEVEL knob steps it 1..127 (clamped), [YES] steps with wrap-around
@@ -198,15 +347,14 @@ shared clamp-or-wrap tail, a0 = the byte, d1 = its maximum). The getter
 prints the number with the firmware's `sprintf` (`0x40013a08`, `"%d"` at
 `0x400b465d`) into a buffer in the unit.
 
-**The byte.** `qz_glide` is **pinned at `0x400d2cdc`** (`glide.s`, a
-4-byte `Linked` unit; the last long of the second zero run
-`0x400d24d0..0x400d2ce0`, whose start holds the synth's page cave) because
-two units read it: this one by symbol (the build's link resolves it) and
-the synth voice cave, which is position independent with ratified bytes and
-therefore reads an OS absolute. Each unit has ONE accessor (`qz_glide_of`
-here, `sy_glide` in `synth.s`: d2 = track → d0 = 0..127), so the storage can
-move — the AMP page's XVOL slot was considered and rejected for this
-build (`modules/synth/README.md`, "AMP slot F").
+**The byte.** `qz_glide` is the battery RAM byte **`GLIDE_AT = 0x100b14ed`**
+(since 26 Sep 2026, "Where the setting lives" above; until then pinned at
+`0x400d2cdc` in the OS image, `glide.s`, and lost at every power-on)
+because two units read it: this one and the synth voice engine, which reads
+an OS absolute. Each unit has ONE accessor (`qz_glide_of` here, `sy_glide`
+in `synth.s`: d2 = track → d0 = 0..127), so the storage can move — the AMP
+page's XVOL slot was considered and rejected for this build
+(`modules/synth/README.md`, "AMP slot F").
 
 **The project line.** `qz_wr` prints `#SEQUENCER_SCALE=%d` then
 `#SYNTH_GLIDE=%d` (a shared `qz_wr_line`); `qz_ld_line` matches either key
@@ -244,8 +392,8 @@ a 17 saved by the 13 Sep build, clamped; SCALE MIXOLYD; GLIDE OFF), PROJECT
 > CONTROL > SEQUENCER, [DOWN] ×4 → `GLIDE OFF` (list state offset 2,
 cursor 4, count 5, visible 3); LEVEL +1 → 1, +63 → 64, +100 → 127
 (clamped), −127 → OFF, −3 → OFF, +64 → 64, [YES] → 65, at 127 [YES] → OFF
-(wrap); [UP] → SCALE, [UP] → LFO AUTO CHANGE. The byte at `0x400d2cdc`
-followed every step. CHAIN AFTER on the same window: PAT.LEN → **DIRECT**
+(wrap); [UP] → SCALE, [UP] → LFO AUTO CHANGE. The byte (then at
+`0x400d2cdc`, now `0x100b14ed`) followed every step. CHAIN AFTER on the same window: PAT.LEN → **DIRECT**
 → 2/16 by LEVEL +1, DIRECT + [YES] → 2/16, −20 → PAT.LEN; the byte
 `0x8000004e` / mirror `0x100b14ae` read 0 → 1 → 2.
 
@@ -295,7 +443,9 @@ a FILTER with BASE 0 / WIDTH 72, its response, not the voice.)
 DIRECT, SCALE MIXOLYD, GLIDE 64 → the card's `OTLIVE/PROJECT/project.work`
 reads `PATTERN_CHANGE_CHAIN_BEHAVIOR=1` / `#SEQUENCER_SCALE=5` /
 `#SYNTH_GLIDE=64` (read on the Mac through `/card/eject`); `/card/insert`
-(a power cycle) reloads `0x8000004e = 01`, `0x400d2cdc = 40`.
+(the rig's reboot: a fresh RAM and a project load, not the hardware's
+power cycle -- see 26 Sep 2026 above) reloads `0x8000004e = 01`,
+`0x400d2cdc = 40`.
 Then the migration cases, editing the mounted card's `project.work` and
 `/card/insert`-ing (`pt3/`, `bc/`): `PATTERN_CHANGE_CHAIN_BEHAVIOR=17` +
 `#SYNTH_GLIDE=100` (a project saved by the 13 Sep DIRECT JUMP build) →
@@ -391,6 +541,41 @@ from the note's onset, "ends" = the bin that drops below -40 dBFS):
 Sizes: `quantizer.s` 2,916 B (`REMIX=tim make cf`, at `0x400d6d00`), `keys.s`
 44 B, **680 B of the third run left**.
 
+**Fingered chords (26 Sep 2026):** every CHROMATIC key of a synth track
+that reaches the recorder is handed to the synth engine's `po_keyrec`
+(`modules/synth/poly.s`, "Recording fingered chords"), reached through the
+pointer block the engine publishes before `sy_render` (the kind table's
+FLEX entry `0x400d6438`: -12 `po_keyrec`, -8 `po_hold128`, -4 the page
+clone), once `qz_clock` says the engine has run. Twice: `qz_leg3`, at the
+recorder's entry, asks (d0 = -1) whether the key joins the chord being
+recorded -- then the chord's step has its PTCH / CHRD / VOIC locks and the
+key skips the stock recorder (`jmp 0x4004fd3e`: no trig, no PTCH or HOLD
+lock of its own); else the key is recorded as stock and a fourth recorder
+detour, `qz_leg5` at `0x4004fd20` (`lea %sp@(20),%sp; bras 0x4004fd3e`,
+right after the recorder's PTCH lock write), hands track, key, the step
+`qz_leg4` stashed in `qz_step` and the raw pitch over to start the next
+chord record. The recognition and the lock writes live in the engine
+(DRAM); this unit only passes the key on. `qz_hold128`, the 256-byte copy
+of the HOLD table, is gone: `qz_holdrel` reads the engine's `po_hold128`
+through the same block (the `qz_clock` check above it guarantees the engine
+is there). The unit was 3,252 B then (3,408 B before).
+
+**The hand-over rule (26 Sep 2026, the second pass):** `qz_holdrel` --
+every CHROMATIC key release on a paraphonic synth track goes through it
+(`qz_g0_para`), and the VOIC 1 paths too -- calls the engine's `po_keyrel`
+(the block's -20) once it has the track's four HOLD slots in a0, with d0 =
+the key: twelve bytes of ROM (`movea.l KIND_FLEX,%a1; movea.l -20(%a1),%a1;
+jsr (%a1)`, a1 pushed around it since the tick pointer lives there). A
+key that joined a chord less than 50 ms before another key of the chord
+went up was a legato hand-over, not a chord: the engine undoes the join,
+gives the key its own trig at its own time and creates its HOLD slot
+among the four (key, step, in use, its press ticks), so this unit's own
+release path writes the note's length as for any key. To pay for the
+hook the two copies of the MIDI note-off (the legato and the paraphonic
+release) became `qz_noteoff`, and `qz_oct` moved into the pinned `keys.s`
+(45 B now; the run ends at `0x400d2ce0`), where the engine can read it:
+the unit is **3,224 B**, the main cave unchanged at 168 B left.
+
 ## Paraphonic keys (24 Sep 2026)
 
 The synth machine's LFO page has a VOIC slot (`modules/synth/README.md`
@@ -423,7 +608,8 @@ play C4 and G#3; at VOIC 4 keys 13, 9, 6 pressed in turn and released in
 turn play `[C4] [C4 G#3] [C4 G#3 F3] [G#3 F3] [F3]` then silence; a MAJ
 chord under DORIAN or PHRYGN comes out 1 : 1.189 : 1.498 (minor), under
 SCALE OFF 1 : 1.26 : 1.498. Unit size: `quantizer.s` 1,888 B (`REMIX=tim
-make cf`, at `0x400d6d00`), `scale.s` 6 B, `keys.s` 40 B, `glide.s` 4 B.
+make cf`, at `0x400d6d00`), `scale.s` 6 B, `keys.s` 40 B, `glide.s` 4 B
+(gone since 26 Sep 2026; `quantizer.s` 3,000 B in `octatrick-usb` BUILD 10).
 
 ## Measurements (all `out/_agents/quantizer/`)
 
@@ -557,12 +743,15 @@ mode_views" (the Makefile's SKIP).
   stock reader rejects unknown keys.
 - **Both halves are flashed**: SCALE since OCTATRICK1, GLIDE as OCTATRICK9
   on an MKI, 26 Sep 2026 (emulator-verified since).
-- **Legato and live recording**: a legato key press is recorded as a
-  normal trig with its PTCH lock, not as a trigless trig (stock's
-  recording path is untouched); place trigless trigs by hand for slides.
+- **Legato and live recording** (fixed 24 Sep 2026, "Legato and the live
+  recorder"): a legato press records a trigless trig with its PTCH lock;
+  since 2 Oct 2026 a paraphonic legato press (LEG POLY) does the same.
 - **The old key's MIDI note-off** goes out at the legato press (as stock
   sends it before a fresh trig), so an external mono synth does not see a
   MIDI legato.
+- **A sample track's keys are stock since 2 Oct 2026**: the legato switch
+  is the synth track's LEG setting (`modules/synth`), so GLIDE no longer
+  gives a sample track legato (FUNC + key still slides it, stock).
 
 Background: `docs/firmware/PARAM_PAGES.md` (the descriptor layout),
 `docs/firmware/midi_re_note.md` (the chromatic lock block),
