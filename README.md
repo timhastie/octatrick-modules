@@ -29,8 +29,8 @@ to watch.
   and three inversions (MIN MIN1 MIN2 MIN3 MAJ ...): VOIC 2 / 3 / 4 plays
   2 / 3 / 4 notes of any shape, a new chord replaces the last; lockable
   per step, snapped to SCALE); a voice is 1/sqrt(VOIC) of the mono voice,
-  equal power, with a peak limiter holding the sum at the mono voice's
-  full scale. A chord fingered on the CHROMATIC keys or over MIDI IN
+  equal power; since 2.9 there is no limiter (a full 4-note chord sits
+  about 6 dB above a single note and never clips). A chord fingered on the CHROMATIC keys or over MIDI IN
   during live recording (VOIC 2..4, CHRD "----") is recognised and
   recorded as locks on the first key's step -- keys within a rolling 150
   ms of each other, at any tempo; PTCH the bass, CHRD the shape AND its
@@ -136,16 +136,24 @@ built on its own; it is linked into an octabam checkout.
 
 ## Status
 
-`octatrick-usb` at tag `v9` (OCTATRICK9) is flashed and in use on the
-author's Octatrack MKI (26 Sep 2026): the synth, the quantizer and direct
-jump work, and USB audio works on the MKI on all 20 channels. Tag `v10`
-(the runtime page clone, SCALE/GLIDE in battery RAM, the tuner) is
-emulator-verified and not yet flashed. Every feature
-was verified in an emulator before flashing (the companion repository
+`octatrick-usb` at tag `v9.1` (the OCTATRICK9 state; hardware-confirmed
+again as OCTATRIK10 with the FM SYNTH page built at run time) was flashed
+and in use on the author's Octatrack MKI (26 Sep 2026): the synth, the
+quantizer and direct jump work, and USB audio works on the MKI on all 20
+channels. Every test build since -- 2.3 .. 2.8 and the 2.9 line up to the
+build before its last two fixes -- was flashed and tested on the same MKI
+from the author's tree
+([timhastie/octatrick](https://github.com/timhastie/octatrick), the same
+wrappers over the same submodule); at 2.9 ROOT, the quantizer as a DRAM
+unit, FINE 0c, the engine-owned AMP envelope and the limiter's removal ran
+there, the held-chord crackle and the live-key pops gone, by ear. The last
+two 2.9 fixes (a sequencer trig on a sounding note, the index ramp) are
+emulator-verified and not yet flashed. Every feature was verified in an
+emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
 real-time build of octabam's emulator and a virtual front panel). Read
-octabam's `docs/remixer/FLASHING.md` first, power-cycle the unit after an
-OS upgrade, and SAVE or SYNC TO CARD after changing project settings.
+octabam's flashing notes first, power-cycle the unit after an OS upgrade,
+and SAVE or SYNC TO CARD after changing project settings.
 
 Combining with other modules: the synth page is pinned at the start of the
 second free gap (`0x400d24d0`), which octabam's `tempo-bus` also uses, so
@@ -154,20 +162,27 @@ reserve with the other DRAM modules (USB, MIDI SCENES) inside one runtime.
 
 ## Tags
 
-- (unreleased, branch `tuning`, 27 Sep 2026) -- the tuning system: PTCH in
-  semitones and RATE as FINE on synth tracks, the -4..+4 CHROMATIC octave
-  with exact recorded locks, chord shapes in priority order, and the
-  quantizer's `qz_polytrack` offset fix (VOIC read on every track).
-  Emulator-verified as OCTATRIK12, not flashed.
-- `v10` -- the synth page's FM SYNTH descriptor is built at runtime (no
-  stock bytes in the repository, the pinned page cave 1,672 B); SCALE and
-  GLIDE moved into battery-backed RAM and survive a power cycle (the
-  quantizer's `glide.s` is gone: two jsr detours, in stock's boot sanitiser
-  and in the project defaults, keep the bytes sane); the TUNER module;
-  `tools/stock_scan.py`. Emulator-verified, not yet flashed.
-- `v9` -- the OCTATRICK9 state: the modules exactly as flashed on the
-  author's MKI on 26 Sep 2026, with the manifests' source paths made
-  location-independent (no byte of any image changes).
+Only tagged versions are releases; the numbered builds between two tags
+(2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
+builds on the author's unit and were never tagged.
+
+- `v2.9` -- Octatrick 2.9 (29 Sep 2026): a ROOT row under SCALE (the scale
+  is built on it; battery RAM `0x100b14ee`); the quantizer as a DRAM unit
+  (a 192-byte core stays in the OS image); FINE 0c the moment a track
+  becomes a synth track; no limiter; the engine owns the AMP envelope (no
+  pops, no crackle; a voice is never cut); a sequencer trig on a sounding
+  note delivered in the panel key's form; the index envelope ramps at a
+  warm START. The line up to the build before the last two fixes ran on
+  the author's MKI; the last two fixes are emulator-verified.
+- `v2.8` -- Octatrick 2.8 (28 Sep 2026): MIDI IN on synth tracks, chord
+  recording with inversions, LEG legato modes, sample-track glide, step
+  transpose, the TUNER module, SCALE / GLIDE in battery-backed RAM, the
+  tuning system (PTCH in semitones, FINE in cents), `tools/stock_scan.py`.
+  Flashed and tested on the author's MKI through the test builds 2.3 .. 2.8.
+- `v9.1` -- the OCTATRICK9 state with the FM SYNTH page built at run time
+  (no stock bytes in the repository; hardware-confirmed as OCTATRIK10), the
+  manifests' source paths location-independent. The history starts here:
+  no commit carries stock OS bytes.
 
 ## Credits
 
