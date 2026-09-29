@@ -1,5 +1,42 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
+**OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
+becomes a synth track.** A track that is made a synth track -- a FLEX track
+given an `FMSYNTH*` / `SYNTH*` slot in the machine window or the sample-list
+window, or switched to FLEX with such a slot already in its FLEX column --
+comes up with FINE `0c` (RATE raw 64) at that moment, once: the Part byte,
+its battery-RAM shadow and the live lane are written, so the page reads `0c`
+before the first note and SAVE keeps it. A track that already was a synth
+track keeps whatever FINE it has (a re-assignment of the same or another
+marker slot, a project load, a Part reload, a pattern change, a warm boot
+change nothing); a sample track is never written (stock's RATE stays, 127
+in a fresh Part); RATE p-locks are untouched. Until now every fresh synth
+track read FINE +63c, the stock RATE default -- **"FINE defaults to 0c"**
+below has the sites and the measurements. **BUILD 22 (27 Sep 2026): the
+new-project case** -- the FIRST marker of a fresh project goes into the
+track's own empty slot, so no machine or slot byte changes and none of the
+three sites ran (Tim's MKI: +63c on the first FM machine, 0c on later
+ones); the file browser's select is the fourth site (`po_loadsel`) --
+**"The new-project case"** below.
+**OCTATRICK2.9 (28 Sep 2026): the chord snap follows ROOT.** Nothing in
+this module changed. `po_snap` snaps every chord note (and a MIDI-IN key of
+a chord, a fingered chord's voicing) by pitch class against the mask the
+quantizer's pinned accessor `SCALE_AT` returns, and since 2.9 that mask is
+the scale's pitch classes rotated by the project's ROOT (`modules/
+quantizer/core.s qz_scale_mask`; `SCALE_AT` and `KEYS_AT`, the two
+contracts this engine reads as fixed addresses, are unchanged), so a MAJ
+chord on a key with SCALE MAJOR / ROOT E lands in E major: measured on the
+BUILD 19 bus, key 13 (E4 with ROOT E) + MAJ = E4 G#4 B4 (329.6 / 415.3 /
+493.9 Hz) and key 16 (G4 chromatic, snapped to F#4) + MAJ = F#4 A4 C#5
+(370.0 / 440.0 / 554.4 Hz, the A# of the shape snapped down to A). ROOT
+C is 2.8. The quantizer's README has the ROOT design and its measurements.
+The engine's own MIDI IN (STANDARD) follows the scale as the panel keys do:
+with a scale ON `po_snap` snaps a synth track's MIDI note onto the (now
+root-rotated) mask -- 2.8 did the same (measured on the 2.8 bus: note 85,
+C#4, with SCALE MINOR sounded C4) -- and only SCALE OFF is unquantized (85
+sounded C#4 there); the quantizer's README says so under "MIDI IN and the
+scale".
+
 **OCTATRICK2.8 (5 Oct 2026): pitch slides on sample tracks, and the chord
 table in Syntakt order.** A FLEX or STATIC track with **LEG MONO and GLIDE**
 slides every pitch change over the GLIDE time instead of jumping -- a live
@@ -69,6 +106,965 @@ FM voice"** below has the design, the parameter map and the numbers. Phase
 phase-2 section and marked in place).
 
 ---
+
+## The engine owns the envelope (28 Sep 2026, OCTATRICK2.9 BUILD 31: plan B)
+
+Tim's MKI (and the emulator, `root29m/ana_pop.txt`): the CF voice keeps
+rendering at full after a note-off and only the DSP's AMP envelope silences
+it, so a cold START (BUILD 26..28's rule) cut the still-sounding old tone
+dead in one sample (a step up to 0.95 of the old peak, x25 the tone's slope:
+the pop); REL <= 10 was the DSP's own >= 30 dB drop within 20 ms (the release
+click; REL 0 a one-sample dead cut); REL 60 with fast notes cut a -20 dB tail.
+Tim's decision: the engine owns the AMP envelope for synth tracks.
+
+**The DSP-facing override** (`sy_render`, the `sy_ison` synth path): every
+synth call writes the DSP voice record's halfwords 0/1/2 -- `0x80000110 +
+(ping << 9) + 64 * track`, AMP ATK / HOLD / REL as value << 8 -- `:= 0x0000 /
+0x7f00 / 0x7f00` (ATK 0, HOLD INF, REL INF). Stage 1 (`root29o/ana_env.txt`)
+proved on a stock sample track that those three words keep the DSP's envelope
+fully open across a note-off (no fade 2 s after the key-up, the level
+unchanged) and across re-triggers (within 0.3 dB of full, per-frame maxima all
+at full, the only discontinuity the sample's own restart). The render loop
+calls `sy_render` after the copier `0x4000cae8..cb98`, the scene morph
+`0x4000cbe4..` and the LFO stage `0x4000d024..d07a` (the last writers of the
+record) and before the eDMA (`0x40004860`) ships it to X:0x000; nothing reads
+the three halfwords after the render loop, so nothing is restored, and the
+live lane the UI shows (`0x80000810 + 72 t + 12..14`) is never touched -- the
+same shape as the PTCH / RATE override of the CF record. The LFO on
+ATK / HOLD / REL is a no-op on the DSP now; the engine reads the lane every
+frame (locks, scenes and LFOs already applied by the frame builder).
+
+**The laws** (the DSP's, as measured in stage 1 on a stock FLEX sine; the
+tables from `root29p/gen_env_tables.py`, `po_atk` / `po_relk` / `po_hold128`):
+
+* ATK: a LINEAR ramp to full in t = 3.85 ms x 2^(v / 8.53) (8: 7.5 ms, 16: 15,
+  32: 50, 64: 700, 96: 9.45 s); the engine's step a frame is 32768 / max(16,
+  t / 0.3628 ms) in Q15 -- the 16-frame ramp (5.8 ms) is the floor for ATK
+  0..8, and the Q15 step's floor of 1 makes ATK >= 91 an 11.9 s ramp (the
+  DSP's 127 is anomalous: a ramp that stops at -21.5 dB).
+* HOLD: the DSP's timer runs from the START, key held or not, `po_hold128`
+  steps (1/128) x frames a step (HOLD 32 = 282 ms at 120 BPM, 64 = 1132 ms,
+  100 = 5.5 s; 127 = INF), and its end starts the release with no note-off
+  anywhere. The engine arms the same timer at every START, a live key's and a
+  sequencer trig's alike (`S_HTIM` for the mono voice, `V_HOLD` for a
+  paraphonic one); a key-up inside the hold releases at once (as the DSP).
+* REL: EXPONENTIAL, tau = 0.295 ms x 2^(v / 8.53) (40: 7.6 ms, 60: 38.5, 80:
+  196, 100: 994, 126: 9 s; 127 = INF), floored at 1 ms: -20 dB in 2.3 ms and
+  -40 dB in 4.6 ms at REL 0..15 -- the ~2 ms minimum fade Tim asked for, where
+  the DSP's REL 0 was a dead cut. (Until plan B the paraphonic voices used tau
+  = 5 ms x 1000^(rel / 126): 134 ms at REL 60 where the DSP takes 38.)
+* VOL, BAL, XVOL, the filter, the FX: the DSP's, unchanged.
+
+**The START rule** (`sy_cold`, `po_st_note`): a voice that still sounds
+(`S_GPREV` / `V_GPREV` != 0, the gain the last render ended at) continues the
+SAME oscillator phase-continuously from its current level -- the pitch
+changes, the attack re-runs from that level (an analog mono synth's
+retrigger), and the FM index envelope RAMPS from its current value to its
+peak over 16 frames instead of restarting (BUILD 38, below); a silent voice
+starts both operators at phase 0, ramps from 0 and restarts the index
+envelope at once (from silence: inaudible).
+BUILD 27/28's four conditions (`S_HOLD`, `S_KEYED`, the released flag,
+provable DSP sustain) are gone -- the DSP no longer restarts or releases
+anything, so the engine's own level is the whole truth.
+
+**Note ends -- no stuck notes** (the DSP silences nothing now, so every path
+that ends a note must reach the engine): the panel key's release, MIDI
+note-off and the sequencer's note-off trigs all post the mailbox 0x40 and pass
+`po_rel` (0x4000b51a), which sets the mono voice's released flag (`S_ON` bit
+1: `po_mono_env` releases; a START in the same word retriggers instead); the
+paraphonic voices release from the held-key mask, the MIDI held list and the
+sequencer trig as before; a finite HOLD ends by the engine's own timer; and
+STOP, a pattern change, a slot or project change and the sample preview stop
+all end a stock voice HARD through the one VOICE KILL `0x40006820(t)`, whose
+CF voice-byte clear carries `po_kill` (BUILD 33, below): the killed track's
+engine voices end at that instant. `po_stop` at 0x4000b2c8 (the frame
+builder's `clrl 0x46c80350`, after it turns the sequencer's STOP word into the
+DSP-wide all-off command) stays as belt-and-braces for a STOP that posts the
+word without a kill. Mute stays the DSP's output mute.
+
+**Voice stealing / chord memory**: state 3, a fade of T_GMAX / 8 a frame (8
+frames, 2.9 ms; `po_fr_cut`), then freed -- it was one frame. A voice the new
+chord takes in the same START is continued warm instead (the START rule).
+
+**VOIC across a note** (BUILD 32, round 2): a START never cuts the tone that
+sounds. VOIC 1 -> 2..4 while the mono voice sounds (`S_GPREV != 0`): `po_carry`
+moves the mono voice's fields (+0..+35 are the voice record's layout) into a
+free voice record (else the quietest active one), state 3, at its own pitch
+(`V_ROOT` set so `po_start`'s fold and the new `T_REF` leave its target at
+`S_CUR`), gains capped at 32767 (`po_fill`'s 16 x 16 multiply), stamped newest
+(free voices go to the chord first; `po_alloc` may still take it warm), and the
+mono record is silent: the old tone fades over 8..16 frames while the chord
+attacks. VOIC 2..4 -> 1: `sy_warm` fades the track's voices (state 3, `po_fade`,
+not `po_free`) and the mono voice starts cold; the mono path's frame steps them
+(`po_fade_frame`, T_GMAX / 8 a frame, at least 2048) and sums them onto the mono
+voice's samples (`po_fill_add`: the record's L longs halved into the sum's format
+first). A voice above the cap (a tail from a lower VOIC, the carried mono voice)
+converges on T_GMAX at the fade rate instead of the one-frame clamp (`po_fr_cap`).
+`sy_alive` still clears `S_GPREV` every paraphonic frame -- it is already 0 then.
+
+**STOP ends the engine's voices at the stock voice kill** (BUILD 33; BUILD 32's
+`po_stop` alone was measured NOT to fire, see round 2 below). What the stock UI
+uses to end a voice hard is `0x40006820(t)`: the sequencer's STOP / pattern
+change (`0x40043c50`, per track, gated on the track's bit in `0x80000008`), the
+sample preview stop (`0x40093ec0` / `0x40096ad4`), the loaders (`0x4007eb3e` /
+`0x4008044e` / `0x4000f518`: a slot or project change) and the frame builder's
+own end mask (`0x4000d45a`); `t >= 8` recurses through the entry for every
+track. Its track path masks interrupts, clears the CF voice byte
+`0x800049d8 + 168 t` (`0x4000685c`, `clrb %d0; moveb %d0,%a1@(0,%a0:l)`, 6
+bytes) and posts the DSP the voice's end. `po_kill` is a jmp detour at that
+clear: for the killed track it zeroes `S_GAIN` / `S_GPREV` / `S_HTIM` and
+`S_ON` (the mono voice: silent, no synth playing), frees the four paraphonic
+voices (`po_free`: state 0, `V_GAIN` / `V_GPREV` 0) and clears their `V_KEY` /
+`V_HOLD`. The DSP voice is dead at that instant, so the immediate zero is
+inaudible, and the next START is cold (`sy_cold`: `S_GPREV == 0` -> phase 0
+from 0). A sample track's record is zeroed the same way (nothing of ours was
+on). `po_stop` (0x4000b2c8) is kept as belt-and-braces: S_ON bit 2 (STOPPED)
+with the released flag on every synth track, so the mono release
+(`po_mono_env`) and the paraphonic `T_RK` take `po_relk[0]` (tau 1 ms) where
+REL is INF -- on a killed track it finds S_ON 0 and does nothing; it only
+matters for a STOP that posts the global word without a kill. The global
+word's writers (`0x4009bbb8` / `0x4009c3a0` / `0x400a4d8c`) sit behind
+`[0x80000060] != 0` and the pattern-state bytes `0x80006511` / `0x80006512`,
+and the builder's consumer behind two more gates, which is why round 2 never
+saw it run on the rig.
+
+`T_AK` (BUILD 32) is a word at +82 now (+81..83
+were free beside the `T_POLY` byte); its `.set 104` aliased `T_POS` (92..111),
+benign only because `po_frame` runs between the marker save and its restore.
+`RAMP_STEP` / `RAMP_SHIFT` (dead since plan B) are gone.
+
+**The limiter is history**: `po_fill` no longer scans the frame's peak or runs
+a gain (its `T_LIM` slot is `S_HTIM` now); the sum of the voices is doubled
+into the mono format with a saturating clamp only. The level law is unchanged:
+T_GMAX = 32768 / sqrt(VOIC) (a mono voice's full scale, a VOIC 4 single note
+-6 dB re mono), a VOIC 4 chord's coincident peaks reach 2.0 FS and clamp.
+
+**Cost** (static): the mono voice +1 call a frame (`po_mono_env`: ~25
+instructions, one mulu.l in the release); a paraphonic frame +1 mulu.l for
+the attack step (`T_AK`) and per voice the same envelope arithmetic as before
+(the attack an add, the release a mulu.l); `po_fill` -6 instructions a sample
+(the peak scan) and -4 while limiting, -1 divu.l a frame. The DSP override is
+12 instructions a call.
+
+### Measured on BUILD 31 (28 Sep 2026, round 1: the octatrick-tuner BUILD 31 bus on ot_emu `--dsp-rt` through the poke panel, a copy of the pop card: T2 = FM SYNTH, C4 sine, ATK 0 HOLD INF REL INF unless said; `root29m/m40.py` pair / rel / stats / atk and `root29p-verify/m42v.py`, the verifier's log `root29p-verify/run_v31.log`)
+
+- REL INF re-press of the same key at the same VOIC: max |step| x1.12 of the
+  tone's slope, 0 cuts (the START rule: warm, phase-continuous).
+- REL 0 note-off: the fade reaches -20 dB in ~4 ms (tau 1 ms, the floor, plus
+  the frame's ramp); REL 60: tau 39.3 ms measured (the law 38.5); a fast
+  re-press over a REL 60 tail x1.12.
+- ATK 20: a warm re-attack runs from the current level (no dip, no step).
+- Chord memory / voice steal: 0 |d2| outliers (the 8-frame fades).
+- Levels: mono -16.49 dBFS; a VOIC 4 single note -6.0 dB re mono; a 4-note VOIC 4
+  chord -11.3 dBFS, no clamped sample; the limiter's gain gone from the records.
+- The DSP override's scope is right (halfwords 0/1/2 of this track's record
+  only), placements OK, the stock scan clean.
+- FAIL (fixed in BUILD 32 above): a START across a VOIC change while the old
+  tone sounded (1 -> 4, 4 -> 1, 1 -> 3 CHRD) cut it dead (steps 0.36..0.91 of
+  the old peak: `sy_alive` cleared `S_GPREV` when `T_POLY` flipped, `sy_cold`
+  freed the voices hard); `T_AK` aliased `T_POS`; after STOP with REL INF the
+  released flag did not lower `S_GAIN`.
+- NOT RUN in round 1: HOLD 20 self-release, the staccato sequencer HOLD 6 /
+  INF, the stuck-note set, the regression set.
+
+### Measured on BUILD 32 (28 Sep 2026, round 2: the octatrick-tuner BUILD 32 bus `root29q/bus_32.bin` on ot_emu `--dsp-rt` through the poke panel; the verifier's logs `root29q-verify/run_pop.log` (m40v: pair / voic / chord / rel / atk / stats), `run_stop.log` (m42q: stopinf / stopkey / stopseq / mute / patchg / hold20 / atk20), `run_seq.log` (m37k: hold6 / seq / lock / seqinf), `run_regr.log` / `run_warm.log` (m32v), `run_leg.log` (m36), `run_midi.log` (m38v); `chain.log` for the order)
+
+The cut measure is `max |step|` across the START against the tone's own slope
+(184 a sample for the C4 sine at -16.5 dBFS; a bare cut at that level is x14
+.. x24):
+
+- **VOIC across a sounding REL INF tone** (`run_pop.log` voic): a VOIC 4 D4
+  START while the VOIC 1 C4 sounds x0.99 (`po_carry`: the mono voice becomes
+  a fading paraphonic voice); the VOIC 1 C4 START while four VOIC 4 voices
+  sound x1.48 against the mono slope = x1.08 against the SUM's slope (the
+  four voices' fade under the mono voice); VOIC 1 -> 3 with CHRD (`chord`)
+  x1.14; 0 outliers over the takes. Adding notes at VOIC 4 x1.05 / x1.34 /
+  x1.45 against the mono slope with 2, 3, 4 voices sounding (the sum's slope
+  grows with them: no cut), the 5th note's steal x1.70 (the 8-frame fade of
+  the oldest voice at -10.6 dBFS).
+- **REL INF, same VOIC** (`pair`): the D4 START while C4 sounds x1.12, the C4
+  release itself x1.00 (nothing: INF), the pair repeated x0.99 / x1.12.
+- **REL 0 / 10 / 60, ATK 20** (`rel`, `atk`, `atk20`): the release laws as
+  in round 1; ATK 20's warm re-attack from the level x1.12 (no dip).
+- **HOLD 20 mono self-release** (`run_stop.log` hold20): a C4 held 1.5 s is
+  full for 180 ms from the onset (law 168 ms, the DSP's 145), then the REL 20
+  release; `S_HTIM` 0 and `S_GAIN` 0 while the key is still down.
+- **Sequencer HOLD 6 / INF** (`run_seq.log`): 72 onsets at 120.0 BPM, a
+  staccato pattern with no crackle beyond the signal's own |d2| bound
+  (x18.5 at the fold phase is the trig's own onset); HOLD INF = one continuous
+  tone over 16 trigs (1 onset in 4.5 s, -10.7 dBFS, 261.62 Hz).
+- **Mute / pattern change** (`mute`, `patchg`): a REL 20 tail and a REL INF
+  tone survive FUNC + T2 mute / unmute and a PATTERN A02 / A01 change while
+  stopped untouched (the engine flags unchanged), the next key x1.00.
+- **MIDI note-off** (`run_midi.log`), **the regression set** (`run_regr.log`,
+  `run_warm.log`, `run_leg.log`), placements and the stock scan: pass, as in
+  round 1.
+- **STOP: FAIL** (`run_stop.log` stopkey / stopinf / stopseq): `po_stop`'s
+  site never ran. A REL INF C4 held + STOP: `S_ON` stays 1 (no released
+  flag), `S_GPREV` 32768 for 0.6 s, the tone at -16.5 dBFS for ~1.1 s past
+  the STOP, then a hard cut at the stock voice's end (x16..x26 the tone's
+  slope, a DC residual decaying below -60 dB);
+  a released REL INF tone + STOP: the same, silence 1.6 s after; STOP STOP
+  with a tone sounding: still -16.5 dBFS 2 s later; PLAY 1.2 s then STOP over
+  a HOLD INF sequencer note: -16.5 dBFS for ~1.1 s more. The next key after
+  each was an onset from 0 (`sy_check` had cleared `S_GPREV` when the CF byte
+  went 0), but `S_GAIN` stayed 32768 and a key pressed BEFORE that byte
+  cleared would have started warm at full into a fresh DSP voice. BUILD 33's
+  `po_kill` is the fix (above).
+
+### Measured on BUILD 33 (28 Sep 2026, round 3: the octatrick-tuner BUILD 33 bus `root29r/bus_33.bin` on ot_emu `--dsp-rt` through the poke panel, a copy of the pop card; the builder's `root29r/run_stop.log` / `run_misc.log` and the verifier's `root29r-verify/run_stop.log`, `run_misc.log`, `run_q42.log`, `run_pop.log`, `run_seq.log`, `run_regr.log`)
+
+- **The voice kill ends the engine's voice** (`po_kill` at `0x4000685c`):
+  wherever the stock kill runs, the engine goes idle at that instant
+  (`S_ON` 0, `S_GAIN` 0, `S_GPREV` 0, `V_STATE` idle, the CF voice byte 0)
+  and the next key is a cold onset from 0 (samples 15, 23, 32, 43 .., max
+  |step| x1.00 .. x1.04 the tone's slope).
+- **When the kill arrives on the rig:** a REL INF key held + STOP: nothing
+  at the STOP press; the key-up 0.6 s later reaches the kill. A released
+  REL INF tone + STOP, and STOP STOP: the kill lands ~1.0 .. 1.3 s after the
+  press. PLAY then STOP during a HOLD INF sequencer note: 0.7 s after the
+  press (the sequencer's own stop timing). The kill itself is the STOCK
+  hard cut of the DSP voice (x4 .. x22 the tone's slope, as on every
+  earlier build); the engine adds nothing to it. On the rig `[0x80000060]`
+  is 0, which gates every writer of the STOP word `0x46c80350`, so a panel
+  STOP posts no DSP all-off there; whether the unit posts it at the STOP
+  press is untested.
+- **Project reload mid-note** (card eject + insert): silent after the boot,
+  all flags 0, the next key a cold onset (x1.04).
+- **Machine change mid-note** (the machine window, FLEX -> STATIC and back)
+  with a released REL INF tone sounding: no kill is on that path on the
+  rig; the tone keeps sounding until the next key, which ends it cleanly
+  (a warm x1.00 continuation). Known limit; a finite REL releases as usual.
+- **Paraphonic HOLD 20 self-release** (VOIC 3 MAJ, REL 20, key held): full
+  through 160 ms, the release from 170 ms, -62 dB at 180 ms, -90 dB by
+  310 ms, all voices idle with the key still down (law 168 ms).
+- **Re-confirmed on this bus:** REL INF same-VOIC re-press x1.12; VOIC 1
+  -> 4 x0.99; VOIC 4 -> 1 x0.88 vs the four-voice sum's slope; VOIC 1 -> 3
+  CHRD x1.12; REL 0 / 10 / 60 note-offs x1.01; ATK 20 warm re-attack; mute,
+  pattern change, MIDI note-off clean; sequencer HOLD 6 (70 onsets at
+  120 BPM) and HOLD INF (one continuous tone) as round 2; the regression
+  set (ROOT A MINOR keys, chord record, LEG MONO + GLIDE 64, tuner, direct
+  jump, FINE 0c on a new project, MIDI live-rec T_MLEG, warm boot) as
+  round 2; placements on Sam's layout rc 0; the stock scan unchanged.
+- `po_kill` clears the `sy_state` record and `po_voices` of ANY killed
+  track, sample tracks included (their records are unused: harmless).
+
+---
+
+### Sequencer trigs on a still-sounding note (29 Sep 2026, OCTATRICK2.9 BUILD 37: po_retrig)
+
+**The cause.** A sequencer trig on a synth track whose voice still sounds
+(HOLD INF, or a REL tail) reaches the DSP through the frame builder's own
+sequencer path, not through the trig -> voice routine `0x40005030` and the
+mailbox `0x46c80354[t]` that the panel keys and MIDI IN use: the trig
+record's byte +62 is stored into the per-track DSP command byte
+`0x46104d15[t]` (`0x4000b906`), the OR-0x10 sites (`0x4000b9aa`,
+`0x4000bd74`, `0x4000bdc0`) add the CF START bit, and the builder copies the
+byte into the packer's nibble byte `0x46104d0c[t]` at `0x4000c642`. Measured
+at that copy (po_rtlog, `root29w/run_f37a.log`): the byte is **`0x10 | n`**,
+the START bit with the trig's sub-frame position n, cycling 4, 0xc, 5, 0xd,
+6, 0xe ... at 120 BPM (a 16th is 344.5 frames, so n advances half a frame a
+step); no bit 5. The packer splits the frame's render calls at n, and the DSP
+crossfades its old voice under the new one over ~26 samples. Both voices are
+the engine's ONE continuous stream (the warm START rule: the same oscillator
+carries on from its level), so old + new is the measured +5.6 dB / 1.8 ms
+bump at every trig (BUILD 33, `root29v/run_a.log`: max |step| / the tone's
+slope x24.76, |d2| 4534, per-frame amplitude 1.85 1.58 1.32 1.13 after the
+trig). A panel key's START on the same sounding note is clean (x1.00, the
+DIAG round's kwh take): its raw mailbox word `0x1d` reaches the DSP as
+**`0x30`** -- bits 4 and 5, nibble 0. Whether the crossfade is keyed by n != 0
+or by the missing bit 5 was not separated: the fix sets both. (The three
+earlier detours -- po_trig at the consumer `0x4000b4dc`, po_pre and
+po_trigless at `0x40005030` -- sat on the key / MIDI path, which a playback
+trig never takes; that is why their takes were byte-identical to BUILD 33.)
+
+**The fix.** `po_retrig`, a jmp detour at `0x4000c634` (the 8 displaced bytes
+`moveal 114(sp),a1; moveb (a0,a1.l),d0`, a0 = `0x46104d15`), the one funnel
+every START form passes on its way to the DSP and the packer: on a track
+whose engine voice is on (`S_ON != 0`) every START byte (bit 4 or 5 set) is
+rewritten to exactly the key's clean form `0x30` before the copy. The DSP
+gets the key form, the packer's calls are [0,0) + [0,16), sy_render's START
+rule runs as before (HOLD re-armed, the index envelope restarted, the pitch
+snapped, warm: phase-continuous from the level reached). The trig lands a
+frame boundary early: at most 15 samples = 0.34 ms. A silent synth track
+(`S_ON` 0: the first note after a STOP / kill) and every sample track keep
+stock's byte, so a cold sequencer START is unchanged. `po_rtlog` (po_clock +
+32, 272 B) stays in the unit: passes, rewrites and a 32-entry ring of the
+START bytes {CK_FRAMES, track | byte posted << 8 | byte now << 16 | S_ON << 24},
+the rig's proof that the fix fired.
+
+**Measured on BUILD 37** (the octatrick-tuner BUILD 37 bus `root29w/bus_37.bin`
+on ot_emu `--dsp-rt` through the poke panel, a copy of the pop card, T2 = FM
+SYNTH VOIC 1, C4 sine, 120 BPM; `root29w/m46.py` = m44 + the po_rtlog counters
++ a per-frame sine-fit amplitude; logs `run_f37a.log`, `run_f37.log`,
+`run_regr37.log`):
+
+| take | BUILD 33 | BUILD 37 |
+|---|---|---|
+| **a** ATK 0 HOLD INF REL 60 INDX 0, a trig on every step (the decisive take) | x24.76, \|d2\| 4534, per-frame 1.85 1.58 1.32 1.13 (root29v) | **max \|step\| / slope x1.01, max \|d2\| 9 (the whole take's 99.9th pct 9), per-frame amplitude 1.00 on all 13 frames of all 8 trigs, level -16.5 dBFS before and after**; po_rtlog: 39 rewrites, every T2 START byte `0x14 0x1c 0x15 0x1d ... -> 0x30` |
+| **b** HOLD INF REL 60 INDX 40 DEC 40 | x6.66, \|d2\| 4632, 1 ms env jump 12.3 dB (the verifier's run_b33x; the round's own run_b33 read x1.10 / \|d2\| 105 -- its trigs were frame-aligned) | x7.45, \|d2\| 4961, 1 ms env jump 11.3 dB: a hard step at each trig (2008 -> 4786 in one sample); the spectral centroid 322 Hz before, 498 Hz 1-11 ms after, 298 Hz at 50-60 ms = the index envelope now restarts at the trig (on BUILD 33 it did not: 515 -> 431 -> 308). See open issues. |
+| **c** HOLD 64 REL 20 INDX 40 | as b | as b (x7.45, \|d2\| 4961) |
+| **d** HOLD 6 REL 20 INDX 40 (cold each) | before -34..-24 dBFS, \|d2\| 3 (the grid missed the onsets: 0-5 ms after -37.5) | before -21.8..-15.2 dBFS; the onsets are normal 16-frame ramps (1 ms env -65 -35 -26 -21 -19 -17 -15.5 dBFS, rise 3 ms, \|d2\| 61 at trig 2); the SUMMARY's x2778 / \|d2\| 3047 is trig 1 under the same index step as b |
+| **ptch** four PTCH locks (+3 +7 +12 -5), REL 60 | -- | pitch jumps warm: trig 1 x1.00 \|d2\| 123, trig 2 x2.38 \|d2\| 244 (a fall from 622 to 262 Hz measured against the lower tone's slope), trigs 3-4 x1.00 \|d2\| 9; the take's max \|d2\| 849 |
+| **chrd** VOIC 3 CHRD MAJ, a chord trig every step, REL 60 | the same bump | **x1.04, \|d2\| 35**: the paraphonic path is clean too (38 rewrites) |
+| **held** VOIC 3 chord 1.5 s | -- | 0 samples above the \|d2\| bound 31, fold on 16 x1.01: no frame-edge steps; the key START byte `0x30` seen with S_ON 0, not rewritten |
+| **live** REL 60 key re-press in the tail | x0.99, \|d2\| 9 | x0.99, \|d2\| 9; with INDX 40: x1.09, \|d2\| 97 (BUILD 33: the same) |
+| **relinf** REL INF re-press | -- | x0.99, \|d2\| 9 |
+| **mono** | -16.49 dBFS | -16.49 dBFS, rise to -1 dB 6 ms |
+| regressions (m32v setup regr on card_ex) | | ROOT A MINOR keys 8/8 OK; the fingered chord recorded as one step (ptch 64 chrd 8 voic 3); LEG MONO + GLIDE 64 legato: 1 onset, t63 90 ms; tuner window opens / closes; CHAIN AFTER +1 = DIRECT |
+
+**Open (BUILD 37).** (1) With a non-zero index (INDX 40 DEC 40) a sequencer
+trig on a sounding note is now a hard step: the START rule restarts the
+index envelope (`S_ENV := ENV_ONE`, sy_synth) while the carrier continues, so
+`sin(phi_c + I sin(phi_m))` jumps by the index's change in one sample (up to
+x7.45 the tone's slope). On BUILD 33 the engine never saw these STARTs (the
+DIAG round's counter, and take b's centroid), so the index did not restart --
+and the level bumped instead. Fixed in BUILD 38 (the index ramp, below). (2) The LEG MONO legato take's +3.5 dB step (the trigless
+`0x119` form, no START byte) is untouched by po_retrig. (3) MIDI IN note-on
+on a sounding note is not measured (no MIDI IN route in the rig). (4) Why
+the DIAG build's sy_render START counter did not rise at these trigs while
+the byte at the copy carries bit 4 is not explained. (5) FINE 0c on a new
+project and STOP mid-note were not re-run this pass.
+
+### The index ramp (29 Sep 2026, OCTATRICK2.9 BUILD 38)
+
+**The fix.** A warm START no longer restarts the index envelope. `sy_cold`
+(the mono voice) and `po_st_note` (a paraphonic voice) arm a 16-frame ramp
+instead (`S_ERAMP` at +81, `V_ERAMP` at +62, the frames left): every frame
+the envelope moves by (ENV_ONE - E) / frames left (`sy_env_ramp` in the mono
+parameter block, `po_fr_envk` in po_frame) -- linear from its current value
+to the peak in 5.8 ms, ENV_ONE exactly at the last frame, the DEC decay
+waiting for it and then running from the peak as before. A cold START (a
+silent voice: `S_GPREV` / `V_GPREV` 0) keeps the instant restart from
+silence. Second, the per-sample multiplier I * E no longer steps at a frame
+edge: `S_IEFF` / `V_IEFF` are the RUNNING value now, and the render loops
+(`sy_loop`, `po_fi_loop`) add a per-sample step to it -- (this frame's I * E
+- the running value) / 16, `S_ISTEP` at +126 (a word; S_HOLD / S_KEYED,
+BUILD 27/28's dead record, gave the bytes) and `V_ISTEP` at +38, computed
+once a frame (po_fill consumes V_ISTEP: a voice po_frame does not visit, one
+fading under the mono voice, holds its index). So the index moves in 256
+sample-steps over the ramp instead of one; the decay and an INDX / DEC knob
+turn are interpolated across the frame the same way. V_GPREV is a word at
++60 (its values were 0..32768) to make room; the rig's peeks (S_GPREV +38,
+S_GAIN +24, S_ENV +8, S_ON +36, V_STATE +36) are unchanged. Cost: four
+instructions a sample a voice (a load, an add, a store, the multiply on a
+register instead of memory).
+
+**Measured on BUILD 38** (the octatrick-tuner BUILD 38 bus `root29x/bus_38.bin`
+on the same rig, `root29w-verify/m47v.py`, logs `root29x/run_v38b.log`
+(take b alone, first) and `run_v38.log`; `root29x/ana38.py` re-reads the
+takes against the PRE-trig waveform's own max slope and 99.9th-percentile
+|d2|, 40..1 ms before each trig, and traces the centroid in 10 ms windows
+hopped 2 ms):
+
+| take | BUILD 37 | BUILD 38 |
+|---|---|---|
+| **b** HOLD INF REL 60 INDX 40 DEC 40, a trig every step (the decisive take) | x7.45, \|d2\| 4961, 2008 -> 4786 in one sample | **max \|step\| / the new tone's slope x1.07 (732..752 vs 689..698), max \|d2\| +-40 samples 88 against the take's own 99.9th pct 108**, level -16.0..-15.2 dBFS before, -15.3..-16.4 at the trig, rise 0 ms on all 8; against the pre-trig (lower-index) waveform: \|step\| x1.30..1.33 (its slope 558..576), \|d2\| x1.71..1.80 (its 99.9th pct 63..67) -- the higher-index tone's own slope and curvature, not a step: the whole take's top \|d2\| events are 115..117, 6..8 ms after a trig where the ramp reaches the peak, and the take's steady 99.9th pct is 108; the centroid moves 250..400 Hz -> 500..600 Hz across ~8 ms (10 ms windows: 407 249 278 400 329 273 329 508 476 389 460 597 Hz from -10 ms at 2 ms hops) where BUILD 37 jumped 322 -> 498 Hz in one frame; the 1 ms peak envelope of this FM tone jumps 6..10 dB on its own before the trig (the crests move with the index), so "no 1 ms jump > 1 dB" is not a measure this waveform can meet: the largest jump around a trig, 9.5 dB, is within the pre-trig waveform's own 6.3..10.0 dB |
+| **c** HOLD 64 REL 20 INDX 40 DEC 40 | as b (x7.45, \|d2\| 4961) | as b: x1.07, \|d2\| 88, rise 0 ms x 8, the same top-\|d2\| events 115..117 at the ramp's end |
+| **a** INDX 0 (the BUILD 37 decisive take) | x1.01, \|d2\| 9 | **unchanged: x1.01, \|d2\| 9 (the take's 99.9th pct 9), per-frame amplitude 1.00 on all 13 frames of all 8 trigs, -16.5 dBFS; against the pre-trig: x1.01 / x1.12** |
+| **d** HOLD 6 REL 20 INDX 40 (cold onsets) | trig 1 the index step (\|d2\| 3047); onsets 16-frame ramps, rise 3 ms | trig 1 \|d2\| 166 (the first warm START of the take, at the -12 dBFS tail: x1.16 the pre-trig slope), the cold onsets unchanged: -21.8 dBFS before, rise 3 ms, \|d2\| 107 = the INDX 40 tone's own (the take's 99.9th pct 99) |
+| **live** REL 60 key re-press with INDX 40 DEC 40 | x1.09, \|d2\| 97 | x1.10, \|d2\| 97 (the tone's own: its steady 99.9th pct is 108), the centroid 562 -> 322 -> 403 Hz as before; with INDX 0 x0.99, \|d2\| 9 |
+| **leg** LEG MONO legato with INDX 40 | +3.5 dB step (open issue 2) | the D4 press: x1.00, \|d2\| 11, level -16.44 / -16.50 dBFS across it; onsets [0.11, 0.14] (the C4's; the legato press trigless, S_ENV 16777216 = ENV_ONE held) |
+| **held** VOIC 3 chord 1.5 s (INDX 40 this time) | 0 frame-edge steps | **0 samples above the \|d2\| bound 31 (max 19), fold on 16 x1.01**: the per-sample index step adds no frame-edge step |
+| **mono** | -16.49 dBFS | -16.49 dBFS (0.3..0.6 s -16.44, 0.9..1.2 s -16.50 on the leg take), the cold onset 0 1 4 8 13 20 29 ..., rise to -1 dB 6 ms |
+| **v14r** REL INF VOIC 1 -> 4 D4 (po_carry) | no cut | no cut: onsets [], x1.78 against the quieter D4's slope as before (the C4 at -16.5 fading under it), \|d2\| 45 |
+| regressions (m32v setup regr on card_ex, `root29x/run_regr.log`) | | ROOT A MINOR keys 8/8 OK; the fingered chord recorded as one step (ptch 64 chrd 8 voic 3); the run was stopped at the harness deadline before the legato / tuner / CHAIN AFTER lines |
+
+**Not run on BUILD 38** (the harness deadline): the VOIC 3 CHRD sequence WITH
+INDX 40 (the run's chrd take ran after part a, i.e. at INDX 0: x1.02, \|d2\|
+35 as BUILD 37), STOP mid-note then the next key cold (m39), FINE 0c on a new
+project (m33v A). `root29x/chain38b.sh` holds the recipe for all three.
+
+(History: the peak limiter and the warm/cold START rules described below are replaced by plan B, "The engine owns the envelope" above.)
+
+Tim's MKI: (a) a constant subtle crackle while a chord of 2+ voices is
+held, on 2.3 .. 2.9 and not on OCTATRIK11 (before the level law and the
+limiter), unchanged by track LEVEL / AMP VOL, other tracks clean; (b) a pop
+at the start of every note, on OCTATRIK11 too.
+
+**The causes, measured** (the 2.9 BUILD 23 bus of 05c1c8c on ot_emu
+`--dsp-rt` through the poke panel, a copy of level2's flat-FX card, T2 = FM
+SYNTH, AMP HOLD INF REL 20, SCALE / GLIDE OFF, CHROMATIC key 13 = C4; the
+session's `root29f/m34.py`, report `root29f/out_base23/report.txt`; a
+discontinuity = a sample whose second difference `x[n] - 2x[n-1] + x[n-2]`
+exceeds 1.5 x the 99.9th percentile of a 150..4000 Hz low-passed copy's,
+i.e. what the signal's own slope allows, then folded on the 16-sample frame):
+- **(a) the limiter's gain stepped once a frame.** `po_fill` scaled all 16
+  samples of a frame by one gain `g` (T_LIM), released by 1/2048 of the
+  deficit a frame and pulled down to FS / peak when a frame's peak passed FS.
+  A held chord's beats pull it down a few 0.1 % every crest: a step of
+  `x * dg` at a frame edge, 25 per second. Held MAJ at VOIC 3, INDX 40, 1.7
+  s: **22 discontinuities / s, max |d2| 366 against the signal's own 90**
+  (the low-passed copy: 0 / s, max 83); T_LIM 0.58 .. 0.67 over the hold
+  (mean 0.604). MAJ at VOIC 4 sines: 21 / s, max 340 (bound 40), the fold on
+  16 peaking x4.1 at one phase = frame-edge steps; OCT3 at VOIC 4: 18 / s.
+- **(b) the attack ramp stepped once a frame.** `T_GMAX / 8` a frame for 8
+  frames, constant within a frame: the first 16 samples of a C4 sine at VOIC
+  2 read 15, 31, .. 225, then **474** at sample 16 (the 1/8 -> 2/8 step, x2.1
+  at once): max |step| 416 in the first 20 ms against 130 in the steady tone
+  (**x3.2**), 8 discontinuities in the first 20 ms, the fold on 16 peaking
+  x31 -- one click per attack frame. The carrier phase also ran on from the
+  voice's last note (`po_st_note` cleared only the modulator), so a note
+  started at any phase. The chord onset (MAJ VOIC 3): max step 545 vs 228
+  (x2.4), 21 discontinuities in 20 ms. The mono voice (VOIC 1, poly.s's
+  mono path, synth.s's code) had the same stair: 22, 44, .. 318, **671**;
+  x3.19 -- that is OCTATRIK11's pop; fixed in the next commit (below).
+- Chord memory and the cap cut a voice to gain 0 at once (`po_free`,
+  `po_st_cut`): a step of up to `T_GMAX` at every chord retrigger.
+
+**The fix** (`poly.s`, this commit; the level law untouched: T_GMAX =
+32768 / sqrt(VOIC), chords held at the mono voice's peak):
+- `po_fill` runs both gains **linearly across the frame from last frame's
+  value to this frame's**: a voice's `V_GPREV -> V_GAIN` (the step
+  `(V_GAIN - V_GPREV) << 16 / n` once a voice a frame, `divs.l`; per sample
+  `adda.l` the step, `swap`, `muls.w` -- the 16 x 16 multiply replaces the
+  `muls.l`: c is +-0x4000, a gain at most 23170) and the limiter's `T_LIM`
+  old -> new (Q31 with 1.0 as 0x7fffffff; one `divs.l` a frame, one `add.l`
+  a sample, skipped only when both are 1.0). The pull-down still lands at FS
+  / peak by the frame's last sample; the first samples of a frame carry a
+  gain up to last frame's, so a rising crest can pass FS by that frame's
+  rise (a held chord: < 0.1 dB; an in-phase chord onset with the 16-frame
+  ramp: at most 0.5 dB for part of one frame, the DSP's own ceiling takes
+  it) -- a one-frame lookahead buffer would remove even that; not done.
+- The attack ramp is 16 frames (5.8 ms, `RAMP_SHIFT 4`), the AMP envelope
+  shapes it after that as before; **a silent voice starts both operators at
+  phase 0** (`V_GPREV == 0`); a voice that sounded last frame (a retrigger, a
+  tail, a chord-memory or cap cut) restarts **phase-continuous**, its gain
+  ramping on from where po_fill left it.
+- Chord memory (`po_fade`) and the cap (`po_st_cut`) set a voice to
+  releasing with target 0 instead of cutting it: po_fill fades it over its
+  last frame; `po_fr_rel2` frees it once `V_GPREV` is down there too; the
+  cut voice is stamped newest so `po_steal` does not pick it twice. The
+  hard `po_free` (the safety nets, a mono start) also clears `V_GPREV`.
+
+**Measured on the fixed bus** (BUILD 23 of this commit, the same rig and
+card; `root29f/out_fix23/report.txt`):
+- held MAJ at VOIC 3, INDX 40, 1.7 s: **0 discontinuities / s, max |d2| 79
+  against the bound 92** (was 22 / s, 366); the fold on 16 flat (x1.02, was
+  x1.44); T_LIM 0.58 .. 0.69, mean 0.606 (was 0.604): the limiter does the
+  same work, without steps.
+- a C4 sine at VOIC 2: the first samples 14, 20, 27, 35, .. a smooth
+  raised ramp from phase 0; **max |step| in the first 20 ms 130 = the steady
+  tone's 130 (x1.00, was x3.2)**, 0 discontinuities (was 8), the envelope at
+  1 / 2 / 3 / 5 / 10 ms = 624 / 630 / 1716 / 2842 / 3471 (full at 5.8 ms);
+  the second press identical. The chord onset (MAJ VOIC 3 sines): max step
+  276 vs 231 steady (x1.19, was x2.39), 0 discontinuities (was 21).
+- the level law: the mono voice peaks -16.35 dBFS; the MAJ VOIC 3 chord
+  peaks -15.57 dBFS (was -15.67); single notes and the VOIC 4 chords: see
+  the report (the base bus: VOIC 4 single note -6.02 dB re mono, MAJ +0.18,
+  OCT3 -0.03). Pitch: VOIC 1 C4 261.73 Hz by zero crossings (was 261.82).
+- VOIC 1 unchanged (the mono path): the same stair, the same numbers.
+- Cost, counted from the code: the voice loop is 38 instructions a sample
+  (was 35, +3: +8.6 %), plus 11 a voice a frame for the step; the limiter's
+  scale pass 8 a sample (was 7) and runs whenever a gain moved (it ran only
+  while g < 1.0 before). Not measured with the port's counter in this pass.
+
+**The mono voice** (the next commit, BUILD 24; `poly.s` sy_render's marker
+block, sy_mono / sy_loop): the same treatment as the paraphonic voices.
+- The gain runs linearly per sample across each render call from the gain
+  the last call ended at (`S_GPREV`, a word at +38 of the track record)
+  toward this frame's `S_GAIN`: the step `(S_GAIN - S_GPREV) << 15 / 16`
+  once a call (BUILD 26: the frame's slope, `asr.l #4`; BUILD 24/25 divided
+  by the call's samples, a stair on sequencer notes -- below), `adda.l` a
+  sample, then `swap` and a 16 x 16 `muls.w` (the
+  running gain is kept as gain << 15, so its high word is gain / 2: 16384 at
+  full scale fits the signed multiply where 32768 would not; `lsl.l #2`
+  restores the scale -- at full gain the output is bit for bit the old
+  one, so the level law is untouched). A first call [0, n) has target ==
+  previous and stays flat; the second call ramps toward the new target and
+  S_GPREV takes the gain it reached (a short call gets there next call).
+- The attack ramp is 16 frames (`RAMP_STEP` 2048: 5.8 ms), the AMP
+  envelope shapes it after that as before.
+- **Every START is cold** (BUILD 26; `sy_cold`): the start clears `S_PHC`
+  / `S_PHM` / `S_LASTM` / `S_GAIN` / `S_GPREV` -- **both operators at phase
+  0**, the gain ramping from 0 over the 16 frames from the start call's
+  first sample (before BUILD 24: the carrier ran on from the last note,
+  the modulator restarted, the gain cut to 0 and stepped up once a frame).
+  BUILD 24 and 25 had a *warm rule* instead -- a start while the voice
+  sounded (`S_GPREV != 0` and the mono loop rendered this frame or the
+  last by `po_clock`'s frame count, the word `S_LASTF` at +126) kept the
+  phases and the gain -- which is withdrawn, see "the re-press click"
+  below; `S_LASTF` is gone with it (+126..127 is free again). The MIDI IN
+  legato flag `T_MLEG` (a byte, set by po_mon, read and cleared by
+  po_mrec: the live recorder's trigless decision for a MIDI note on a
+  synth track) sat at +126 too until BUILD 25, aliased by the stamp; it
+  stays the byte at +37 (after S_ON's byte at +36, before S_GPREV's word
+  at +38). The paths that silence the mono voice clear S_GPREV too: a
+  sample START (sy_no), the stock voice's end (sy_check), a paraphonic
+  frame (the mono voice is still cut at once when VOIC goes 1 -> 2..4
+  mid-note). A LEG MONO legato hand-over never STARTs (po_leg slides
+  S_CUR), so it stays phase- and gain-continuous with the glide.
+- The safety-net cut (an impossible pitch: `S_GAIN := 0`) fades over the
+  frame through the same ramp. The release itself is the DSP's AMP
+  envelope, as it always was.
+- Cost, counted from the code: the mono loop is 42 instructions a sample
+  (was 39, +3: +7.7 %), plus 12 a call for the step and the frame stamp;
+  poly.s grew 96 bytes. Not measured with the port's counter.
+
+**Measured** (BUILD 24 of that commit, the same rig and card; the session's
+`root29g/m37.py`, reports `root29g/out_fix24/report.txt` and
+`out_base24/report.txt`; "before" = the a0c0bc1 bus of BUILD 23):
+- a C4 sine at VOIC 1: the first samples 13, 20, 29, 38, 49, 62, 75, 90, 105,
+  122, 140, 159, 179, 200, 221, 244, 267, 290, .. -- a smooth raised ramp from
+  phase 0, no step at sample 16 (was 22, 44, .. 318, **671**); **max |step| in
+  the first 20 ms 183 against the steady tone's 184 (x0.99, was x3.19)**, 0
+  discontinuities (was 8; the fold on 16 x1.04, was x32); the envelope at 1 /
+  2 / 3 / 5 / 10 ms = 882 / 891 / 2426 / 4020 / 4909 (full at 5.8 ms). Peak
+  **-16.49 dBFS** (the reference take: -16.49; the level law untouched);
+  pitch 261.67 Hz by the spectral peak (261.53 on the level take).
+- a retrigger while sounding (C4 held, D4 pressed, LEG OFF, VOIC 1): max
+  |step| in the 0.35..0.80 s window 206 = the held tone's 206 (x1.00), **0
+  discontinuities** (the a0c0bc1 bus: 16 in the window, max |d2| 591 against
+  the signal's own 45, the fold on 16 x6.5 -- the ramp restarting from 0).
+- **the re-press click (REL 20), closed by BUILD 26's always-cold start.**
+  The DSP's AMP envelope had already brought the track to silence while
+  the CF voice was still rendering (S_GPREV full, S_LASTF current), so a
+  re-press counted as WARM: our gain stayed full and phase-continuous, and
+  the DSP's envelope restarting at full (ATK 0) on the start frame's first
+  sample put the sine back at once -- a bare step. BUILD 24: max |step|
+  1887 against 193 (x9.78), 4 discontinuities; BUILD 25 (the warm rule,
+  gain-continuous): 50 ms after the release **x22 .. x25**, 200 ms after
+  x2.8, the onset take's second press (0.4 s after the release) x1.14 with
+  a -2387 first sample. BUILD 25 also tried a fade at the warm start (keep
+  the phases, `clr.l S_GAIN`, the start frame fades the last gain to 0,
+  the attack climbs from 0) and measured it WORSE (50 ms x12.05, 200 ms
+  x24.27, the retrigger gained the fade's corners): the DSP's envelope
+  restart lands on the START frame's first sample, so no fade begun at the
+  start can precede it, and the CF cannot see the DSP's envelope (a
+  release event caught at 0x4000dfdc would not cover every path: the
+  sequencer's HOLD ends inside the DSP). Tim: "just fix the pops". So
+  BUILD 26 makes **every start cold** -- phases and gain from 0, the x0.99
+  onset on every press -- and gives up the retrigger-while-sounding
+  continuity: a new key with LEG OFF while a note sounds now dips for the
+  16-frame attack (the normal retrigger character) instead of continuing
+  the phase. Measured (BUILD 26, `root29i/out_fix/report.txt`):
+  - fresh onset (VOIC 1 C4 sine): the first samples 13, 20, 29, 38, 49, ..
+    from phase 0, **max |step| in the first 20 ms 183 against the steady
+    tone's 184 (x0.99), 0 discontinuities**; the second press, 0.4 s after
+    the release, now identical (BUILD 25: a -2387 first sample, x1.14).
+    Peak -16.49 dBFS (the level law untouched), 261.67 Hz spectral peak.
+  - re-press after the release (REL 20), the click this round closes: 50 ms
+    after **x1.02** (max |step| 188 vs 184), 200 ms after **x1.00**, 600 ms
+    after **x1.02**; 2 samples above the take's |d2| bound in each window
+    (the bound is 20..31 there, the release tail's own slope: max |d2| 44..63
+    against the steady tone's 90 -- nothing audible; BUILD 25: x22 .. x25 at
+    50 ms, x2.81 at 200 ms). MIDI IN: a re-press 50 ms after, x1.00 and 0
+    samples above the bound.
+  - a retrigger while sounding (C4 held, D4 pressed, LEG OFF): the cost of
+    the rule. The old note is cut at the frame edge and the new one ramps
+    from phase 0: -4729 -> -46, 81, 83, 89, .. -- **max |step| 4683 (the
+    peak itself), 3 samples above the bound, a -15 dB dip 6 ms wide (3 ms
+    below -6 dB, 2 ms below -12 dB)**, the D4 at full 6 ms later. BUILD 25
+    was continuous here (x1.00); the DSP does not soften a START while its
+    voice sounds. The MIDI retrigger (84 held, 86) landed in a split frame
+    and fell over 6 samples (max |d2| 347, 5 above the bound). A per-frame
+    fade of the old note before the phase reset would soften this case but
+    is exactly what the re-press cannot have (BUILD 25 measured it); the
+    CF cannot tell the two apart without the DSP's envelope.
+  - VOIC 2 onset: 9, 14, 20, 27, .. max |step| 130 = 130 (x1.00), 0
+    discontinuities, the envelope 624 / 630 / 1716 / 2842 / 3471: unchanged.
+    Held MAJ VOIC 3 (INDX 40): |d2| fold on 16 x1.02, max |d2| 79 (bound 92)
+    -- 0 frame-edge steps, T_LIM mean 0.598; the chord peaks -15.62 dBFS.
+  - LEG MONO + GLIDE 64 legato: one onset, t63 90 ms, 261.7 -> 329 Hz; the
+    hand-over never STARTs, so it is as continuous as before (x1.48 by max
+    |step| against the held C4, the glide's own slope, as BUILD 25).
+  - MIDI IN on VOIC 1: a non-legato note records a SAMPLE trig (step 5,
+    ptch 64), a LEG MONO legato note a TRIGLESS trig (step 8, ptch 68);
+    T_MLEG at +37 read and cleared as before.
+  - regressions (the 2.9 sine card copy): ROOT A MINOR keys 220.0 / 246.9 /
+    261.6 / 293.7 / 329.6 / 349.2 / 392.0 / 440.0 Hz OK; chord record (C4
+    E4 G4 -> one step, ptch 64 chrd MAJ voic 3); tuner opens and closes;
+    direct jump CHAIN AFTER 0 -> 1; FINE 0c on a new project's first load
+    (part 64 shadow 64 lane 64); warm boot with the real sram_out.bin (headless, 20 s): ok, exit 0.
+  - staccato sequencer trigs (a trig on every step, 120 BPM -- the card's
+    tempo -- 4 bars, VOIC 1 C4, REL 20), the case no round had measured:
+    BUILD 25 with HOLD 6 was a **bare step on every note** (-11 -> 2636,
+    15 -> -4390: max |d2| 4769, x14 .. x24 the slope, 15/s) -- the DSP had
+    ended every note inside its HOLD / REL while the CF still rendered, so
+    every trig was a warm start; with HOLD INF the warm rule ran the 4 bars
+    as ONE continuous tone (1 onset). The always-cold start: HOLD 6 max |d2|
+    295, but 103 steps/s at one phase of the 16-sample frame (fold x7.54) --
+    a stair on the attack of every sequencer note, absent on a key press.
+    The cause is the call split: a sequencer trig lands at its sub-frame
+    offset and the packer keeps calling the renderer in two chunks [0, k)
+    and [k, 16) for the note's life; the step a sample was (target -
+    previous) / the CALL's samples, so the second call carried the frame's
+    whole 2048 over its few samples. The second commit of this round ramps
+    at the FRAME's slope (/ 16) and stores the gain the ramp reached as
+    S_GPREV (the next call carries on; a short call lengthens the attack,
+    at most 2x). Measured (`out_fix2/report.txt`): **HOLD 6 max |d2| 24
+    (the steady tone's own is ~90), fold x2.25, 35/s above a bound of 15.9
+    (the release tails' own, near-silent slope); HOLD INF 8/s above 43,
+    max |d2| 197, fold x1.06** -- one per note, the fading old note (at -25
+    dB, the DSP's fade before the next trig) cut by the cold START. The
+    key-press numbers are bit for bit the BUILD 26 ones (full frames).
+- a C4 sine at VOIC 2: 9, 14, 20, 27, 35, 43, .. ; max |step| 130 = steady
+  130 (x1.00), 0 discontinuities, the envelope 624 / 630 / 1716 / 2842 /
+  3471 -- identical to BUILD 23 (the paraphonic path untouched).
+- the LEG MONO + GLIDE 64 legato press and the ROOT A MINOR keys / chord
+  record / tuner / direct-jump regressions: `root29g/run_leg24.log`,
+  `run_regr24.log` (run after this commit's measurement; see the session's
+  report).
+
+**The final rule (BUILD 27 / 28, `sy_cold` / `po_rel` / the quantizer's
+`qz_g2_trig`): warm only when the DSP is provably still sustaining at full,
+and only for a live key or a MIDI note.** BUILD 26's always-cold start closed the
+re-press click but made a new key while the old mono note still sounds (LEG
+OFF, HOLD INF) a hard cut at the frame edge (2299 -> 344, a -12 dB 5 ms dip):
+a click that the earlier warm rule (886eb08) did not have. The CF cannot read
+the DSP's envelope, but it can know when the envelope has NOT moved: a START
+is **warm** (S_PHC / S_PHM / S_LASTM / S_GAIN / S_GPREV kept, the pitch
+changes, no ramp) only when all four hold, else **cold** as BUILD 26:
+- (a) the AMP HOLD the DSP took at the sounding note's START was INF: the byte
+  `S_HOLD` (+126 of the track record) stores, at EVERY START, the live lane's
+  HOLD (`0x80000810 + track * 72 + 13`, locks applied -- the byte po_start
+  reads for a paraphonic gate) and the decision reads the PREVIOUS start's
+  value, so a HOLD lock on the step that started the sounding note counts
+  whatever the lane holds later, and a finite HOLD (the DSP ends the note
+  inside itself, no note-off anywhere) is cold;
+- (b) no release has reached the frame builder since that START: `S_ON` bit 1,
+  the "released" flag, set by `po_rel`, a jmp detour at **0x4000b51a**, the
+  frame builder's consumer of the mailbox `0x46c80354[t]` bit 6 (the block
+  0x4000b4f6..0x4000b53a: the release bytes 0x80001828/9 into the frame, 4
+  into the LFO state, the bit cleared) -- ONE site for every path that posts
+  0x40: the panel key release 0x4004fbfe.., the MIDI note-off's stock block
+  0x4000dfdc (po_moff's last note), the sequencer's note-off. The flag is set
+  only while S_ON bit 0 is (a synth plays; `tst.b S_ON` keeps its meaning) and
+  NOT when the same mailbox word carries the START (bit 2): a panel key pressed
+  while one is held with LEG OFF posts the note-off and the START together
+  (0x4004fbfe .. 0x4004fcb2) and the DSP restarts at full on that frame,
+  nothing fades. Every START writes S_ON = 1 (sy_set): the flag clears;
+- (c) the voice sounded (`S_GPREV != 0`);
+- (d) **the START is a live key's or a MIDI note's** (BUILD 28). The
+  discriminator is the identity the engine already uses: `qz_pkey[t]` at
+  `KEYS_AT` (0x400d2cb0), the byte the quantizer's CHROMATIC key handler
+  posts for the engine (the key's index + 1: `qz_g2_trig`, since BUILD 28 on
+  EVERY fresh-note trig -- before it only the paraphonic path `qz_g2_para`
+  posted it, so a VOIC 1 key read 0) and `po_mon` posts for a MIDI note
+  (`0x80 | note`); a sequencer trig posts nothing, and `po_start` reads the
+  same byte as its `d7` ("0 = the sequencer"). `sy_cold` reads it before the
+  mono path clears it, keeps it at `S_KEYED` (+127, the record's last byte,
+  peekable) and goes warm only when it is nonzero; a sample track's START
+  consumes it in `sy_no`. Why: a sequencer trig STARTs the mono voice with NO
+  note-off reaching the frame builder (at HOLD INF the released flag is never
+  set, S_ON stays 1), while the DSP restarts something at every trig that the
+  CF cannot see -- BUILD 27's warm START there LAYERED: one continuous CF tone
+  at **-10.74 dBFS (+5.75 dB over the mono voice), 16 bare steps/s, max |d2|
+  4657**, worse than BUILD 26's cold start (8/s at -25 dB, max |d2| 197). So
+  a START from the SEQUENCER is always cold; only a live key or a MIDI note
+  may be warm.
+A phase reset at gain 0 stays inaudible; LEG MONO hand-overs never START.
+**Measured on BUILD 27** (`root29j/out_fix/report.txt`, `out_fix2/`,
+`run_midi.log`, `run_leg.log`, `run_regr.log`; the same rig and card, VOIC 1
+C4 sine, REL 20):
+- a retrigger while sounding (C4 held, D4 pressed, LEG OFF, HOLD INF): the
+  panel posts the note-off and the START in one mailbox word, the flag stays
+  clear, S_HOLD 127, S_GPREV full -> WARM: **max |step| 206 = the held tone's
+  206 (x1.00)**, 1 sample above the |d2| bound (max |d2| 54 against the
+  steady tone's ~90: the pitch change's own kink at the frame edge), the dip
+  -3.2 dB for 18 ms below -3 dB (the two notes' beat), 0 ms below -6 dB
+  (BUILD 26: a cut, -15 dB for 6 ms, max |step| 4683). MIDI IN (84 held, 86):
+  x1.00, 0 samples above the bound.
+- a re-press after the key release (the flag set by po_rel): 50 ms after
+  **x1.00** (191 vs 191, 0 above the bound), 200 ms **x1.05** (1 above, max
+  |d2| 66), 600 ms **x1.00** (2 above, max |d2| 66) -- cold, as BUILD 26.
+  MIDI IN re-press 50 ms after the note-off: x1.01, 0 above.
+- the fresh onset x0.99 (183 vs 184, 0 discontinuities, the same first
+  samples 13, 20, 29, ..), the second press identical; peak -16.49 dBFS;
+  261.67 Hz spectral peak. VOIC 2 onset 9, 14, 20, .. x1.00, envelope 624 /
+  630 / 1716 / 2842 / 3471: unchanged. Held MAJ VOIC 3 (INDX 40): |d2| fold
+  on 16 x1.02, max |d2| 78, T_LIM mean 0.597: 0 frame-edge steps. LEG MONO +
+  GLIDE 64 legato: one onset, x1.48 (the glide's own slope), t63 ~90 ms, as
+  before. MIDI live-rec: a plain note a SAMPLE trig (step 5, ptch 64), a LEG
+  MONO legato note a TRIGLESS trig (step 8, ptch 68), T_MLEG read and cleared.
+- staccato 16ths, HOLD 6 / REL 20 (the DSP's own hold ends every note, no
+  note-off anywhere; S_HOLD 6 -> cold each): 72 onsets at 120 BPM, max |d2|
+  50, 35/s above the tails' near-silent bound of 15.9, fold x2.27 -- as BUILD
+  26 (max |d2| 24 there).
+- **staccato 16ths at HOLD INF: the sequencer STARTs WITHOUT a note-off** (S_ON
+  stayed 1, the flag never set, S_HOLD 127) -- so every trig is WARM and the
+  CF renders one continuous C4 (1 onset in 4.5 s, 261.62 Hz), exactly BUILD
+  25's warm-rule take, and like it NOT clean: **peak -10.74 dBFS (+5.75 dB
+  over the mono voice's -16.49), 16 samples/s above the bound, max |d2| 4657**
+  (a bare step on every other trig). The DSP side layers or restarts
+  something at a sequencer START that the CF cannot see (the level says two
+  voices), so for the SEQUENCER the warm rule is worse than BUILD 26's cold
+  start (8/s, max |d2| 197 at -25 dB). Closed by condition (d), BUILD 28.
+- the HOLD lock (a trig on step 5 with HOLD locked to 6, the Part at INF):
+  after the step the live lane read HOLD 6 and **S_HOLD 6** (the lane carries
+  the lock at the START and keeps it until the next trig); the key pressed
+  after it read S_HOLD 6 too, so its START decides cold through (a). The lane
+  IS where the lock lives; no pattern-record read is needed. The audio of this
+  take and of the HOLD 6 key takes (D4 while a HOLD-6 C4 is down; a re-press
+  50 / 200 ms after a HOLD-6 release) is VOID: they ran after the HOLD INF
+  sequencer take on a unit still sounding its never-released voices (peak -2
+  dBFS, the reference window itself full of steps); to be re-taken on a fresh
+  boot.
+- regressions: ROOT A MINOR keys 220.0 / 246.9 / 261.6 / 293.7 / 329.6 /
+  349.2 / 392.0 / 440.0 Hz OK; chord record; tuner opens and closes; direct
+  jump CHAIN AFTER 0 -> 1; FINE 0c on a new project's first load; warm boot
+  with the real sram_out.bin ok.
+
+**Measured on BUILD 28** (`root29k/out_fix/report.txt`, `run_midi.log`,
+`run_leg.log`, `run_regr.log`, `out_stop28/`, `out_tree28/`; the same rig and
+card, VOIC 1 C4 sine, REL 20; `S_KEYED` peeked at +127):
+- **staccato 16ths at HOLD INF: one onset per trig** (55 detected in 9 s at
+  120 BPM, the rest under the detector's 3 dB rise; S_KEYED 0 mid-play = a
+  sequencer trig, S_ON 1, S_HOLD 127): **peak -16.14 dBFS** (0.35 dB over the
+  mono voice's -16.49, the beat of the tail against the new note; BUILD 27:
+  -10.74), **8 samples/s above the bound, max |d2| 197, fold x1.01 -- BUILD
+  26's numbers** (the fading tail at -25 dB cut by the cold START: the dip at
+  a trig -19.7 dB for 2 ms below -12 dB). HOLD 6 16ths unchanged: 72 onsets,
+  max |d2| 24, 35/s above the tails' near-silent bound 15.9, fold x2.26.
+- a retrigger while sounding (C4 held, D4 pressed, LEG OFF, HOLD INF): S_KEYED
+  13 then 15 (the live keys), S_ON 1, S_HOLD 127 -> WARM: **max |step| 206 =
+  the held tone's 206 (x1.00)**, 0 above the bound, max |d2| 23, the dip -3.2
+  dB for 20 ms (the beat), 0 ms below -6 dB. MIDI IN (84 held, 86; po_mon's
+  identity): **x1.00** (413 vs 413), max |d2| 116 (the pitch change's kink, 6
+  samples over the window's bound), still warm; the MIDI re-press 50 ms after
+  the note-off x1.11, 0 above the bound: cold.
+- a re-press after the key release: S_ON 3 after the release (the flag), 50
+  ms **x1.00** (0 above), 200 ms **x1.00** (2 above, max |d2| 67), 600 ms
+  **x1.00** (1 above, max |d2| 67) -- cold.
+- the fresh onset **x0.99** (183 vs 184, 0 discontinuities, 13, 20, 29, ..),
+  the second press identical, peak **-16.49 dBFS**, **261.67 Hz** spectral
+  peak; VOIC 2 onset 9, 14, 20, .. x1.00, envelope 624 / 630 / 1716 / 2842 /
+  3471, S_KEYED 13 (the paraphonic path posts it as before).
+- HOLD 6 key takes, on a fresh boot this time (S_HOLD 6 -> cold through (a)):
+  D4 while a HOLD-6 C4 is down max |step| 205 (the tone's own slope; the
+  window before it is the silence after the hold, so the ratio column reads
+  x205 against a steady 1), max |d2| 67, 2 above the bound; the re-press 50 /
+  200 ms after a HOLD-6 release max |step| 183, max |d2| 21, 1 above -- clean.
+- the HOLD lock (a trig on step 5 with HOLD locked to 6, the Part at INF):
+  after the step S_HOLD 6, S_KEYED 0 (a sequencer trig), lane HOLD 6, one
+  onset; the key the take presses ~1.2 s after PLAY does not START (the take
+  presses it in the TRACKS trig mode while the sequencer runs: S_KEYED stays
+  0, no onset -- as BUILD 27's take, whose "reads S_HOLD 6 too" was this
+  same non-event). Re-taken by the verifier in CHROMATIC mode: after step 5
+  (S_ON, S_HOLD, S_KEYED, lane HOLD) = (1, 6, 0, 6); the key then STARTed
+  (S_KEYED 13, S_HOLD 127 after it) cold through (a): max |step| 184 = the
+  steady slope (x1.00), no discontinuity.
+- LEG MONO + GLIDE 64 legato: the envelope and the glide bit for bit BUILD
+  27's (C4 -> E4 over ~90 ms t63, the DSP's 3.5 dB level step 150 ms after
+  the trigless word, which this round's 3 dB onset detector counted as a
+  second onset at 0.7 s -- it is in BUILD 27's envelope too, 0.1 dB under the
+  threshold there); the regression take's own legato: one onset, t63 90 ms.
+  MIDI live-rec: a plain note a SAMPLE trig (step 5, ptch 64), a LEG MONO note
+  a TRIGLESS trig (step 8, ptch 68), T_MLEG as before. Regressions: ROOT A
+  MINOR keys 220.0 .. 440.0 Hz OK, chord record (ptch 64 chrd MAJ voic 3),
+  tuner opens and closes, direct jump CHAIN AFTER 0 -> 1, FINE 0c on a new
+  project's first load (part / shadow / lane 64), the warm boot with the real
+  sram_out.bin ok (exit 0). Held MAJ VOIC 3 (INDX 40): |d2| fold x1.02, max
+  |d2| 79, 0 frame-edge steps.
+- after STOP at HOLD INF (`m39.py`: a trig on every step, PLAY 2 s, STOP, 3 s
+  more) the voices go SILENT on the port, on BUILD 28 (-16.14 dBFS playing,
+  **-90.3 dBFS 0.5 .. 3 s after STOP**; S_ON stays 1 -- the CF record is not
+  told, the DSP is) and on the 2.8 tree (`tuning` 91f39a1 built in the same
+  tree: one continuous tone while playing, its sequencer trigs warm, -15.75
+  dBFS; -90.3 after STOP) alike: pre-existing, stock-like -- not a BUILD 27 /
+  28 change. (BUILD 27's "still sounding after the HOLD INF take" was the
+  layered warm state of that build's live keys, not the sequencer's STOP.)
+
+Open: a 2.8 / OCTATRIK11 A/B on the port (the hardware finding stands in
+for it); the port's instruction count; the VOIC 1 -> 2..4 switch mid-note
+still cuts the mono voice at once. (The re-press click is closed: BUILD 26;
+the sequencer's warm START: BUILD 28.)
+
+## FINE defaults to 0c when a track becomes a synth track (28 Sep 2026)
+
+Tim's report: "when I first load a synth track, its FINE parameter is maxed
+out at 63c; it should default to zero". FINE is the stock RATE byte (the
+FLEX PLAYBACK bytes are `PTCH STRT LEN RATE RTRG RTIM`, RATE at index 3;
+cents = raw - 64) and stock's RATE default is 127, so a stock Part, and any
+track that was a sample track, carries 127 there: +63c the moment the track
+turns into a synth. Since the 27 Sep tuning system the README told the user
+to turn it down once.
+
+**The rule.** At the moment a track BECOMES a synth track -- it is FLEX and
+its FLEX slot's sample is a marker (`po_slot_marker`: the settings record's
+path, `0x100b14f0 + 0x448 * slot`, after the last `/` starts with `FMSYNTH`
+or `SYNTH`; a slot above 127 is never one) and it was NOT one just before
+(the machine was not FLEX, or the FLEX slot was not a marker) -- RATE := 64
+is written to the Part's FLEX PLAYBACK byte (`0x8edaa + 1 * 6 + track * 30
++ 3` in the Part), to its battery-RAM shadow (the bank's mirror `0x1001614e
++ part * 6322` + the same offset: the slot bytes' shadow `0x100a5198`, the
+machine's `0x100a4ef0` and the AMP page-2's `0x100a51c6` all sit at that
+base) and to the live lane (`0x80000810 + track * 72 + 3`, what the page's
+knob writes too), by `po_fine_reset` in `poly.s`. The stock code then marks
+the Part changed and redraws as it did, so the page shows `FINE 0c` at once
+and SAVE carries the 64. Nothing else: no reset on a project load, a Part
+reload, a pattern change (none of them run the sites), on a re-assignment
+of the same or another marker slot to a track that is a synth already (its
+FINE is the user's), or on any sample track (a non-marker slot is no synth
+track, so the byte is never written). RATE p-locks live in the pattern and
+are not read.
+
+**The sites** (three `jmp` detours of 8 bytes each into the DRAM unit,
+`po_assign` / `po_machwin` / `po_machlist`; `manifest.py` ASSIGN_HOOK,
+MACHWIN_HOOK, LISTWIN_HOOK). Stock has ONE routine that assigns a slot to
+the current track, `0x40079424` (both windows call it: the machine window's
+apply path `0x400796a0` at `0x40079770` and the sample-list window's at
+`0x4005a7fe`). It reads the window's machine and slot (`0x46c8d1a0` /
+`0x46c8d19c`), exits at `0x40079672` when the Part already holds that slot
+in that machine's column, otherwise writes the machine byte (`0x40079522`,
+the old one saved in d4 and pushed at `0x4007956c` for `0x400972fc(part,
+track, old machine)`) and then the slot byte -- `addal #0x8f04a,%a0; moveb
+%d1,%a0@` at **`0x400795ba`** with a0 = the Part's slot byte of the new
+machine (a3) and d1 = the new slot -- and its shadow. `po_assign` reads the
+old slot of that column before the displaced store, takes the old machine
+from the stack (`8(sp)`, the three arguments still parked there) and the
+track from `4(sp)`, and calls `po_became`. When only the machine changes
+(the column's slot equal) the assigner writes nothing and each window
+writes the machine byte on a path of its own: the machine window at
+**`0x40079816`** (`addal #0x8eda2,%a0; mvsb %a0@,%d3`, `0x400797cc`: d3 :=
+the old machine, d4 = the new, d1 = the track) and the sample-list window
+at **`0x4005a848`** (`addal #0x8eda2,%a0; mvsb %a0@,%d4`, `0x4005a826`: d4
+:= the old machine, the new one at `0x460d5c30`, d2 = the track); there the
+FLEX column's slot is read from the Part (`po_flex_slot`). The one other
+writer of the machine and slot bytes, the paste of a copied track record
+(`0x40027e4c`, kind 0: `0x40027ec2` / `0x40027f4c`), is left alone -- it
+copies every page byte from the source, so a pasted synth track brings its
+own FINE.
+
+`po_became(d0 old machine, d1 new machine, d2 track, d3 old FLEX slot or
+-1, d4 new FLEX slot)`: not FLEX now -> out; the new slot not a marker ->
+out; the old machine not FLEX -> reset; the old slot a marker -> out; else
+reset. `po_is_synth` now shares the marker scan (`po_slot_marker`). The
+unit grew by 262 B (the ROM footprint and the cave are unchanged: 3,236 B
+of cave left in the octatrick-tuner remix, BUILD 21).
+
+### Measured (28 Sep 2026, the octatrick-tuner BUILD 21 bus on ot_emu `--dsp-rt` through the panel, a copy of the 2.9 card: T1 = FLEX slot 3 `third-0.wav` (a 438.645 Hz sine) with RATE 127, T2 = FM SYNTH slot 5 `SYNTH.wav`; the session's `root29c/m31.py`, shots `root29c/out21/`; the Part byte read from the bank blob, the shadow from `0x1001614e + 0x8edb3`, the lane from `0x80000813`; T1's slot-byte shadow `0x100a5198..+5` watched with ot_emu's `OT_WATCHMEM` for the writers' PCs)
+
+- The assignment (the machine window, slot 5 = the FMSYNTH marker, YES) on
+  T1 = FLEX slot 3 with RATE 127: the FLEX PLAYBACK bytes go
+  `[64,0,127,127,0,79]` -> `[64,0,127,64,0,79]`; the Part byte, the
+  battery-RAM shadow (`0x1001614e + 0x8edb3`) and the live lane
+  (`0x80000813`) all read 64; the page redraws as FM SYNTH > FLEX with
+  FINE 0c at once (`root29c/out21/assign_page.png`).
+- FINE +20c (raw 84), SCALE MAJOR / ROOT A / GLIDE 12, PROJECT > SAVE,
+  eject, a cold boot loading the project: RATE 84 in the Part, the shadow
+  and the lane -- a tuned synth track keeps its FINE.
+- With FINE 84: re-assigning the same marker slot keeps 84 (the assigner's
+  same-slot exit, the window's machine-only write); assigning the sine
+  keeps 84 (a sample track is never written); the marker again -> 64.
+  FLEX -> STATIC keeps the FLEX column's 84; STATIC -> FLEX with the marker
+  still in the column -> 64 (`po_machwin`).
+- A RATE p-lock (117) placed on T1 step 1 while it was a sample track is
+  117 after the assignment, before the SAVE and after the reload.
+- The voice at FINE 0c: 261.6 Hz at PTCH 0 (-0.2 c from C4, 2.9's figure);
+  at +20c: 264.7 Hz (+20.2 c).
+- Regressions on the same bus: T2 ROOT A MINOR keys A3 B3 C4 D4 E4 F4 G4
+  A4; LIVE REC C4 E4 G4 -> one step, PTCH 64 / CHRD MAJ / VOIC 3; LEG MONO
+  + GLIDE 64 one onset, t63 90 ms; the tuner opens and closes; CHAIN AFTER
+  +1 = DIRECT; the warm boot (the battery-RAM dump, no load) keeps SCALE /
+  ROOT / GLIDE. `OT_WATCHMEM` on T1's slot-byte shadow: the only writer
+  during the takes was the assigner's direct path `0x400795c8`; the
+  assigner's deferred branch `0x40079684` (a settings entry with +8 set,
+  through `0x40021d94`) never ran and is not detoured -- an assignment
+  completing that way would not reset. `po_machlist` (the sample-list
+  window's machine-only write) is placed and byte-checked, not exercised.
+  Measured twice: the builder's pass (`root29c/`) and an independent
+  verifier's on its own panel (`root29c-verify/`, the SAVE / reload,
+  regression and warm-boot takes).
+
+### The new-project case (OCTATRICK2.9 BUILD 22, 27 Sep 2026): the fourth site
+
+Tim, on his MKI with 2.9 + the fix above: "the FIRST FM machine I load
+shows FINE +63c; later ones load at 0c" -- loaded with `SYNTH.wav` into a
+new project. Reproduced on the port (the BUILD 21 bus = the three sites
+above, a fresh project the OT has never saved a Part into, an AUDIO folder
+holding only `SYNTH.wav` and `FMSYNTH.wav`): **in a fresh project every
+track already owns a slot** -- T1 = slot 1 .. T8 = slot 8 in both the
+STATIC and the FLEX column, every slot empty (the port boots them as STATIC
+machines). The first marker therefore goes INTO the track's own slot, and
+**neither the machine byte nor the slot byte changes when it does**: in the
+machine window FLEX + slot 1 + YES applies the machine (T1 is FLEX slot 1
+with an EMPTY slot: no synth track, the sites correctly do nothing), YES
+again on slot 1 takes the assigner's same-slot exit `0x40079672 ->
+0x40021d94` = the file browser (the slot is empty), the select writes the
+file's path into slot 1's settings record and queues the load, the machine
+window's next YES is the same-slot exit again -- T1 became a synth track
+by ITS SLOT'S FILE CHANGING, a path none of the three sites is on. The
+sample-list window's LOAD FILE (FUNC + PLAYBACK, the FLEX list, YES on the
+track's own empty slot) is the same: the Part is not touched at all. Later
+machines load at 0c because by then the user assigns a slot the track did
+not have (the assigner's slot write, `po_assign`) or changes the machine
+(`po_machwin` / `po_machlist`). Nothing hardware-only is involved: the port
+reproduces it with the load completing at once, so the ATA latency (`+8 ==
+2`, the load in progress) is not the cause.
+
+**The site.** The file browser's select `0x40022610(machine, slot, path)`
+(from `0x400226f4`, both windows' browsers) writes the path into the slot's
+settings record with `jsr 0x40013a08` (sprintf) at **`0x40022686`** --
+the one place a FLEX slot's file changes under a track that keeps its
+machine and slot (a project load fills the records another way). The
+`jsr` is rewritten to `jsr po_loadsel` (`manifest.py` LOADSEL_HOOK, kind
+`jsr`, 6 bytes, no displaced instruction: the stub calls the sprintf
+itself with the three arguments re-pushed). `po_loadsel`: when the list is
+FLEX (d4 == 1), the slot's marker state is read BEFORE the write
+(`po_slot_marker` on the old path) and AFTER it; went it non-marker (an
+empty slot reads as none) -> marker, every track whose machine is FLEX and
+whose FLEX-column slot is this slot gets `po_fine_reset` (RATE := 64 in
+the Part, the shadow, the live lane). A marker replaced by a marker (its
+synth tracks keep their FINE), a sample replacing a marker, a STATIC-list
+load, a recorder buffer: nothing. The three sites of 28 Sep are unchanged,
+so an existing project behaves as measured above. The unit grew by 102 B
+(the cave is unchanged: 3,236 B left in the octatrick-tuner remix, BUILD
+22).
+
+### Measured (27 Sep 2026, the port through the panel; the session's `root29e/m33.py`, logs and shots `root29e/`)
+
+The new project: a project directory holding only `project.work` /
+`project.strd` (`root29b/PROJECT_ref` with its four `[SAMPLE]` blocks
+removed and SCALE / ROOT / GLIDE at their defaults; no bank files, so
+every Part is stock's default -- the way the tuner rig's card builder
+stages a project, `panel_server_poke.py --project`), an AUDIO folder
+holding only `SYNTH.wav` and `FMSYNTH.wav` (two 4 s quiet 100 Hz WAVs; the
+browser lists `FMSYNTH.wav` first, `SYNTH.wav` = DOWN once). Each flow is
+its own panel start = a cold boot with empty battery RAM. At boot every
+track is STATIC with its own slot in both columns (T1 `[0, 0, 0, 0, 128]`,
+T3 `[2, 2, 0, 0, 130]`), FLEX PLAYBACK `[64, 0, 0, 127, 0, 79]` (RATE 127
+= stock's default, written by the project defaults `0x400208ae..b4`),
+every slot empty (`+8` = 1, path '').
+
+- **Reproduced (the BUILD 21 bus = 2.9 + the three sites, Tim's build):**
+  T1, double-tap, LEFT, FLEX, RIGHT (slot 1 = T1's own), YES = the
+  machine applied (T1 machine 1, no browser: pending unchanged), YES
+  again = the browser (pending (1, 0)), DOWN, YES = `../AUDIO/SYNTH.wav`
+  in slot 1 (+8 0, +20 13), YES, NO x3: RATE part 127 / shadow 127 / lane
+  127 on the PLAYBACK page, after leaving and re-entering it, after one
+  CHROMATIC note = **FINE +63c**, Tim's case. `OT_WATCHMEM` on the Part
+  shadows `0x100a4ef0 + 0x2b0`: no writer of 64 at all; the only writes
+  after the load were the machine window's machine byte (`0x40079828` ->
+  `0x100a4ef0` = 1, twice) -- no assigner slot write, no site reached.
+- **BUILD 22 (the fourth site), the same new project from cold boots**
+  (the builder's chain `root29e/run_e.sh`, then an independent verifier's
+  own new project and panel, `root29e-verify/run_v*.log`): flow A (T1
+  machine window, SYNTH.wav into T1's own slot): RATE Part / shadow / lane
+  64 / 64 / 64 on the PLAYBACK page, after leaving and re-entering it, and
+  after one CHROMATIC note -- FINE 0c; flow B (T3, FUNC + PLAYBACK machine
+  list FLEX / YES / RIGHT / YES / SYNTH.wav into T3's slot): 64 / 64 / 64
+  the same three ways; flow C (T1 machine window, FMSYNTH.wav): 64 / 64 /
+  64. In every flow the writer-PC log shows exactly one write of 64 to the
+  RATE shadow, from `po_fine_reset` in the DRAM unit (`0x40a98b3e`), and
+  no assigner slot write (`0x400795c8` never ran): the reset came through
+  `po_loadsel`.
+- **The existing-project cases on the 2.9 sine card (BUILD 22):** the
+  marker slot assigned to a sample track (RATE 127) -> 64 / 64 / 64, the
+  step-1 RATE lock 117 kept; FINE +20c (84) kept over a re-assignment of
+  the same marker, over the sine assigned to the track (a sample track is
+  never written) and over SAVE + a cold reload; the marker again -> 64;
+  FLEX -> STATIC keeps the FLEX column's 84, STATIC -> FLEX with the marker
+  still in the column -> 64. The voice at FINE 0c 261.6 Hz (-0.2 c), at
+  +20c 264.7 Hz (+20.2 c).
+- **Regressions on the BUILD 22 bus:** T2 ROOT A MINOR keys A3 B3 C4 D4 E4
+  F4 G4 A4; LIVE REC C4 E4 G4 -> one step, PTCH 64 / CHRD MAJ / VOIC 3;
+  LEG MONO + GLIDE 64 one onset, t63 90 ms; the tuner opens and closes;
+  CHAIN AFTER +1 = DIRECT; the warm boot (the battery-RAM dump, no load)
+  keeps SCALE / ROOT / GLIDE. Placements on Sam's current layout: the
+  detour `jsr 0x40022686 -> poly:po_loadsel` in octatrick-usb (3,236 B of
+  cave left), octatrick-tuner (3,236 B) and cfmeter with DIRECT JUMP
+  (2,852 B). The unit grew 102 B.
 
 ## Pitch slides on sample tracks (OCTATRICK2.8, 5 Oct 2026)
 
@@ -787,7 +1783,10 @@ byte and the stock "+7.0" display, byte for byte. What changes, and where:
   `FINE`, printed `+12c` / `0c` / `-64c` (four characters fit the box),
   handler 0, default 64. A track that was a sample track before -- or any
   stock Part -- carries the stock RATE default **127**, which reads as
-  FINE +63: turn it down to `0c` once (the OTLIVE card's T2 came up so).
+  FINE +63; since 28 Sep 2026 the byte is set to 64 at the moment a track
+  becomes a synth track (**"FINE defaults to 0c"** above), so a fresh synth
+  track reads `0c` (a synth track saved before that build keeps its byte:
+  turn it down once if it still reads +63c).
   The page cave is 1,800 B (was 1,672).
 - **The engine** (`poly.s`): `sy_word` turns the record's two halfwords
   into the pitch word on the stock curve's scale (a semitone = SEMI = 5 <<
@@ -874,7 +1873,7 @@ session scratchpad, `report_*.txt`):
 - **T1 made a synth track through the slot list** (FLEX, slot 5): the same
   two-note keyboard at VOIC 2 as T2's (C4 + D#4; a third key replaces the
   oldest). Its FINE byte came up 127 (+63 c): the stock RATE default, see
-  above.
+  above (since 28 Sep 2026 it comes up 64 = `0c`: "FINE defaults to 0c").
 - MIDI IN is measured since 30 Sep 2026 (ot_emu's `OT_MIDI_IN` FIFO, "MIDI
   IN" above); until then `qz_midi` was read from the listing. The p-lock value display (hold a trig in GRID RECORDING) goes
   through the same formatter as the knob (`+7` measured); the shot taken

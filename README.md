@@ -18,7 +18,8 @@ to watch.
   FLEX track whose sample is named FMSYNTH*.wav becomes a synth (a silent
   4 s marker file will do; SYNTH*.wav is still accepted; the marker never
   ends the note -- the AMP envelope or a key release does), with its own PLAYBACK page (PTCH RATO INDX FINE
-  FDBK DEC: PTCH in semitones, -64..+63, FINE in cents), and on the LFO
+  FDBK DEC: PTCH in semitones, -64..+63, FINE in cents -- 0c the moment a
+  track becomes a synth track), and on the LFO
   page VOIC (1 = mono, 2..4 = paraphonic: the most voices the track sounds
   at once, keys and chords alike) and CHRD (32 chord shapes as four-note
   voicings in priority order, in Syntakt order since 2.8 -- the triads MIN
@@ -73,7 +74,12 @@ to watch.
   battery-backed RAM (`0x100b14ec` / `0x100b14ed`), so they survive a power
   cycle like the stock project settings do (since v10; before, they came
   back OFF at every power-on although SAVE had written them to the project
-  file). Three ROM units. `quantizer/README.md`.
+  file). Since Octatrick 2.9 a ROOT row (C..B, `0x100b14ee`) under SCALE:
+  the scale is built on the root -- knob, locks, keys and the synth's chord
+  snap all read one root-rotated mask, and key 1 of the CHROMATIC keyboard
+  sounds the root -- and the unit itself is a DRAM unit of the platform
+  runtime: only a 192-byte core (the boot clamps, the defaults, the mask)
+  and the two pinned stubs stay in the OS image. `quantizer/README.md`.
 - **`direct-jump/`** (key `DIRECT JUMP`) -- CHAIN AFTER gains a DIRECT option
   (option 2 of the list): a pattern chosen while the sequencer runs starts
   at the next step, at the step count the old pattern had reached. One ROM

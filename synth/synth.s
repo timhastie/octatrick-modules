@@ -3,7 +3,8 @@
 |
 | SUPERSEDED 24 Sep 2026: the engine moved to the DRAM unit poly.s (phase 5,
 | paraphonic chords); this file is no longer built and is kept for the record
-| -- poly.s's mono path is this code, bit for bit in its output.
+| -- poly.s's mono path is this code, bit for bit in its steady output;
+| since the mono click fix (poly.s S_GPREV, sy_loop) its note starts differ.
 |
 | A FLEX track whose sample is named SYNTH* (the file name on the card, e.g.
 | SYNTH.wav in any FLEX slot) has its sample data GENERATED here every frame

@@ -1,5 +1,6 @@
-"""SCALE QUANTIZER -- a per-project SCALE setting (OFF plus 24 scales) that
-quantizes the audio tracks' pitch, as the Digitakt / Digitone do. With a
+"""SCALE QUANTIZER -- a per-project SCALE setting (OFF plus 24 scales) and,
+since Octatrick 2.9, its ROOT (C .. B), that quantize the audio tracks'
+pitch, as the Digitakt / Digitone do. With a
 scale on, the PTCH knob on the PLAYBACK page steps to the next scale degree
 in the turn direction instead of one raw unit (from 0 up in PHRYGIAN: 1, 3,
 5, 7, 8, 10, 12 ...; below the root the same degrees an octave down), and a
@@ -7,12 +8,49 @@ in the turn direction instead of one raw unit (from 0 up in PHRYGIAN: 1, 3,
 lower) before it becomes the pitch the voice, the lock and the screen see.
 OFF is stock: every detour replays what it displaced.
 
+ROOT (28 Sep 2026, Octatrick 2.9). One per project, a fifth SEQUENCER row
+right under SCALE: C C# D D# E F F# G G# A A# B (C = 2.8's behaviour: the
+pitches, the knob and the locks byte for byte; the keyboard's number reads
+"C 0" with a scale on where 2.8 read "0"). The scale is built on the root:
+every snap -- the PTCH knob, a PTCH lock in either editor, a CHROMATIC key,
+and the chord notes the synth engine snaps through SCALE_AT -- tests a note's
+pitch class against ONE mask, core.s qz_scale_mask = the scale's pitch
+classes rotated by ROOT. The CHROMATIC keyboard is transposed so that key 1
+sounds the root (a synth track: n = key - 12 + ROOT + 12 * octave; a sample
+track: index + ROOT within stock's -12..+12 st), and the number beside the
+keyboard reads the root's name too ("A -1"). A SAMPLE track keeps stock's two
+keyboard positions (one word, FUNC + LEFT / RIGHT toggles it; 0 at boot):
+the default position plays the one complete root-to-root octave the stock
+range holds, r-12 .. r st on keys 1..13 (key 1 = the root below the sample's
+pitch, key 13 = the root above), and the other position is the partial octave
+on the side that clamps fewer keys -- r .. r+12 with the top r keys clamped at
++12 st for ROOT C..F#, r-24 .. r-12 with the bottom 12 - r keys clamped at
+-12 st for ROOT G..B ("when the root is high, the whole keyboard drops an
+octave"; the number then reads "-1"). SCALE = OFF ignores ROOT. Stored in the next battery-RAM byte,
+0x100b14ee (no absolute reference to 0x100b14e2..ef anywhere in the OS;
+outside both blocks the boot memcpy's), clamped 0..11 by qz_boot and set to
+C by qz_defaults, saved as "#SEQUENCER_ROOT=n" after the SCALE line by the
+same writer and loader detours; the SEQUENCER tables are grown 3 + 3.
+
+THE DRAM SPLIT (28 Sep 2026). quantizer.s is a DRAM unit of octabam's
+platform runtime (Linked(dram=True), with the synth's poly.s); the OS image
+keeps core.s -- qz_boot, qz_defaults, qz_scale_mask and the 24 masks, 192 B
+-- and the two pinned stubs. The boot order under the port (--watch-pc):
+the boot redirect 0x4000050c runs the loader (the runtime depacked) before
+the .data copy 0x4000f938 and main 0x40000db0, and the sanitiser site
+0x40010212 / the defaults site 0x40025ac2 run from main, so no detour of
+the DRAM unit can be reached before it is there; the core is in ROM because
+the pinned trampoline scale.s must resolve qz_scale_mask at link time (a
+ROM unit cannot name a DRAM symbol) and so that the three bytes are sane
+whether or not a runtime was depacked. The quantizer's ROM footprint went
+from 3,268 + 45 + 6 B to 192 + 45 + 6 B.
+
 WHERE THE SETTING LIVES. PROJECT > CONTROL > SEQUENCER gains a fourth row,
 SCALE, under CHAIN AFTER / SILENCE TRACKS / LFO AUTO CHANGE: the window is a
 generic list (state 0x460e43d8, init 0x40065c7c, draw 0x40065b14, keys
 0x40065cec, LEVEL knob 0x40065c98) over three parallel pointer tables --
 labels 0x400b27d0, getters 0x400b27dc, setters 0x400b282c -- which the
-build grows to four entries (TableGrow) and repoints. The list is created
+build grows to six entries (TableGrow) and repoints. The list is created
 with count 3 / visible 3 (`pea 3; pea 3` at 0x40065c7c); the count becomes
 4 (poke) and the three visible rows scroll, as the firmware's longer lists
 do, once the draw loop indexes the tables from the scroll offset instead of
@@ -157,17 +195,19 @@ _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
 H = bytes.fromhex
 
-# The SCALE and GLIDE bytes: battery-backed RAM (quantizer.s NV_SCALE /
-# NV_GLIDE, see the docstring's PERSISTENCE). modules/synth/{synth,poly}.s
-# read GLIDE as GLIDE_AT -- keep the constants equal.
+# The SCALE, GLIDE and ROOT bytes: battery-backed RAM (core.s NV_SCALE /
+# NV_GLIDE / NV_ROOT, see the docstring's PERSISTENCE). modules/synth/{synth,
+# poly}.s read GLIDE as GLIDE_AT -- keep the constants equal.
 SCALE_NV = 0x100b14ec
 GLIDE_AT = 0x100b14ed
+ROOT_NV = 0x100b14ee
 # The paraphonic key mailbox's fixed address (keys.s): 40 bytes above the GLIDE
 # byte, below the synth page cave's end (0x400d2c6c). modules/synth/poly.s
 # reads it as KEYS_AT -- keep the two constants equal.
 KEYS_AT = 0x400d2cb0
-# The SCALE accessor's trampoline (scale.s, `jmp qz_scale_mask`): 6 bytes
-# under the mailbox; modules/synth/poly.s calls it as SCALE_AT.
+# The SCALE accessor's trampoline (scale.s, `jmp qz_scale_mask`, core.s): 6
+# bytes under the mailbox; modules/synth/poly.s calls it as SCALE_AT, and so
+# does the DRAM unit quantizer.s for every snap (one ROOT-rotated mask).
 SCALE_AT = 0x400d2ca8
 
 MODULE = Module(
@@ -175,14 +215,17 @@ MODULE = Module(
     key="SCALE QUANTIZER",
     kind=Kind.CF_PATCH,
     doc="PROJECT > CONTROL > SEQUENCER > SCALE: the PTCH knob and CHROMATIC "
-        "trig keys quantize to a scale (24 scales, OFF = stock); > GLIDE: the "
+        "trig keys quantize to a scale (24 scales, OFF = stock); > ROOT: the note "
+        "the scale is built on (C..B; key 1 of the CHROMATIC keyboard sounds it); > GLIDE: the "
         "synth's glide time (OFF, 1..127; the legato switch is the synth track's LEG setting); "
         "polyphonic chromatic keys on a synth track whose VOIC is 2..4; on a synth track "
         "PTCH is semitones (-64..+63) and the CHROMATIC octave runs -4..+4.",
-    linked=(                                   # link order: qz names qz_pkey/qz_pmask
+    linked=(                                   # ROM link order: qzs names core.s's qz_scale_mask
         Linked("qzk", os.path.join(_HERE, "keys.s"), cpu="5475", cave_addr=KEYS_AT),
-        Linked("qz", os.path.join(_HERE, "quantizer.s"), cpu="5475"),
+        Linked("qzc", os.path.join(_HERE, "core.s"), cpu="5475"),
         Linked("qzs", os.path.join(_HERE, "scale.s"), cpu="5475", cave_addr=SCALE_AT),
+        # the DRAM unit: the platform runtime (KEYS_AT / SCALE_AT reached as fixed addresses)
+        Linked("qz", os.path.join(_HERE, "quantizer.s"), cpu="5475", dram=True),
     ),
     detours=(
         Detour(0x40055170, H("1482" "1a82" "320e"), "qz", "qz_knob",
@@ -192,7 +235,7 @@ MODULE = Module(
                "p-lock editor (TRIG held): the lock store -- PTCH steps by scale degree",
                kind="jsr", pad_to=10),
         Detour(0x4004fc58, H("45f2ac04" "71b9100b14cf"), "qz", "qz_chrom",
-               "CHROMATIC trig key -> pitch: snap the key index to the scale",
+               "CHROMATIC trig key -> pitch: transpose the key index by ROOT (a sample track: within -12..+12 st, the other position an octave below for ROOT G..B) and snap it to the scale",
                kind="jsr", pad_to=10),
         Detour(0x4004fbde, H("73b02800" "200a"), "qz", "qz_leg0",
                "CHROMATIC key release on a paraphonic synth track (VOIC 2..4): the held-key mask decides the note-off",
@@ -222,41 +265,41 @@ MODULE = Module(
                "CHROMATIC drawer: a synth track draws the keyboard at stock octave 0 (the word is cleared)",
                kind="jmp", pad_to=8),
         Detour(0x400449b8, H("2039460d16fc" "2f00"), "qz", "qz_octnum",
-               "CHROMATIC drawer: the octave number beside the keyboard is qz_oct on a synth track",
+               "CHROMATIC drawer: the octave number beside the keyboard is qz_oct on a synth track, the position 0 / 1 / -1 on a sample track, with ROOT's name before it when a scale is on",
                kind="jmp", pad_to=8),
         Detour(0x40065bca, H("4282" "4fef0020"), "qz", "qz_draw",
                "SEQUENCER window draw loop: index the row tables from the scroll offset",
                kind="jmp"),
         Detour(0x400866cc, H("2c2f05c0" "202f05c4"), "qz", "qz_ld_entry",
-               "project loader entry: a storing load starts from SCALE = OFF",
+               "project loader entry: a storing load starts from SCALE = OFF, ROOT = C, GLIDE = OFF",
                kind="jmp", pad_to=8),
         Detour(0x400867a2, H("122f048f" "7101" "7a23"), "qz", "qz_ld_line",
-               "project loader '#' line: read #SEQUENCER_SCALE=n",
+               "project loader '#' line: read #SEQUENCER_SCALE=n / #SEQUENCER_ROOT=n / #SYNTH_GLIDE=n",
                kind="jmp", pad_to=8),
         Detour(0x400888aa, H("73398000004f" "2f01"), "qz", "qz_wr",
-               "project writer: #SEQUENCER_SCALE=n after PATTERN_CHANGE_CHAIN_BEHAVIOR",
+               "project writer: #SEQUENCER_SCALE=n, #SEQUENCER_ROOT=n, #SYNTH_GLIDE=n after PATTERN_CHANGE_CHAIN_BEHAVIOR",
                kind="jmp", pad_to=8),
-        Detour(0x40010212, H("4a39100b14ae"), "qz", "qz_boot",
-               "boot: stock's sanitiser of the battery-RAM settings block -- SCALE/GLIDE out of range -> OFF",
+        Detour(0x40010212, H("4a39100b14ae"), "qzc", "qz_boot",
+               "boot: stock's sanitiser of the battery-RAM settings block -- SCALE/GLIDE/ROOT out of range -> OFF / C (core.s, ROM)",
                kind="jsr"),
-        Detour(0x40025ac2, H("42b9100b14d4"), "qz", "qz_defaults",
-               "project defaults (cold boot, no project, before a load, new project): SCALE/GLIDE := OFF",
+        Detour(0x40025ac2, H("42b9100b14d4"), "qzc", "qz_defaults",
+               "project defaults (cold boot, no project, before a load, new project): SCALE/GLIDE := OFF, ROOT := C (core.s, ROM)",
                kind="jsr"),
     ),
     tables=(
         TableGrow("SEQUENCER labels", old=0x400b27d0, count=3,
-                  symbols=(("qz", "qz_lbl_scale"), ("qz", "qz_lbl_glide")),
+                  symbols=(("qz", "qz_lbl_scale"), ("qz", "qz_lbl_root"), ("qz", "qz_lbl_glide")),
                   refs=((0x40065bd8, 0x400b27d0),)),
         TableGrow("SEQUENCER getters", old=0x400b27dc, count=3,
-                  symbols=(("qz", "qz_get"), ("qz", "qz_get_glide")),
+                  symbols=(("qz", "qz_get"), ("qz", "qz_get_root"), ("qz", "qz_get_glide")),
                   refs=((0x40065bde, 0x400b27dc),)),
         TableGrow("SEQUENCER setters", old=0x400b282c, count=3,
-                  symbols=(("qz", "qz_set"), ("qz", "qz_set_glide")),
+                  symbols=(("qz", "qz_set"), ("qz", "qz_set_root"), ("qz", "qz_set_glide")),
                   refs=((0x40065cc4, 0x400b282c), (0x40065d3e, 0x400b282c),
                         (0x40065d58, 0x400b282c), (0x40065d72, 0x400b282c))),
     ),
     pokes=(
-        Poke(0x40065c7c, expect=H("48780003"), write=H("48780005"),
-             note="SEQUENCER window: 3 -> 5 rows (SCALE, GLIDE; 3 visible, scrolls)"),
+        Poke(0x40065c7c, expect=H("48780003"), write=H("48780006"),
+             note="SEQUENCER window: 3 -> 6 rows (SCALE, ROOT, GLIDE; 3 visible, scrolls)"),
     ),
 )

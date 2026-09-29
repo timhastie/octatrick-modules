@@ -1,6 +1,7 @@
 # Scale quantizer
 
-(24 Sep 2026: polyphonic CHROMATIC keys on a paraphonic synth track -- "Paraphonic keys" below.
+(28 Sep 2026, Octatrick 2.9: a ROOT row under SCALE, and the unit moved into DRAM -- "ROOT, and the move into DRAM" below.
+24 Sep 2026: polyphonic CHROMATIC keys on a paraphonic synth track -- "Paraphonic keys" below.
 27 Sep 2026: the synth tracks' tuning units and the -4..+4 CHROMATIC octave -- "Synth tracks: semitone units" below.
 2 Oct 2026: the legato switch is the track's LEG setting (3 Oct 2026: on every audio track -- OFF / MONO on a sample track), GLIDE is the slide time only -- "The LEG gate" below.)
 
@@ -25,12 +26,21 @@ only moves the pitch (which the synth then glides to); releasing the first
 key does nothing, releasing the last one releases the note. Saved as
 `#SYNTH_GLIDE=n` after the SCALE line. Section "GLIDE and legato" below.
 
-One linked ColdFire unit (1,484 bytes, floating, linked by the build at
-the address it lands on; 1,292 bytes before GLIDE — the unit now assembles
-its branches with the `jb<cc>` forms, short where they reach), one pinned
-4-byte unit (the GLIDE byte), nine detours, three grown pointer tables, one
-poke — all in the main-OS section; the bootstrap and every flash-
-programming path are untouched. The SCALE half was **flashed** as
+Since 2.9 the quantizer is a DRAM unit of octabam's platform runtime
+(`quantizer.s`, 3,428 B) plus three small ROM units: `core.s` (192 B,
+floating: the boot clamps, the defaults, the ROOT-rotated scale mask and
+the 24 masks), `keys.s` (45 B, pinned) and `scale.s` (6 B, pinned); 19
+detours, three grown pointer tables (3 + 3 entries), one poke — all in the
+main-OS section plus the loader's append; the bootstrap and every flash-
+programming path are untouched. (Until 2.8: one ROM unit of 3,268 B, which
+left the zero run no room for other modules' caves -- see "ROOT, and the
+move into DRAM".) The paragraph that follows is the 24 Sep 2026 state, kept
+as written: one linked ColdFire unit (1,484 bytes, floating, linked by the
+build at the address it lands on; 1,292 bytes before GLIDE — the unit now
+assembles its branches with the `jb<cc>` forms, short where they reach), one
+pinned 4-byte unit (the GLIDE byte), nine detours, three grown pointer
+tables, one poke — all in the main-OS section; the bootstrap and every
+flash-programming path are untouched. The SCALE half was **flashed** as
 OCTATRICK1..3 (23-24 Sep 2026) and works on the unit; the GLIDE half is
 measured under `ot_emu` through the virtual panel only (24 Sep 2026). The
 13 Sep measurements below are the SCALE half's; logs and screens:
@@ -225,7 +235,9 @@ stock bytes before anything is written (`manifest.py`).
 | `0x40050254` CHROMATIC key handler's caller | `2039 460d16fc 2200` — `move.l 0x460d16fc,%d0; move.l %d0,%d1` | jmp + nop | `qz_keyidx` | both; a synth track: d0 = d1 = 0; `jmp 0x4005025c` |
 | `0x40045918` FUNC + LEFT/RIGHT, CHROMATIC | `7401 b5b9 460d16fc` — `moveq #1,%d2; eor.l %d2,0x460d16fc` | jmp + nop | `qz_octkey` | both; a synth track: `qz_oct` +-1 (clamped -4..+4), the word := 0; `jmp 0x40045920` |
 | `0x40044968` CHROMATIC drawer, picture choice | `7201 b2b9 460d16fc` — `moveq #1,%d1; cmp.l 0x460d16fc,%d1` | jmp + nop | `qz_octdraw` | both (the compare last: the `bne` after reads its flags), after clearing the word on a synth track; `jmp 0x40044970` |
-| `0x400449b8` CHROMATIC drawer, the number | `2039 460d16fc 2f00` — `move.l 0x460d16fc,%d0; move.l %d0,-(%sp)` | jmp + nop | `qz_octnum` | both; a synth track pushes `qz_oct`; `jmp 0x400449c0` |
+| `0x400449b8` CHROMATIC drawer, the number | `2039 460d16fc 2f00` — `move.l 0x460d16fc,%d0; move.l %d0,-(%sp)` | jmp + nop | `qz_octnum` | both; a synth track pushes `qz_oct`; `jmp 0x400449c0` — with a scale on (2.9) it pushes its own format `"<ROOT> %d"` in place of stock's `pea "%d"` and continues at `0x400449c6` (the same nine arguments) |
+| `0x40010212` boot sanitiser of the battery block | `4a39 100b14ae` — `tst.b 0x100b14ae` | jsr | `qz_boot` (`core.s`, ROM) | the `tst.b` last (the caller's `bge` reads its flags), after clamping SCALE 0..24, GLIDE 0..127, ROOT 0..11 |
+| `0x40025ac2` project defaults | `42b9 100b14d4` — `clr.l 0x100b14d4` | jsr | `qz_defaults` (`core.s`, ROM) | the `clr.l`, after SCALE := OFF, GLIDE := OFF, ROOT := C |
 | `0x40065bca` SEQUENCER draw loop | `4282 4fef 0020` — `clr.l %d2; lea 32(%sp),%sp` | jmp | `qz_draw` | the `lea`; d2 := scroll offset × 4; `jmp 0x40065bd0` |
 | `0x400866cc` project loader entry | `2c2f 05c0 202f 05c4` — `move.l 1472(%sp),%d6; move.l 1476(%sp),%d0` | jmp + nop | `qz_ld_entry` | both; `jmp 0x400866d4` |
 | `0x400867a2` project loader, the `#` check | `122f 048f 7101 7a23` — `move.b 1167(%sp),%d1; mvs.b %d1,%d0; moveq #35,%d5` | jmp + nop | `qz_ld_line` | the three; `jmp 0x400867aa` (or `0x40088224`, next line, when the line is ours) |
@@ -722,6 +734,354 @@ server was killed and the card cold-booted with `--card` alone: `qz_scale`
 MIDI SCENES remixes whose submodule is not checked out (pre-existing,
 `make check` stops there); `verify_modenames` reports "no module declares
 mode_views" (the Makefile's SKIP).
+
+## ROOT, and the move into DRAM (28 Sep 2026, Octatrick 2.9)
+
+**ROOT.** PROJECT > CONTROL > SEQUENCER has a fifth row, **ROOT**, right
+under SCALE (GLIDE is the sixth): `C C# D D# E F F# G G# A A# B`, one per
+project, C by default. The scale is built on the root: every snap the
+quantizer does -- the PTCH knob and the p-lock editor (`qz_quant`), a
+CHROMATIC key on a sample track (`qz_chrom`) or a synth track
+(`qz_c_synth`) -- and the chord-note snap the synth engine does through
+`SCALE_AT` (`poly.s po_snap`) test a note's pitch class against ONE mask,
+`core.s qz_scale_mask`: the scale's 12-bit pitch-class mask (on C, as the
+table always was) rotated left by ROOT within 12 bits, so bit k is set when
+pitch class k (C = 0, the class of raw 64 on a synth track and of 0 st on a
+sample track) is in the scale on that root. "MINOR, ROOT A" is the A minor
+pitch classes; ROOT C is the 2.8 mask, bit for bit. With a scale on the
+**CHROMATIC keyboard is transposed so that key 1 sounds the root**: on a
+synth track n = key - 12 + ROOT + 12 * octave (so [TRIG 13] at octave 0 is
+the root an octave above key 1, and the white-key positions of the 16-key
+picture -- keys 1 3 5 6 8 10 12 13 -- sound the major-scale offsets on the
+root, snapped into the scale), on a sample track the key index is key + ROOT
+within the stock -12..+12 st range -- the two keyboard positions are laid
+out so that the default one never clamps, **"The sample track's two
+positions"** below. The number beside the keyboard reads the
+root's name too (`A 0`, `A -1`): `qz_octnum` writes `"<name> %d"` into a
+buffer of the unit and hands the stock formatter that format instead of its
+`"%d"` (the call at `0x400449e6` takes nine arguments -- context, font, x
+0x44, y 9, 1, 0, the buffer `0x400b527d`, the format, the value -- and
+`0x400449ec` pops nine; the detour continues at `0x400449c6`, past stock's
+`pea "%d"`, so the frame is the stock's). **SCALE = OFF ignores ROOT**:
+every path leaves at its OFF test before ROOT is read, so the keyboard, the
+knob, the locks and the readout are 2.8's. **ROOT = C is 2.8 in every
+pitch**: a rotation by 0 is the identity and the transposition adds 0, so
+the keys, the PTCH knob and the locks are byte for byte 2.8's (measured
+against the 2.8 bus, below); what differs is the keyboard's number with a
+scale on, which reads `C 0` where 2.8 read `0`. The MIDI note a
+CHROMATIC key sends out stays the key's own (72 + key), as in 2.8, where
+it did not follow the -4..+4 octave either: the note-on and the note-off
+are matched by key in the stock handler (`0x4004fc24`, the release path,
+and this unit's `qz_noteoff`), and transposing them would mean four more
+sites -- open item.
+
+The byte: **`0x100b14ee`**, the next battery-RAM byte after SCALE
+(`0x100b14ec`) and GLIDE (`0x100b14ed`). Proof that stock does not use it:
+a scan of the whole 1.40C main OS for absolute operands finds no reference
+to any of `0x100b14e2..0x100b14ef` (the last long stock touches is
+`0x100b14de`, eight sites; the next is `0x100b14f0`, the project record,
+121 sites); the boot's two memcpy's cover `0x100b1480 + 0x4c` (to
+`0x100b14cc`) and `0x100b14cc + 0x16` (to `0x100b14e2`; `0x4001fb3c`,
+`0x4001fb9e`), and the project defaults clear through the long at
+`0x100b14de` (`0x40025ad4`). Clamped 0..11 by `qz_boot` where stock's
+sanitiser clamps CHAIN AFTER (`0x40010212`), set to C by `qz_defaults`
+(`0x40025ac2`), saved as `#SEQUENCER_ROOT=n` between the SCALE and GLIDE
+lines by `qz_wr`, read back by `qz_ld_line` (0..11, else C), cleared to C
+by `qz_ld_entry` at a storing load. The SEQUENCER tables grow 3 + 3
+(labels `qz_lbl_scale / qz_lbl_root / qz_lbl_glide`, getters, setters), the
+list count poke is 3 -> 6, three rows visible, the window scrolls
+(`qz_draw`). The ROOT row's getter returns the name; the setter is
+`qz_set_any` with maximum 11 (the LEVEL knob clamps, [YES] wraps).
+
+**The move into DRAM.** `quantizer.s` is `Linked(dram=True)` now: linked
+into octabam's platform runtime with the synth's `poly.s`, packed, appended
+after the OS and depacked by the loader at boot. What stays in the OS
+image is `core.s` (192 B: `qz_boot`, `qz_defaults`, `qz_scale_mask`, the
+24 masks) and the two pinned stubs (`keys.s`, `scale.s`); the ROM
+footprint of the module went from 3,268 + 45 + 6 B to 192 + 45 + 6 B, and
+the `octatrick-tuner` build's cave went from 168 B left to 3,236 B left.
+The split's rule: a ROM unit cannot name a DRAM symbol at link time and a
+DRAM unit cannot name a ROM one, so the DRAM unit reaches the pinned
+mailbox and the scale accessor as fixed addresses (`KEYS_AT` `0x400d2cb0`,
+`SCALE_AT` `0x400d2ca8` -- the same contracts `poly.s` uses; unchanged), and
+the manifest's detours and TableGrow entries name the DRAM unit's symbols
+through the platform's symbol table (as midi-scenes does). `scale.s`'s
+`jmp qz_scale_mask` resolves into `core.s`, linked before it. The boot
+order, measured under the port with `--watch-pc` (instruction counts, a
+cold boot of the `octatrick-tuner` BUILD 19 bus with the card mounted):
+the loader at `0x4010fdf0` (the redirect `0x4000050c`) at 4,270,945; the
+stock aPLib depack `0x400e0aca` at 4,505,240 (the runtime is in DRAM from
+here); the `.data` copy `0x4000f938` at 6,526,781; main `0x40000db0` at
+12,342,579; the project defaults `0x40025848` at 20,439,288 and the
+`qz_defaults` site `0x40025ac2` at 20,965,399; then, for the posted
+project load, `0x40025848` / `0x40025ac2` again at 56.2 M / 56.8 M and the
+loader `0x4009000c` at 57,274,321. A warm boot (the battery dump preloaded,
+no load posted) runs `0x40025770` -> the sanitiser `0x4000fec8` -> the
+`qz_boot` site `0x40010212` from main as well (the "warm boot" measurement
+below). So no site of the DRAM unit can run before the runtime is there;
+the core is in ROM for the link-time reason above and so that the three
+bytes are sane whether or not a runtime was depacked -- the boot detours
+never depend on the append. The DRAM unit assembles for the chip
+(`-mcpu=54455`, ISA C: the same bytes for this ISA-A/B source); its RAM
+state (`qz_press`, `qz_gbuf`, `qz_ofmt` ...) lives in the runtime's window.
+
+### The sample track's two positions (the second pass)
+
+**What stock does.** A sample track's CHROMATIC keyboard lays the 16 [TRIG]
+keys over ONE index, 0..24 (`0x4004fb94`: raw = 5 * index + 4, so index 12
+= raw 64 = the sample's own pitch and the range is -12..+12 st, stock's
+PTCH ceiling), in two **positions** of one word, `0x460d16fc` (`OCT_WORD`),
+whose only writer is `eorl #1` at `0x4004591a` -- FUNC + LEFT or RIGHT
+toggles it -- and which is 0 at boot (BSS; no reset anywhere). The
+handler's caller `0x40050254` makes the index key - 1 + 12 * word: in
+position 0 keys 1..16 are index 0..15 = -12..+3 st, [TRIG 13] the sample's
+pitch, the 16-key picture; in position 1 keys 1..13 are index 12..24 = 0..
++12 st, [TRIG 1] the sample's pitch, and keys 14..16 (index 25..27) fail
+the handler's range check at `0x4004fba8` and do nothing -- the drawer
+`0x40044968` shows the 13-key picture and prints the word (`0` / `1`)
+beside it. The first pass of 2.9 added ROOT to the index and clamped at 24:
+in position 0 that already is the complete octave r-12 .. r on keys 1..13,
+but in position 1 (r .. r+12) the top r keys all hit +12 st -- with ROOT A,
+nine of the thirteen keys sounded alike.
+
+**The rule.** Within -12..+12 st only ONE complete root-to-root octave
+exists for r > 0: r-12 .. r. So (1) the default position (word 0, the one
+the unit boots in) plays it: key 1 = the root below the sample's pitch,
+key 13 = the root above, keys 14..16 = r+1 .. r+3 (they pass +12 only for
+ROOT A# / B: key 16 / keys 15, 16). (2) The other position is necessarily
+partial, and it is laid out on the side that clamps FEWER keys: for **ROOT
+C .. F#** (r <= 6) it stays r .. r+12 with the top r keys clamped at +12
+st; for **ROOT G .. B** (r > 6) the whole keyboard drops two octaves from
+there, r-24 .. r-12 -- the octave BELOW the default position -- and only
+the bottom 12 - r keys clamp at -12 st ("when the root is high, the whole
+keyboard drops an octave"). (3) The number reads the position as an
+octave relative to the default: `A 0`, `A -1` (r > 6), `D 1` (r <= 6). (4)
+ROOT C is stock's two positions exactly, SCALE OFF is stock, synth tracks
+(`qz_c_synth`, their own -4..+4 octave) and the PTCH knob / locks are
+untouched. In `qz_chrom` this is 24 bytes: after `index + ROOT`, `ROOT > 6
+and OCT_WORD != 0` subtracts 24 and floors at 0 before the existing
+ceiling at 24; `qz_octnum` prints -1 for the sample track's word 1 when
+ROOT > 6 with a scale on (28 bytes). The clamp lands on index 0 or 24 and
+the snap then runs as always, so a clamped key sounds the nearest degree
+of the scale at that end (ROOT A / MAJOR: index 0 = C is not in A major,
+the three clamped keys and keys 4, 5 all sound C#3).
+
+The clamp per root (the other position; keys named on the 13-key picture):
+
+| ROOT | default position, keys 1..16 (st) | other position, keys 1..13 (st) | keys clamped |
+|---|---|---|---|
+| C | -12 .. +3 | 0 .. +12 | none |
+| C# | -11 .. +4 | +1 .. +12, +12 | 13 (top) |
+| D | -10 .. +5 | +2 .. +12, +12 x2 | 12, 13 (top) |
+| D# | -9 .. +6 | +3 .. +12, +12 x3 | 11 .. 13 (top) |
+| E | -8 .. +7 | +4 .. +12, +12 x4 | 10 .. 13 (top) |
+| F | -7 .. +8 | +5 .. +12, +12 x5 | 9 .. 13 (top) |
+| F# | -6 .. +9 | +6 .. +12, +12 x6 | 8 .. 13 (top) |
+| G | -5 .. +10 | -12 x5, -12 .. -5 | 1 .. 5 (bottom) |
+| G# | -4 .. +11 | -12 x4, -12 .. -4 | 1 .. 4 (bottom) |
+| A | -3 .. +12 | -12 x3, -12 .. -3 | 1 .. 3 (bottom) |
+| A# | -2 .. +12, +12 (key 16) | -12 x2, -12 .. -2 | 1, 2 (bottom); key 16 of the default |
+| B | -1 .. +12, +12 x2 (keys 15, 16) | -12, -12 .. -1 | 1 (bottom); keys 15, 16 of the default |
+
+(each range is before the scale snap; "+12 x2" = the clamped keys, all at
+the ceiling)
+
+### Measured (the second pass: the octatrick-tuner BUILD 20 bus = OCTATRK2.9 on ot_emu `--dsp-rt` through the poke panel on 8950, a copy of the OTLIVE card whose four loop files are same-length sines -- `third-0.wav` = 95 whole cycles in its 9,551 frames = 438.645 Hz, the slots' TSMODE 0 / LOOPMODE 1; T1 = FLEX slot 3 = that sine (assigned through the machine window: OTLIVE's T1 is STATIC slot 5, the Amen break; a STATIC slot streaming the 2,679-frame `first-0.wav` came out as a 689 Hz buzz = 44100 / 64, a stuck 64-frame chunk under the port, so FLEX), PLAYBACK PTCH 0 / STRT 0 / LEN max / RATE +63, AMP HOLD INF REL 20; T2 = FM SYNTH slot 5 as before; the ef2944b bus (the first pass, byte-identical to the BUILD 19 bus) on 8951 with the same card as the baseline; pitches = the strongest spectral peak over 0.3-0.8 s of a 0.9 s key hold, in semitones from the sample's own pitch (SCALE OFF, position 0, key 13: 438.7 Hz, named C4 below), every value within 0.5 cent of the semitone; the session's `root29b/m30.py`, shots and `report.txt` / `report_keys.txt` in `root29b/out20/` and `outbase/`, the readouts cropped as `*_ro.png`)
+
+- **The stock model** (the disassembly, `root29/stock.dis`): `0x460d16fc`
+  has one writer, `eorl #1` at `0x4004591a`, and reads at `0x40044968`
+  (the picture), `0x400449b8` (the number), `0x40044abe` (the marks),
+  `0x4004d442`, `0x4004fde4` and `0x40050254` (the index: key + 12 *
+  word). At boot the word read 0 and the number `0`; FUNC + RIGHT made it
+  1, again 0. With SCALE OFF / ROOT A (d): position 0 keys 1 / 2 / 13 /
+  14 / 16 = 219.3 / 232.4 / 438.7 / 464.7 / 521.6 Hz = C3 C#3 C4 C#4 D#4
+  (-12 -11 0 +1 +3 st), position 1 keys 1 / 2 / 13 = 438.7 / 464.7 / 877.3
+  = C4 C#4 C5 (0 +1 +12): stock's layout, ROOT ignored, the number `0` /
+  `1` (`d_off_A_pos0_ro.png`, `d_off_A_pos1_ro.png`).
+- **(a) ROOT A / MAJOR, T1**: position 0, keys 1..16 = 368.9 368.9 414.0
+  414.0 464.7 492.4 492.4 552.7 552.7 620.3 620.3 696.3 737.7 737.7 828.1
+  828.1 Hz = **A3 A3 B3 B3 C#4 D4 D4 E4 E4 F#4 F#4 G#4 A4 A4 B4 B4** (-3
+  .. +11 st): the white keys 1 3 5 6 8 10 12 13 = A B C# D E F# G# A, no two
+  adjacent white keys alike, nothing clamped; the number reads `A 0`
+  (`a_A_pos0_ro.png`). Position 1 (FUNC + RIGHT, the word 1), keys 1..13 =
+  232.4 x5, 246.2 x2, 276.3 x2, 310.2 x2, 348.2, 368.9 Hz = **C#3 x5, D3
+  D3, E3 E3, F#3 F#3, G#3, A3** (-11 .. -3 st): the octave below, keys 1..3
+  clamped at index 0 (C3, not in A major) and snapped to C#3 with keys 4
+  and 5, keys 6..13 the A-major degrees up to the root A3; key 14 silent
+  (stock's range check); the number reads `A -1` (`a_A_pos1_ro.png`).
+- **(b) ROOT D / MAJOR, T1**: position 0, keys 1..16 = 246.2 246.2 276.3
+  276.3 310.2 328.6 328.6 368.9 368.9 414.0 414.0 464.7 492.4 492.4 552.7
+  552.7 Hz = **D3 D3 E3 E3 F#3 G3 G3 A3 A3 B3 B3 C#4 D4 D4 E4 E4** (-10 ..
+  +4 st), the complete D3..D4 on keys 1..13, `D 0` (`b_D_pos0_ro.png`).
+  Position 1, keys 1..13 = 492.4 492.4 552.7 552.7 620.3 657.2 657.2 737.7
+  737.7 828.1 828.1 828.1 828.1 Hz = **D4 D4 E4 E4 F#4 G4 G4 A4 A4 B4 B4 B4
+  B4** (+2 .. +11): D4 upward, keys 12 and 13 (C#5, D5) clamped at index 24
+  (C5, not in D major) and snapped down to B4 with key 11; `D 1`
+  (`b_D_pos1_ro.png`).
+- **(c) ROOT C / MAJOR, T1, both buses**: position 0, keys 1..16 = 219.3
+  219.3 246.2 246.2 276.3 292.8 292.8 328.6 328.6 368.9 368.9 414.0 438.7
+  438.7 492.4 492.4 Hz = C3 C3 D3 D3 E3 F3 F3 G3 G3 A3 A3 B3 C4 C4 D4 D4
+  (-12 .. +2); position 1, keys 1..13 = 438.7 438.7 492.4 492.4 552.7 585.5
+  585.5 657.2 657.2 737.7 737.7 828.1 877.3 Hz = C4 C4 D4 D4 E4 F4 F4 G4 G4
+  A4 A4 B4 C5 (0 .. +12); the numbers `C 0` / `C 1`. The **ef2944b bus** (the first pass) on the same
+  card gave the same 29 numbers to 0.1 Hz, and the same five SCALE OFF /
+  ROOT A numbers in each position (`outbase/report_keys.txt`) -- ROOT C
+  and SCALE OFF are unchanged. That bus with **ROOT A / MAJOR** shows what
+  the second pass fixes: position 0 the same sixteen numbers as above, but
+  position 1 = 737.7 737.7 828.1 x11 Hz -- A4 A4 then **B4 on eleven of the
+  thirteen keys** (every key from 3 up clamped at index 24 = C5, not in A
+  major, snapped down to B4), its number reading `A 1`
+  (`outbase/a_A_pos1_ro.png`).
+- **(e) T2 (FM SYNTH), SCALE MINOR / ROOT A, octave 0**: keys 1 3 5 6 8 10
+  12 13 = 220.0 247.0 261.6 293.7 329.6 349.2 392.0 440.0 Hz = A3 B3 C4 D4
+  E4 F4 G4 A4, the number `A 0` (`e_T2_minor_A_ro.png`) -- as at the first
+  pass.
+- **Regressions, one take each**: the PTCH knob on T1 (TRACKS mode, SCALE
+  MAJOR / ROOT E) +1 x 7 from 64 = 69 79 84 94 104 109 119 (C# D# E F# G#
+  A B above C in E major), -1 x 7 = 109 104 94 84 79 69 59 (B below C#: C is
+  not in E major). LEG MONO + GLIDE 64 on T2, C4 held, E4 pressed: the
+  pitch leaves 262 Hz at 0.47 s and glides to 330 (t63 90 ms, 329 from 0.87
+  s on) with no restart -- a restart would sit at 330 at once; the level
+  steps the trig words give (+2 dB at 0.2 s, -2 at 0.48, +3.5 at 0.66 s,
+  the stock 2.3 dB step per trig word) tripped the rig's 3 dB onset
+  detector at 0.66 s in both takes, so `onsets` read 2 where the first pass
+  read 1: the envelope is printed in `report.txt` (f1b). The tuner: UP +
+  TEMPO opens it, again closes it (`tuner_open.png`, `tuner_closed.png`).
+  Direct jump: CHAIN AFTER's byte 1 at +1 from the minimum
+  (`chain_direct.png`). **SAVE + the two boots**: with SCALE MAJOR / ROOT A
+  / GLIDE 12, PROJECT > SAVE, the card ejected: `project.work` and `.strd`
+  carry `#SEQUENCER_SCALE=1`, `#SEQUENCER_ROOT=9`, `#SYNTH_GLIDE=12` after
+  `PATTERN_CHANGE_CHAIN_BEHAVIOR=0`; re-inserted (the loader), the bytes
+  read 1 / 9 / 12; the battery-RAM dump the child wrote at its quit
+  (`0x0b14ec..ee` = `01 0c 09`) preloaded into a fresh headless `ot_emu`
+  with no load posted (`OT_SRAM_IN`, `OT_NO_LOAD=1`): SCALE 1 / GLIDE 12 /
+  ROOT 9 at ready and 20 s later, no fault (the same run without the dump:
+  0 / 0 / 0). Placements at this commit in the new-layout tree:
+  octatrick-usb 3,236 B of cave left, octatrick-tuner 3,236 B, cfmeter
+  with DIRECT JUMP 2,852 B. `tools/stock_scan.py --no-asm`: the same four
+  hits as at the first pass (direct-jump's displaced hook bytes and the
+  synth manifest's 16-byte run), nothing new.
+
+### Measured (28 Sep 2026, the octatrick-tuner BUILD 19 bus = OCTATRK2.9 on ot_emu `--dsp-rt` through the poke panel on 8930, a copy of the OTLIVE card, T2 = FM SYNTH slot 5, INDX 0 / FDBK 0, AMP HOLD INF REL 20, VOIC 1 unless said; the 2.8 baseline = the same remix at the `tuning` tree, BUILD 19, on 8931; notes as spectral peaks over 0.3-0.5 s windows named from C4 = 261.6256 Hz; the session's `root29/m29.py`, shots and `report.txt` in `root29/out29/` and `out28/`)
+
+- **The ROOT row** (`row_root_A.png`, `row_glide.png`): PROJECT > CONTROL >
+  SEQUENCER, [DOWN] x4 shows `LFO AUTO CHANGE / SCALE OFF / ROOT C`; the
+  LEVEL knob from -20 then +1 twelve times stepped the byte 0 1 2 ... 11
+  and stopped at 11 (B); [YES] at B wrapped to C; +9 read `ROOT A`; one more
+  [DOWN] showed `SCALE OFF / ROOT A / GLIDE OFF` (the sixth row scrolled in).
+- **SAVE, and the two boots**: with SCALE MINOR / ROOT A / GLIDE 12,
+  PROJECT > SAVE, the card ejected: `project.work` and `project.strd` both
+  carry `PATTERN_CHANGE_CHAIN_BEHAVIOR=0`, `#SEQUENCER_SCALE=6`,
+  `#SEQUENCER_ROOT=9`, `#SYNTH_GLIDE=12`, in that order. The card
+  re-inserted (a fresh boot that loads the project through the loader):
+  the bytes read 6 / 9 / 12 and the row reads `ROOT A`. The **power cycle**
+  (the 1 MB battery-RAM dump the child wrote at its quit -- `0x0b14ec..ee` =
+  `06 0c 09` -- preloaded into a fresh `ot_emu` with `OT_SRAM_IN`, no LOAD
+  PROJECT posted, `OT_NO_LOAD=1`): headless, the bytes read SCALE 6 / GLIDE
+  12 / ROOT 9 at ready and 20 s later, no fault; through the panel, the
+  SEQUENCER window reads `SCALE MINOR / ROOT A` (`outwarm/warm_row_root.png`)
+  and the unit plays. `--watch-pc` on that warm boot: loader `0x4010fdf0` at
+  instruction 4,270,945, depack `0x400e0aca` at 4,505,240, `.data` copy at
+  6,526,781, main at 12,342,579, the warm-boot path `0x40025770` at
+  18,862,886, the sanitiser `0x4000fec8` at 18,862,945 and the `qz_boot`
+  site `0x40010212` at 18,863,157 -- the clamp runs 14.6 M instructions
+  after the runtime was depacked, so the ROM/DRAM split is not what makes
+  it safe; it is safe by construction and the split is documented above.
+- **(b) The keys, SCALE MINOR / ROOT A, octave 0, VOIC 1**: keys 1 3 5 6 8
+  10 12 13 sounded 220.0 / 247.0 / 261.6 / 293.7 / 329.6 / 349.2 / 392.0 /
+  440.0 Hz = **A3 B3 C4 D4 E4 F4 G4 A4**, all within 1 cent; key 2 (A#3
+  chromatic) sounded 220.0 (snapped down to A3). The number beside the
+  keyboard reads `A 0` (`kbd_minor_A.png`). **ROOT C** on the same keys:
+  130.8 / 146.8 / 155.6 / 174.6 / 196.0 / 207.7 / 233.1 / 261.6 Hz = C3 D3
+  D#3 F3 G3 G#3 A#3 C4 (C minor), and the **2.8 baseline bus** (the `tuning`
+  tree at BUILD 19, `out28/`) gave the same eight numbers to 0.1 Hz with
+  its number reading `0` (`kbd_minor_28.png`; the 2.9 shot at ROOT C,
+  `kbd_minor_C.png`, still reads `A 0` -- a stale draw, see (e); the fresh
+  draws are `probe_kbd_E_major.png` = `E 0` and `probe_kbd_off_E.png` = `0`).
+- **(c) The PTCH knob, TRACKS mode, ROOT A / MINOR**: +1 x 7 from 64 gave
+  the Part bytes 66 68 69 71 73 75 76 (D E F G A B C: the A minor degrees
+  above C), -1 x 7 gave 75 73 71 69 68 66 64. At Part 73 (+9), [TRIG 10]
+  in TRACKS mode played T2 at **440.0 Hz** (A4). A **PTCH lock** written
+  through the TRACKS-mode trig (GRID RECORDING, [TRIG 10] held, knob A):
+  +1 -> 75 (B), -2 -> 71 (G), +1 -> 73 (A), the Part byte untouched at 73;
+  the pattern played step 10 at 439.9 Hz. **ROOT C**: 66 67 69 71 72 74 76
+  up and 74 72 71 69 67 66 64 down -- the 2.8 baseline's numbers exactly
+  (`out28/report.txt`: 66 67 69 71 72 74 76 / 74 72 71 69 67 66 64).
+- **(d) A CHRD chord, SCALE MAJOR / ROOT E, VOIC 3, CHRD MAJ (byte 8)**:
+  key 13 (E4 with ROOT E) sounded **329.6 / 415.3 / 493.9 Hz = E4 G#4 B4**
+  (twice); key 16 (G4 chromatic, snapped to F#4, in E major) sounded 370.0
+  / 440.0 / 554.4 Hz = **F#4 A4 C#5**: the shape's A# snapped down to A. (A
+  first take of key 13, made right after a cold reboot and a CHRD change,
+  read D#4 G4 A#4 -- a MAJ chord a semitone low; the two takes that followed
+  and the single-key takes read E4 / F#4 as expected. Not reproduced; noted
+  under open items.) With the CHRD byte 36 (DI7 in the 2.8 table) key 13
+  gave E4 F#4 A4 and key 16 F#4 A4 B4 -- every note in E major.
+- **(e) SCALE OFF ignores ROOT** (ROOT E): key 13 = 261.6 Hz (C4), key 1 =
+  130.8 (C3), the knob +1 +1 from 64 = 65, 66 (one raw a detent), and after
+  a fresh draw of the keyboard (FUNC + RIGHT, FUNC + LEFT) the number reads
+  `0` alone (`probe_kbd_off_E.png`; `probe_kbd_E_major.png` reads `E 0`
+  with MAJOR on). Note for the next rig: the keyboard block is not redrawn
+  when the PROJECT menu closes -- a shot taken right after the menu shows
+  the previous draw (`kbd_off_rootE.png` still read `E 0`); an octave step
+  or a trig-mode entry redraws it.
+- **(f) Regressions, one take each** (SCALE OFF, ROOT C unless said):
+  LEG MONO + GLIDE 64, C4 held, E4 pressed: 1 onset, f0 261.6 Hz, the pitch
+  moves without a restart, t63 90 ms, final 330 Hz. Chord recording in
+  LIVE REC (VOIC 3, CHRD ----, keys 1 5 8 at octave +1): one step, PTCH 64
+  (C4), CHRD 8 (MAJ), VOIC 3, HOLD 52. MIDI IN with SCALE MINOR / ROOT A
+  (channel 2, VOIC 3): note 84 = 261.6 Hz, 84 + 85 = two voices sounding
+  (2, 2) -- see the MIDI note below. The tuner: UP + TEMPO opens `TUNER T2`
+  (`tuner_open.png`), again closes it. Direct jump: CHAIN AFTER's row reads
+  `DIRECT` at +1 from the minimum (byte 1, `chain_direct.png`). The FM SYNTH
+  page draws with its icons (`tuner_closed.png`, `fm_page.png`). Boot A/B
+  (static): the 2.9 bus differs from the 2.8 bus in 73 regions, 17,308 B:
+  the quantizer's own detour sites (3 B each at 0x40010217, 0x40025ac7,
+  0x400449bb, 0x4004fbe1 ... 0x400888ad), the SEQUENCER list poke
+  (0x40065c7f) and table refs, the pinned `scale.s` target byte
+  (0x400d2cad), the zero run 0x400d6b85..0x400d7b14 (the 3,268-byte unit
+  gone, the direct-jump cave and the three tables moved down), the 2-byte
+  low words of every other DRAM unit's detour operand (the synth, USB and
+  tuner units link after the quantizer's DRAM unit now, so their addresses
+  moved: 0x40003ca8, 0x4000d042 ... 0x400625e4) and the appended runtime
+  0x4010febe..0x401134a0. Nothing else.
+- **MIDI IN and the scale**: with SCALE MINOR / ROOT A a MIDI note 85 (C#4)
+  into T2 sounded 261.6 Hz (C4) -- the synth engine's own chord snap
+  (`po_snap`, applied to a MIDI key as to a panel key since the engine's
+  MIDI IN of 30 Sep 2026) put it on the rotated mask; the quantizer itself
+  touches no MIDI path (sample tracks' MIDI IN is stock). The **2.8
+  baseline** does the same: note 85 with SCALE MINOR (C minor there) sounded
+  261.6 Hz, 84 + 85 one line at 261.7, and 85 with SCALE OFF 277.2 Hz
+  (C#4) -- so nothing changed here; a MIDI note is unquantized on every
+  track with SCALE OFF, and on a synth track with a scale on it lands on
+  the scale, as a panel key does, on the root's mask now.
+
+## What does not work, and what is left (2.9)
+
+- The MIDI note a CHROMATIC key sends out is the key's own (72 + key), not
+  the transposed, snapped pitch -- as in 2.8, where it did not follow the
+  -4..+4 octave either. Four sites match note-on and note-off by key (the
+  stock `0x4004fc24`, the release path, this unit's `qz_noteoff` callers);
+  a transposed note-out is a small follow-up if wanted.
+- On a sample track the other keyboard position is partial by
+  construction (the stock -12..+12 st range holds one root-to-root octave
+  for r > 0): its clamped keys -- the top r keys for ROOT C..F#, the bottom
+  12 - r keys for G..B, the table above -- sound the scale's nearest degree
+  at that end. The default position is complete for every root (keys 15,
+  16 pass +12 for ROOT B, key 16 for A#). A synth track (0..127) is not
+  clamped in practice (raw 4..126 with ROOT, 0 / 127 only after a snap at
+  the very ends).
+- The first (d) take after a cold reboot read a MAJ chord a semitone low
+  (D#4 G4 A#4 for key 13 at ROOT E); every later take read E4 G#4 B4. One
+  observation, not reproduced, cause unknown (the CHRD knob had just been
+  set through the LFO page).
+- The engine's snap of a MIDI-IN note onto the (now root-rotated) scale on
+  a synth track is the synth module's behaviour and 2.8's too (measured on
+  the baseline: C#4 -> C4 with SCALE MINOR, C#4 with SCALE OFF); whether
+  MIDI IN should bypass the scale on a synth track is a design question,
+  not changed here.
+- Not measured: PICKUP / STATIC sample tracks' keys with a root (the
+  clamp), the paraphonic-legato hand-over with a root, a THRU track (no
+  PTCH: untouched by construction), hardware.
 
 ## What does not work, and what is left
 

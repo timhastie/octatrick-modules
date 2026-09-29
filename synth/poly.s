@@ -4,8 +4,8 @@
 | PLACEMENT.md); the kind table's FLEX entry 0x400d6438 is pointed at
 | sy_render by a "ptr" detour (modules/synth/manifest.py). synth.s, the ROM
 | cave this grew out of, is kept beside it for the record: everything under
-| "the mono voice" below is that cave's code, and at VOIC 1 the samples it
-| produces are the same, bit for bit.
+| "the mono voice" below is that cave's code; at VOIC 1 the steady samples
+| are the same, bit for bit, the note's start is not (clicks, see below).
 |
 | WHAT (phases 1-4, unchanged): a FLEX track whose sample is named SYNTH* has
 | its sample data GENERATED here every frame instead of taken from the flex
@@ -55,12 +55,17 @@
 |     mask) puts them into RELEASE. A sequencer trig (qz_pkey[t] == 0)
 |     first releases every sounding voice of the track: notes sustain
 |     until the next trig;
-|   * RELEASE: the voice's gain decays exponentially with the time constant
-|     of the AMP page REL byte (0x80000810 + t*72 + 14, locks applied):
-|     tau = 5 ms * 1000^(rel/126) -- 5 ms at 0, 29 ms at 32, 167 ms at 64,
-|     0.97 s at 96, 5 s at 126; 127 = INF (the DSP's INF), the voice
-|     sustains until stolen (po_relk). Attack is the same 8-frame ramp the
-|     mono voice has;
+|   * THE AMP ENVELOPE IS THE ENGINE'S (plan B, BUILD 31/32): the DSP sees ATK 0
+|     / HOLD INF / REL INF on a synth track (sy_ison) and each voice, mono or
+|     paraphonic, runs the live lane's ATK / HOLD / REL with the DSP's measured
+|     laws (po_mono_env, po_frame): ATK a linear ramp to full in 3.85 ms x
+|     2^(v/8.53) (16 frames the floor, po_atk); HOLD a timer from the START,
+|     po_hold128 x frames a step (127 = INF), the note ends by itself; REL
+|     exponential, tau = 0.295 ms x 2^(v/8.53) floored at 1 ms (po_relk), 127
+|     = INF: the voice sustains until stolen -- except after STOP (po_stop:
+|     S_ON bit 2), when INF takes the 1 ms floor so every voice reaches
+|     silence and the next START is cold. A start while the voice still
+|     sounds continues it phase-continuously from its level (the START rule);
 |   * PITCH per voice: target = V_ROOT + (PTCH word - the word at the last
 |     start), so a lock or slide or LFO on PTCH moves every voice by the
 |     same interval (and each voice slews it with GLIDE, sy_slew on its own
@@ -72,19 +77,21 @@
 |   * LEVEL (29 Sep 2026, equal power): each voice is c * gain with gain
 |     Q15 as the mono voice's, its full value T_GMAX = 32768 / sqrt(VOIC)
 |     latched at the start (po_gmax: 23170, 18919, 16384 at VOIC 2, 3, 4),
-|     the sum run through a peak limiter (po_fill: a per-track gain pulled
-|     down within the frame so no sample passes the mono voice's full
-|     scale, released over 0.74 s; unity while nothing passes it) and
-|     doubled into the mono format exactly as the mono path does (c * g <<
-|     1: the high word is the sample). A single note is 3.0 / 4.8 / 6.0 dB
-|     below the mono voice at VOIC 2 / 3 / 4 (1/VOIC, 28 Sep 2026, was 6 /
-|     9.5 / 12: too drastic a step); a chord's peaks reach the mono voice's
-|     full scale and stop there, clean; the saturation of the final pass
-|     is a guard. The
-|     ramp is T_GMAX / 8 a frame (8 frames as the mono voice's), the
-|     release gain -= gain * k is a ratio and is unchanged, the voice is
-|     freed below gain 64 (Q15 64 / 32768 = -54 dB re the mono voice's full
-|     scale, as before).
+|     the sum doubled into the mono format exactly as the mono path does
+|     (c * g << 1: the high word is the sample) with a saturating clamp only
+|     (plan B: the peak limiter is gone). A single note is 3.0 / 4.8 / 6.0 dB
+|     below the mono voice at VOIC 2 / 3 / 4; a VOIC 4 chord's coincident
+|     peaks reach 2.0 FS and clamp. A stolen or chord-memory voice fades over
+|     8 frames (state 3, T_GMAX / 8 a frame); a voice above the cap (a tail
+|     from a lower VOIC, the mono voice carried in) converges on it at that
+|     rate; a voice is freed below gain 64 (-54 dB re the mono voice's full
+|     scale) once po_fill has ramped it there;
+|   * VOIC ACROSS A NOTE (BUILD 32): a START never cuts what sounds. VOIC 1 ->
+|     2..4 while the mono voice sounds: po_carry moves it into a voice record
+|     (state 3, phase-continuous, its own pitch) and the chord's voices join
+|     it; VOIC 2..4 -> 1: sy_warm's po_fade fades the voices over 8 frames
+|     under the mono voice (po_fade_frame steps them, po_fill_add sums them
+|     onto its samples) and the mono voice starts cold;
 | The stock voice lifecycle is untouched: a new key restarts the DSP voice
 | (the AMP and filter envelopes run over the whole mix as for a sample), a
 | released last key posts the AMP release as stock. Musically: AMP ATK 0,
@@ -126,6 +133,8 @@
         .global sy_render, po_lfo3, po_lfo3b, po_lfopage
         .global po_mon, po_moff, po_mgate, po_mogate, po_mrec, po_mtrig
         .global po_ampstage, po_ampdraw1, po_ampdraw2, po_ampdraw3, po_ampedit, po_amplane
+        .global po_assign, po_machwin, po_machlist, po_loadsel, po_stop, po_kill
+        .global po_retrig
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
@@ -144,8 +153,6 @@
         .set    K_MAX, 0xfffff
         .set    INDEX_SCALE, 2628        | 8 rad / 127 in cycles * 2^18 (offset = m_Q14 * I)
         .set    FB_SCALE, 516            | 0.25 cycle / 127 * 2^16
-        .set    RAMP_STEP, 4096          | gain Q15: 0 -> 1.0 over 8 frames (2.9 ms)
-        .set    RAMP_SHIFT, 3            | a poly voice's ramp: T_GMAX / 8 a frame (8 frames, as the mono voice's)
         .set    INC_MAX, 0x73000000      | a carrier above ~19.8 kHz (increment > 0.45 cycle a sample) is no note
                                          | of this synth: the safety net resets such a voice (24 Sep 2026; raised
                                          | from 8 kHz on 27 Sep 2026 for PTCH +63 and the octave shapes)
@@ -177,12 +184,23 @@
         .set    FLEX_DESC_LEN, 0x192     | the source of the page clone po_pgdesc builds for page.s
         .set    RESOLVER_RET, 0x40031ed6
         .set    SLOT_OFF, 0x8f04b        | Part: 0x8f04a + track*5 + machine (1 = FLEX)
+        .set    SLOT_COL, 0x8f04a        | Part: the five slot bytes of a track, one a machine (the column the assigners index by machine)
+        .set    PART_SHADOW, 0x1001614e  | the bank's mirror in battery RAM: + part * 6322 + the Part offset = the shadow of a Part byte (0x100a5198 = the slot bytes', 0x100a4ef0 = the machine's, 0x100a51c6 = the AMP page-2's)
+        .set    CV_RATE, 3               | flat slot 3 = PLAYBACK slot D (RATE; FINE on a synth track)
+        .set    LISTWIN_MACH, 0x460d5c30 | the sample-list window's chosen machine (its apply path 0x4005a826)
+        .set    ASSIGN_RET, 0x400795c2   | the slot assigner 0x40079424: after its slot-byte write (po_assign)
+        .set    MACHWIN_RET, 0x4007981e  | the machine window's apply path 0x400797cc: its machine-byte write (po_machwin)
+        .set    LISTWIN_RET, 0x4005a850  | the sample-list window's apply path: its machine read (po_machlist)
+        .set    LOADSEL_SPRINTF, 0x40013a08 | stock's sprintf: the browser's select 0x40022610 writes the chosen path into the slot's settings record with it (po_loadsel)
         .set    SPRINTF, 0x40013a08
         .set    SEMI, 0x500              | one semitone of the PTCH word (5 raw units << 8)
         .set    SHAPE_END, -128          | ends a shape's offsets ("----" only: every other shape has four notes)
-        .set    LIM_FS, 0x20000000       | the limiter (po_fill): the sum's ceiling, 32768 * 0x4000 = the mono voice's full scale
-        .set    LIM_ONE, 65536           | its gain's 1.0 (Q16)
-        .set    LIM_REL, 11              | its release: 1/2048 of the deficit a frame (tau = 0.74 s)
+        .set    PING_AT, 0x800000e0      | the frame builder's ping (the copier 0x4000caf4 reads it: the record set being built this frame)
+        .set    DSP_REC, 0x80000110      | the DSP voice records: + (ping << 9) + 64 * track, halfwords 0/1/2 = AMP ATK / HOLD / REL (value << 8)
+        .set    CV_ATK, 12               | flat slot 12 = AMP page slot 0 (ATK)
+        .set    CUT_SHIFT, 3             | a stolen voice fades over 8 frames (2.9 ms): T_GMAX / 8 a frame (plan B)
+        .set    GLOBAL_WORD, 0x46c80350  | the sequencer's STOP / restart word the frame builder turns into the DSP all-off (po_stop)
+        .set    KILL_RET, 0x40006862     | the stock VOICE KILL 0x40006820: after its CF voice-byte clear (po_kill)
 | ---- the per-track record, 128 bytes: the mono voice (0..43, synth.s's layout) and the poly frame
         .set    ST_STRIDE, 128
         .set    S_PHC, 0                 | carrier phase, Q32 cycles
@@ -190,11 +208,15 @@
         .set    S_ENV, 8                 | index envelope, Q24
         .set    S_INC, 12                | carrier increment per sample (the true pitch)
         .set    S_INCM, 16               | modulator increment
-        .set    S_IEFF, 20               | index * envelope, the per-sample multiplier
+        .set    S_IEFF, 20               | index * envelope, the per-sample multiplier -- the RUNNING value: sy_loop steps it by S_ISTEP a sample (BUILD 38)
         .set    S_GAIN, 24               | start ramp, Q15
         .set    S_FB, 28                 | feedback multiplier
         .set    S_LASTM, 32              | the modulator's last sample, Q14
-        .set    S_ON, 36                 | the playing voice is a synth
+        .set    S_ON, 36                 | bit 0: the playing voice is a synth; bit 1: a release (the AMP release, mailbox 0x40)
+                                         | reached the frame builder since that START (po_rel; BUILD 27) -- tst.b still
+                                         | means "a synth plays": bits 1 / 2 are set only while bit 0 is;
+                                         | bit 2: STOPPED (po_stop, BUILD 32): a release under REL INF takes the 1 ms floor
+        .set    S_GPREV, 38              | word: the gain the last rendered call ended at (sy_loop ramps S_GPREV -> S_GAIN across the call; every start clears it with the phases -- BUILD 26)
         .set    S_CUR, 40                | the slewed PTCH word, Q12 (GLIDE)
         .set    T_REF, 44                | paraphonic: the PTCH word at the last voice start
         .set    T_LAST, 48               | paraphonic: the PTCH word seen last frame
@@ -205,9 +227,17 @@
         .set    T_I, 68                  | paraphonic: the index I this frame
         .set    T_W, 72                  | paraphonic: this frame's PTCH word
         .set    T_SCALE, 76              | paraphonic: the scale mask at the last start (0 = OFF)
-        .set    T_POLY, 80               | the note that started last is paraphonic (VOIC 2..4 then)
+        .set    T_POLY, 80               | byte: the note that started last is paraphonic (VOIC 2..4 then)
+        .set    S_ERAMP, 81              | byte: frames left of the mono voice's index-envelope ramp after a warm START (BUILD 38: sy_env_ramp; 0 = none)
+        .set    RT_CALLS, 0              | po_rtlog (po_clock + 32, peekable): passes of the frame builder's DSP command-byte copy (po_retrig)
+        .set    RT_FIXED, 4              | ... START bytes rewritten to the clean form 0x30
+        .set    RT_HEAD, 8               | ... the ring's head
+        .set    RT_RING, 16              | ... 32 entries x 8 B: {CK_FRAMES, track | byte posted << 8 | byte now << 16 | S_ON << 24}
+        .set    RT_SIZE, 16 + 32 * 8
+        .set    T_AK, 82                 | word: paraphonic: the attack step a frame this frame, Q15, at most 2048 (plan B; it was .set 104 inside T_POS 92..111 until BUILD 32 -- benign only because po_frame runs after the marker save and before its restore)
         .set    T_GMAX, 84               | paraphonic: a voice's full gain, Q15 = 32768 / sqrt(VOIC) at the last start
-        .set    T_LIM, 88                | paraphonic: the limiter's gain, Q16 (0 = unset, reads 1.0)
+        .set    S_HTIM, 88               | the mono voice's HOLD timer: frames left before it releases by itself (0 = none; plan B)
+                                         | (+88 was T_LIM, the peak limiter's gain, until plan B removed the limiter)
         .set    T_RAWP, 112              | the record's PTCH raw (halfword >> 8) at this frame's second call, before the neutralising (MIDI IN, 30 Sep 2026: po_start's per-note pitch)
         .set    T_SMASK, 116             | paraphonic: the held keys that got their voice (or were dropped by the cap) since their press (the same-scan sweep, 26 Sep 2026)
         .set    T_LASTK, 120             | paraphonic: the frame of the last live panel-key start (a key within KR_WIN of it is a chord press)
@@ -224,17 +254,20 @@
         .set    V_ENV, 8
         .set    V_INC, 12
         .set    V_INCM, 16
-        .set    V_IEFF, 20
+        .set    V_IEFF, 20               | the running I * E (po_fi_loop steps it by V_ISTEP a sample; BUILD 38)
         .set    V_GAIN, 24               | Q15 (the mono voice's S_GAIN format), at most T_GMAX
         .set    V_FB, 28
         .set    V_LASTM, 32
-        .set    V_STATE, 36              | 0 free, 1 sounding, 2 releasing
+        .set    V_STATE, 36              | 0 free, 1 sounding, 2 releasing, 3 fading (stolen / chord-memory cut: T_GMAX / 8 a frame, plan B)
         .set    V_KEY, 37                | the live key's index + 1, 0 = a sequencer note
+        .set    V_ISTEP, 38              | word: the per-sample step of V_IEFF this frame, (I * E - V_IEFF) / 16 (po_frame writes, po_fill consumes; BUILD 38)
         .set    V_CUR, 40                | the slewed word, Q12 (sy_slew's S_CUR)
         .set    V_ROOT, 44               | the note's word, Q8, relative to T_REF
         .set    V_AGE, 48                | the allocation stamp
         .set    V_HOLD, 52               | a sequencer note: frames left before it releases (0 = no gate)
         .set    V_FRAME, 56              | the frame (po_clock CK_FRAMES) the voice was allocated at (26 Sep 2026)
+        .set    V_GPREV, 60              | word: the gain the last rendered frame ended at (po_fill ramps V_GPREV -> V_GAIN across a frame; 0 = the voice has been silent: a start resets the phases; a long until BUILD 38)
+        .set    V_ERAMP, 62              | word: frames left of the voice's index-envelope ramp to ENV_ONE after a warm START (po_frame; BUILD 38; 0 = none)
 | ---- the chord record (po_keyrec, 26 Sep 2026; 32 bytes a track since the rolling window) --
         .set    CR_STRIDE, 32
         .set    CR_STEP, 0               | the step the chord's first key was recorded on
@@ -271,8 +304,11 @@
         .set    MASTER_ON, 0x80000034    | nonzero: track 8 is the MASTER track (the page resolver's tst.b; its AMP page is another record)
         .set    REC_TRIGLESS, 0x4004271c | (track, ctx): the live recorder places a TRIGLESS trig (FUNC + key's) -> the step, -1 = none
         .set    T_LEGKEY, 124            | paraphonic legato: the identity handed over (po_legkey), 0 = none (a byte)
+                                         | (+126..127, the record's last word: BUILD 24/25's S_LASTF frame stamp, the warm test; free since BUILD 26 -- every start is cold)
         .set    T_LEGN, 125              | ... frames waited for its PTCH lock to land (a byte)
-        .set    T_MLEG, 126              | MIDI IN: the last note-on took the legato path (po_mrec records it trigless; a byte)
+        .set    S_ISTEP, 126             | word: the mono voice's per-sample step of S_IEFF this call, (I * E - S_IEFF) / 16 (BUILD 38: sy_loop
+                                         | ramps the index across the frame; +126 / +127 were S_HOLD / S_KEYED, BUILD 27/28's record, dead since plan B)
+        .set    T_MLEG, 37               | MIDI IN: the last note-on took the legato path (po_mrec records it trigless; a byte -- the byte after S_ON, free: S_ON is a byte, S_GPREV the word at +38; it was +126 until BUILD 25, aliasing the then S_LASTF word)
 | ---- the FM SYNTH page's knob handler (po_knob, 30 Sep 2026) -------------------
         .set    FUNC_HELD, 0x46c7dd26     | nonzero while [FUNCTION] is down (the stock handlers' tst.l)
         .set    FUNC_ENC_OFF, 0x800000a0  | PERSONALIZE: DISABLE FUNCTION + ENCODER (the stock handlers' gate)
@@ -354,18 +390,49 @@ sy_cmp:
         bne     sy_no
         subq.l  #1,%d3
         bne     sy_cmp
-        clr.l   S_PHM(%a3)               | a synth starts: modulator, feedback, envelope, ramp restart
-        clr.l   S_LASTM(%a3)             | (the carrier phase runs on)
+sy_cold:                                 | a synth starts -- THE START RULE (plan B, 28 Sep 2026): the engine owns
+        move.l  #CV_STRIDE,%d1           | the AMP envelope (the DSP sees ATK 0 / HOLD INF / REL INF: sy_ison), so
+        muls.l  %d2,%d1                  | the only question is whether THIS voice still sounds. S_GPREV != 0 (the
+        lea     CURVALS,%a0              | gain the last call ended at): WARM -- the SAME oscillator continues
+        mvz.b   CV_HOLD(%a0,%d1.l),%d1   | phase-continuously at its current level, the pitch changes, the attack
+                                         | re-runs from that level (an analog mono synth's retrigger), and the index
+                                         | envelope RAMPS from its level to ENV_ONE over 16 frames (BUILD 38). S_GPREV
+                                         | == 0: COLD -- both operators at phase 0, the gain ramps from 0 (the ATK law,
+                                         | the 16-frame ramp its floor), the index envelope restarts at once (from
+                                         | silence: inaudible). BUILD 27/28's four-condition rule (S_HOLD, S_KEYED,
+                                         | the released flag) is gone: the DSP no longer restarts or
+        cmpi.l  #127,%d1                 | releases anything. The HOLD the live lane holds now (the lock, else the
+        beq     sy_cold_nohold           | Part's) arms the mono HOLD timer: 127 = INF (none), else po_hold128 steps
+        lea     po_hold128(%pc),%a0      | in 1/128 x frames a step (the DSP's own timer runs from the START at that
+        mvz.w   (%a0,%d1.l*2),%d1        | length, stage 1: HOLD 32 = 282 ms at 120 BPM, a key held or not), and its
+        lea     po_clock(%pc),%a0        | end starts the release (po_mono_env). (S_HOLD / S_KEYED went with BUILD 38: S_ISTEP has +126.)
+        move.l  CK_FPS(%a0),%d0
+        mulu.l  %d0,%d1
+        lsr.l   #7,%d1
+        addq.l  #1,%d1
+        bra     sy_cold_hold
+sy_cold_nohold:
+        moveq   #0,%d1
+sy_cold_hold:
+        move.l  %d1,S_HTIM(%a3)
+        tst.w   S_GPREV(%a3)
+        bne     sy_warm_env              | sounding: continuous
+sy_cold1:
+        clr.l   S_PHC(%a3)               | silent: phase 0, the gain from 0
+        clr.l   S_PHM(%a3)
+        clr.l   S_LASTM(%a3)
         clr.l   S_GAIN(%a3)
-        move.l  #ENV_ONE,%d1
+        clr.w   S_GPREV(%a3)
+        clr.l   S_IEFF(%a3)              | the index climbs to I * E within the first frame, under the gain from 0
+        clr.b   S_ERAMP(%a3)
+        move.l  #ENV_ONE,%d1             | the index envelope restarts at once (BUILD 38: only cold)
         move.l  %d1,S_ENV(%a3)
+        bra     sy_warm
+sy_warm_env:
+        move.b  #16,S_ERAMP(%a3)         | warm: the index envelope ramps from its level to ENV_ONE over 16 frames
+sy_warm:                                 | (sy_env_ramp, 5.8 ms), the carrier and the level continuous (BUILD 38)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                   | the retrig count the packer just latched: no stock retrigs
-        bsr     sy_word                  | a fresh note starts at its own pitch: no slide (GLIDE)
-        move.l  %d6,%d1
-        lsl.l   #8,%d1
-        lsl.l   #4,%d1
-        move.l  %d1,S_CUR(%a3)
         move.l  #CV_STRIDE,%d1           | VOIC (the current value, locks applied) 2..4: this note
         muls.l  %d2,%d1                  | is paraphonic; 1, or anything outside 1..4: the mono voice
         lea     CURVALS,%a0
@@ -374,16 +441,29 @@ sy_cmp:
         cmpi.l  #2,%d1
         sls     %d1
         move.b  %d1,T_POLY(%a3)
-        bne     sy_synth                 | a mono note: whatever paraphonic voices the track had
-        bsr     po_free                  | are ownerless now -- freed (safety net)
-        bsr     po_mring_reset           | ... and a MIDI note-on's pending entry and posted identity
-        lea     KEYS_AT,%a0              | (MIDI IN, 30 Sep 2026): the mono voice is the stock lifecycle
-        clr.b   (%a0,%d2.l)
+        bne     sy_topoly
+        bsr     po_fade                  | a mono note: whatever paraphonic voices the track still had (VOIC 2..4 -> 1
+        bsr     po_mring_reset           | across a sounding note) FADE over 8 frames under the mono voice (state 3:
+        lea     KEYS_AT,%a0              | po_fade_frame steps them, po_fill_add sums them; BUILD 32 -- po_free cut them)
+        clr.b   (%a0,%d2.l)              | ... and a MIDI note-on's pending entry and posted identity (MIDI IN, 30 Sep
+        bra     sy_synth                 | 2026): the mono voice is the stock lifecycle
+sy_topoly:
+        tst.w   S_GPREV(%a3)             | a paraphonic note while the MONO voice sounds (VOIC 1 -> 2..4 across a
+        beq     sy_synth                 | note): the mono voice becomes a fading paraphonic voice, phase-continuous,
+        bsr     po_carry                 | (state 3; BUILD 32 -- sy_alive cut it) and the mono record is silent
 sy_synth:
+        bsr     sy_word                  | a fresh note starts at its own pitch: no slide (GLIDE)
+        move.l  %d6,%d1
+        lsl.l   #8,%d1
+        lsl.l   #4,%d1
+        move.l  %d1,S_CUR(%a3)
         moveq   #1,%d3
         bra     sy_set
 sy_no:
         bsr     po_free                  | not a synth: nothing of ours may sound on this track
+        clr.w   S_GPREV(%a3)             | (the mono voice is silent too)
+        lea     KEYS_AT,%a0              | the identity the quantizer posted for this START (a CHROMATIC key on
+        clr.b   (%a0,%d2.l)              | any track since BUILD 28) is consumed: nothing stale for a later synth START
         mvz.w   (%a4),%d1                | a sample START (2.8): its pitch is its own -- S_CUR snaps to the
         lsl.l   #8,%d1                   | record's PTCH word (a lock on the trig lands here; no slide from
         lsl.l   #4,%d1                   | the previous note); the changes that follow slide from it (sy_sample)
@@ -401,6 +481,18 @@ sy_ison:
                                          | the lane byte's only reader), the DSP sees 0 there, as a stock Part's TRIG
                                          | byte is; the page-2 editor never writes it into a synth track's lane
                                          | (po_amplane), the frame builder's part refresh does, until the next frame.
+        move.l  PING_AT,%d1              | THE DSP-FACING OVERRIDE (plan B): the DSP voice record of this track
+        andi.l  #1,%d1                   | and the frame builder's ping (0x800000e0, the copier's: sy_render's own
+        lsl.l   #8,%d1                   | 56(sp) is 0x800000e4, another word), 0x80000110 + (ping << 9) + 64 *
+        lsl.l   #1,%d1                   | track, halfwords 0/1/2 (AMP ATK / HOLD / REL, value << 8) := 0 / 0x7f00 / 0x7f00 -- ATK 0, HOLD INF,
+        move.l  %d2,%d0                  | REL INF: the DSP's envelope opens on the START frame's first sample and
+        lsl.l   #6,%d0                   | never moves again (stage 1: no fade 2 s after a note-off, +-0.3 dB across
+        add.l   %d0,%d1                  | re-triggers). Every synth call, after the copier, the scene morph and the
+        lea     DSP_REC,%a0              | LFO stage (all before the render loop) and before the DMA; nothing reads
+        add.l   %d1,%a0                  | these halfwords after the render loop, so nothing is restored, and the
+        clr.w   (%a0)                    | live lane the UI shows (0x80000810 + 72 t + 12..14) is never touched --
+        move.w  #0x7f00,2(%a0)           | the same shape as the PTCH / RATE override of the CF record below. The
+        move.w  #0x7f00,4(%a0)           | engine applies the lane's ATK / HOLD / REL itself (po_mono_env, po_frame).
         mvz.w   6(%a4),%d5               | the RATE (FINE) halfword, restored for the DSP after the call
         mvz.w   (%a4),%d1
         lsr.l   #8,%d1
@@ -488,6 +580,7 @@ sy_machine:
 
 | ---- the mono voice's frame: the rate, as the stock renderer computes it -----
 sy_mono_frame:
+        bsr     po_fade_frame            | paraphonic voices fading under the mono voice: their envelope (BUILD 32)
         bsr     po_rate_fold             | d0 = the increment for the word d6, any octave (clobbers d0/d1/d3/d4/d7/a0)
         cmpi.l  #INC_MAX,%d0             | safety net: an impossible pitch (a word off the curve's
         bls     sy_mono_inc              | table, a stale record) silences the voice instead of
@@ -511,6 +604,16 @@ sy_mono_inc:
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
         move.l  %d1,S_FB(%a3)
+        mvz.b   S_ERAMP(%a3),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
+        beq     sy_env_k                 | the remaining frames -- linear, ENV_ONE exactly at the last; the decay
+        move.l  #ENV_ONE,%d0             | waits for it
+        sub.l   S_ENV(%a3),%d0
+        divs.l  %d1,%d0
+        add.l   %d0,S_ENV(%a3)
+        subq.l  #1,%d1
+        move.b  %d1,S_ERAMP(%a3)
+        bra     sy_envdone
+sy_env_k:
         mvz.w   10(%a4),%d1              | RTIM -> the index envelope
         lsr.l   #8,%d1
         beq     sy_nodecay
@@ -544,15 +647,83 @@ sy_envdone:
         lsr.l   #4,%d2                   | E, 0..4096
         mulu.l  %d2,%d1
         lsr.l   #8,%d1
-        lsr.l   #4,%d1
-        move.l  %d1,S_IEFF(%a3)          | I * E
-        move.l  S_GAIN(%a3),%d1          | the start ramp
-        addi.l  #RAMP_STEP,%d1
+        lsr.l   #4,%d1                   | I * E: this call's target
+        sub.l   S_IEFF(%a3),%d1          | ... minus the running value: sy_loop ramps S_IEFF there across the
+        moveq   #16,%d2                  | frame, (target - running) / 16 a sample (BUILD 38: no step at a frame
+        divs.l  %d2,%d1                  | edge when the index moves -- the ramp, the decay, a knob)
+        move.w  %d1,S_ISTEP(%a3)
+        move.l  52(%sp),%d2              | track (d2 was RTIM above)
+        bsr     po_mono_env              | the mono voice's AMP envelope (plan B): S_GAIN := the level this frame ends at
+        bra     sy_check                 | (po_mono_env's body follows: not fall-through)
+
+| ---- po_mono_env: the mono voice's AMP envelope, once a frame (plan B) -----------
+| a3 = the track record, d2 = track. The level S_GAIN (Q15, full 32768; sy_loop
+| ramps S_GPREV -> S_GAIN linearly across the call) follows the live lane's AMP
+| bytes (CURVALS + 72 t + 12 / 13 / 14: locks, scenes and LFOs applied by the frame
+| builder before the render loop) with the DSP's own laws as measured (stage 1):
+|   RELEASING (S_ON bit 1: po_rel for every note-off path -- the panel key's
+|     release, MIDI note-off, the sequencer's -- or the HOLD timer below, or
+|     po_stop): gain -= gain * k, k = po_relk[REL] (Q16 a frame: tau = 0.295 ms x
+|     2^(REL / 8.53), at least 1 ms -- Tim's ~2 ms minimum fade even at REL 0;
+|     127 = INF, holds); a step below 1 still makes progress; at or under 64
+|     (-54 dB) the voice is silent (0; its next START is cold).
+|   SOUNDING with a finite HOLD (S_HTIM, armed by sy_cold from the lane's HOLD
+|     at the START): the timer runs out -> the release starts by itself (the
+|     DSP's hold ends inside the DSP with no note-off anywhere: this is that).
+|   SOUNDING: gain += po_atk[ATK] (Q15 a frame: a LINEAR ramp to full in 3.85 ms x
+|     2^(ATK / 8.53), the 16-frame ramp its floor, the step at least 1), capped
+|     at full -- from wherever the level is (a warm START re-attacks from its
+|     current level; a cold one from 0).
+| Clobbers d0, d1, a0.
+po_mono_env:
+        move.l  S_GAIN(%a3),%d1
+        move.l  #CV_STRIDE,%d0
+        muls.l  %d2,%d0
+        lea     CURVALS,%a0
+        add.l   %d0,%a0                  | a0 = the track's live lane
+        btst    #1,S_ON(%a3)
+        bne     po_me_rel
+        move.l  S_HTIM(%a3),%d0          | the HOLD timer
+        beq     po_me_atk
+        subq.l  #1,%d0
+        move.l  %d0,S_HTIM(%a3)
+        bne     po_me_atk
+        bset    #1,S_ON(%a3)             | the hold ran out: release
+        bra     po_me_rel
+po_me_atk:
+        mvz.b   CV_ATK(%a0),%d0
+        lea     po_atk(%pc),%a0
+        mvz.w   (%a0,%d0.l*2),%d0
+        add.l   %d0,%d1
         cmpi.l  #32768,%d1
-        ble     sy_gain1
+        ble     po_me_store
         move.l  #32768,%d1
-sy_gain1:
+        bra     po_me_store
+po_me_rel:
+        mvz.b   CV_REL(%a0),%d0
+        lea     po_relk(%pc),%a0
+        mvz.w   (%a0,%d0.l*2),%d0        | k, Q16 (0 = INF)
+        bne     po_me_rel0
+        btst    #2,S_ON(%a3)             | INF holds -- unless STOPPED (po_stop): the floor, tau 1 ms, so the
+        beq     po_me_store              | voice reaches silence and the next START is cold (BUILD 32)
+        mvz.w   (%a0),%d0                | po_relk[0]
+po_me_rel0:
+        move.l  %d1,%a0
+        mulu.l  %d0,%d1
+        lsr.l   #8,%d1
+        lsr.l   #8,%d1                   | gain * k
+        bne     po_me_rel1
+        moveq   #1,%d1
+po_me_rel1:
+        move.l  %a0,%d0
+        sub.l   %d1,%d0
+        move.l  %d0,%d1
+        cmpi.l  #64,%d1                  | -54 dB: silent
+        bgt     po_me_store
+        moveq   #0,%d1
+po_me_store:
         move.l  %d1,S_GAIN(%a3)
+        rts
 
 | ---- the samples --------------------------------------------------------------
 sy_check:
@@ -564,6 +735,7 @@ sy_check:
         lea     VOICE_BASE,%a0
         tst.b   (%a0,%d3.l)              | the CF voice ended: leave stock's silence ...
         bne     sy_alive
+        clr.w   S_GPREV(%a3)             | (the mono voice is silent: its next start resets the phases)
         tst.b   T_POLY(%a3)
         beq     sy_done
         bsr     po_free                  | ... and free the paraphonic voices: their owner is gone
@@ -573,12 +745,31 @@ sy_alive:
         beq     sy_done
         lea     16(%a2),%a1              | their first L long
         tst.b   T_POLY(%a3)
-        bne     po_fill                  | paraphonic: sum the voices (ends at sy_done)
+        beq     sy_mono
+        clr.w   S_GPREV(%a3)             | paraphonic: the mono voice is silent (a VOIC change mid-note carried it into a voice: po_carry) ...
+        bra     po_fill                  | ... sum the voices (ends at sy_done)
+sy_mono:
+        move.l  %a2,-(%sp)               | the header: sy_gend's pass over the fading voices reads it (popped there)
         move.l  S_PHC(%a3),%d0
         move.l  S_PHM(%a3),%d6
         move.l  S_INC(%a3),%d5
         move.l  S_INCM(%a3),%a2
         move.l  S_LASTM(%a3),%a4
+        move.l  S_GAIN(%a3),%d1          | the frame's target gain ...
+        mvz.w   S_GPREV(%a3),%d2         | ... from the gain the last call ended at (a first call [0,n) has
+        sub.l   %d2,%d1                  | target == previous: constant; the second call ramps toward the target)
+        moveq   #15,%d3
+        lsl.l   %d3,%d1                  | (target - previous) << 15 ...
+        asr.l   #4,%d1                   | ... / 16 = the step a sample at the FRAME's slope (BUILD 26: it was / the
+        move.l  %d1,%a6                  | call's samples -- a sequencer trig splits every frame at its sub-frame
+                                         | offset, so the second call had the frame's whole 2048 step over its few
+                                         | samples: a stair, measured 103 steps/s on 16th trigs; now a short call
+                                         | ramps part of the way and the next call carries on from where it
+                                         | ended, S_GPREV = the gain reached, stored after the loop)
+                                         | (a5, a6 are restored by sy_done)
+        lsl.l   %d3,%d2
+        move.l  %d2,%a5                  | the running gain, gain << 15: its high word is gain / 2 (full scale
+                                         | 16384: the 16 x 16 multiply below takes it; 32768 would not fit)
         lea     sy_tab(%pc),%a0
         moveq   #24,%d3
 sy_loop:
@@ -598,7 +789,10 @@ sy_loop:
         asr.l   #8,%d2
         add.l   %d2,%d4                  | m, Q14
         move.l  %d4,%a4                  | m_prev
-        muls.l  S_IEFF(%a3),%d4          | m * I: the phase offset, Q32 cycles (wraps: it is a phase)
+        mvs.w   S_ISTEP(%a3),%d1         | the index one step on (a linear ramp across the frame; BUILD 38)
+        add.l   S_IEFF(%a3),%d1
+        move.l  %d1,S_IEFF(%a3)
+        muls.l  %d1,%d4                  | m * I: the phase offset, Q32 cycles (wraps: it is a phase)
         add.l   %d0,%d4                  | carrier phase, modulated
         move.l  %d4,%d2
         lsr.l   %d3,%d2
@@ -612,8 +806,11 @@ sy_loop:
         asr.l   #8,%d2
         asr.l   #8,%d2
         add.l   %d2,%d1                  | c, Q14 (+-0x4000 = -6 dBFS)
-        muls.l  S_GAIN(%a3),%d1          | * gain, Q15
-        add.l   %d1,%d1                  | (c * g) << 1: the high word is (c * g) >> 15
+        adda.l  %a6,%a5                  | the gain one step on (a linear ramp across the call: no step at a frame edge)
+        move.l  %a5,%d2
+        swap    %d2                      | gain / 2, Q14
+        muls.w  %d2,%d1                  | c * gain / 2 (16 x 16)
+        lsl.l   #2,%d1                   | = (c * g) << 1: the high word is (c * g) >> 15 -- at full gain c itself, as before
         clr.w   %d1                      | sample << 16: the DSP's 24-bit word is the top 24 bits
         move.l  %d1,(%a1)+               | L
         move.l  %d1,(%a1)+               | R
@@ -624,6 +821,20 @@ sy_loop:
         move.l  %d0,S_PHC(%a3)
         move.l  %d6,S_PHM(%a3)
         move.l  %a4,S_LASTM(%a3)
+        move.l  %a5,%d1                  | the gain the ramp reached (gain << 15) -> S_GPREV: the next call ramps on
+        moveq   #15,%d3                  | from here (a fade to target 0 may land a few units below 0 by the floor
+        asr.l   %d3,%d1                  | of the step: clamped, the voice is silent)
+        bpl     sy_gend
+        moveq   #0,%d1
+sy_gend:
+        move.w  %d1,S_GPREV(%a3)
+        move.l  (%sp)+,%a2               | the header
+        move.l  52(%sp),%d2              | track
+        bsr     po_any                   | paraphonic voices still fading under the mono voice (VOIC 2..4 -> 1 across
+        beq     sy_done                  | a note, sy_warm's po_fade): summed onto the mono voice's samples (BUILD 32)
+        mvz.b   3(%a2),%d7
+        lea     16(%a2),%a1
+        bra     po_fill_add
 sy_done:
         move.l  44(%sp),%d0
         movem.l (%sp),%d2-%d7/%a2-%a6
@@ -1000,13 +1211,29 @@ po_fr_dk:
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
         move.l  %d1,T_I(%a5)
-        move.l  #CV_STRIDE,%d0           | AMP REL -> the release k
+        move.l  #CV_STRIDE,%d0           | AMP REL -> the release k (po_relk: the DSP's law, plan B)
         muls.l  %d2,%d0
         lea     CURVALS,%a0
-        mvz.b   CV_REL(%a0,%d0.l),%d0
-        lea     po_relk(%pc),%a0
-        mvz.w   (%a0,%d0.l*2),%d0
+        add.l   %d0,%a0
+        mvz.b   CV_REL(%a0),%d0
+        lea     po_relk(%pc),%a1
+        mvz.w   (%a1,%d0.l*2),%d0
+        bne     po_fr_rk
+        btst    #2,S_ON(%a5)             | REL INF, STOPPED (po_stop): the floor, tau 1 ms -- every releasing
+        beq     po_fr_rk                 | voice reaches silence under the DSP's all-off (BUILD 32)
+        mvz.w   (%a1),%d0
+po_fr_rk:
         move.l  %d0,T_RK(%a5)
+        mvz.b   CV_ATK(%a0),%d0          | AMP ATK -> the attack step a frame, po_atk[ATK] * T_GMAX / 32768 (at least 1)
+        lea     po_atk(%pc),%a1
+        mvz.w   (%a1,%d0.l*2),%d0
+        mulu.l  T_GMAX(%a5),%d0
+        lsr.l   #8,%d0
+        lsr.l   #7,%d0
+        bne     po_fr_ak
+        moveq   #1,%d0
+po_fr_ak:
+        move.w  %d0,T_AK(%a5)
 | ---- every sounding voice: pitch, increments, envelopes ----------------------
         bsr     po_voices_of             | a6 = the voices, a2 = their end
 po_fr_v:
@@ -1028,6 +1255,16 @@ po_fr_inc1:
         asr.l   #8,%d0
         muls.l  T_RATIO(%a5),%d0
         move.l  %d0,V_INCM(%a6)          | modulator increment = ratio * pitch
+        mvz.w   V_ERAMP(%a6),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
+        beq     po_fr_envk               | the remaining frames -- linear; the decay waits for it
+        move.l  #ENV_ONE,%d0
+        sub.l   V_ENV(%a6),%d0
+        divs.l  %d1,%d0
+        add.l   %d0,V_ENV(%a6)
+        subq.l  #1,%d1
+        move.w  %d1,V_ERAMP(%a6)
+        bra     po_fr_env
+po_fr_envk:
         move.l  T_DK(%a5),%d0            | the index envelope
         beq     po_fr_envhold
         move.l  V_ENV(%a6),%d1
@@ -1049,8 +1286,11 @@ po_fr_env:
         lsr.l   #4,%d0
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
-        lsr.l   #4,%d1
-        move.l  %d1,V_IEFF(%a6)          | I * E
+        lsr.l   #4,%d1                   | I * E: this frame's target ...
+        sub.l   V_IEFF(%a6),%d1          | ... minus the running value: po_fill ramps V_IEFF across the frame,
+        moveq   #16,%d0                  | (target - running) / 16 a sample (BUILD 38)
+        divs.l  %d0,%d1
+        move.w  %d1,V_ISTEP(%a6)
         move.l  S_FB(%a5),%d0
         move.l  %d0,V_FB(%a6)
         move.l  V_HOLD(%a6),%d0          | a gated sequencer note: its HOLD runs out -> release
@@ -1060,18 +1300,25 @@ po_fr_env:
         bne     po_fr_amp
         move.b  #2,V_STATE(%a6)
 po_fr_amp:
-        move.l  V_GAIN(%a6),%d1          | the amplitude envelope
+        move.l  V_GAIN(%a6),%d1          | the amplitude envelope (plan B: the laws of po_mono_env, per voice)
         mvz.b   V_STATE(%a6),%d0
         cmpi.l  #2,%d0
         beq     po_fr_rel
-        move.l  T_GMAX(%a5),%d0          | sounding: the attack ramp, T_GMAX / 8 a frame, then full
-        move.l  %d0,%d3
-        lsr.l   #RAMP_SHIFT,%d3
+        cmpi.l  #3,%d0
+        beq     po_fr_cut
+        move.l  T_GMAX(%a5),%d0          | sounding: the attack, po_atk[ATK] scaled to T_GMAX a frame, then full
+        cmp.l   %d0,%d1
+        bge     po_fr_cap                | at full (or above it: a voice po_carry brought in, taken warm): no attack
+        mvz.w   T_AK(%a5),%d3
         add.l   %d3,%d1
         cmp.l   %d0,%d1
         ble     po_fr_gain
         move.l  %d0,%d1
         bra     po_fr_gain
+po_fr_cut:
+        move.l  T_GMAX(%a5),%d3          | stolen / chord-memory cut: T_GMAX / 8 a frame (8 frames = 2.9 ms), then freed
+        lsr.l   #CUT_SHIFT,%d3
+        bra     po_fr_rel1
 po_fr_rel:
         move.l  T_RK(%a5),%d0            | releasing: gain -= gain * k
         move.l  %d1,%d3
@@ -1084,13 +1331,26 @@ po_fr_rel:
         moveq   #1,%d3                   | a step too small to show: still make progress
 po_fr_rel1:
         sub.l   %d3,%d1
-        cmp.l   T_GMAX(%a5),%d1          | (a tail from a start at a lower VOIC: never above the cap
-        ble     po_fr_rel2               | now latched, so the sum's bound holds across a VOIC change)
-        move.l  T_GMAX(%a5),%d1
+        bpl     po_fr_rel1a
+        moveq   #0,%d1
+po_fr_rel1a:
+po_fr_cap:
+        cmp.l   T_GMAX(%a5),%d1          | above the cap (a tail from a start at a lower VOIC, the mono voice
+        ble     po_fr_rel2               | po_carry brought in): it CONVERGES on the cap at the fade rate,
+        move.l  T_GMAX(%a5),%d0          | T_GMAX / 8 a frame (BUILD 32 -- a one-frame clamp was a step)
+        move.l  %d0,%d3
+        lsr.l   #CUT_SHIFT,%d3
+        sub.l   %d3,%d1
+        cmp.l   %d0,%d1
+        bge     po_fr_rel2
+        move.l  %d0,%d1
 po_fr_rel2:
-        cmpi.l  #64,%d1                  | -54 dB re the mono voice's full scale: gone
+        cmpi.l  #64,%d1                  | -54 dB re the mono voice's full scale: gone ...
         bgt     po_fr_gain
-        moveq   #0,%d1                   | gone: the voice is free
+        moveq   #0,%d1                   | ... target 0 ...
+        mvz.w   V_GPREV(%a6),%d0
+        cmpi.l  #64,%d0                  | ... and free once po_fill has ramped it down there (a cut
+        bgt     po_fr_gain               | voice -- po_fade / po_st_cut -- fades over its last frame first)
         clr.b   V_STATE(%a6)
 po_fr_gain:
         move.l  %d1,V_GAIN(%a6)
@@ -1108,12 +1368,6 @@ po_fr_next:
 | reset: the safety net when their owner -- the stock voice, or a paraphonic note --
 | is gone, and the chord-memory cut at a start with a shape. Clobbers d0, a0.
 po_free:
-        lea     sy_state(%pc),%a0
-        move.l  %d2,%d0
-        lsl.l   #7,%d0
-        add.l   %d0,%a0
-        move.l  #LIM_ONE,%d0
-        move.l  %d0,T_LIM(%a0)           | the limiter's gain starts over with the voices
         lea     po_voices(%pc),%a0
         move.l  %d2,%d0
         lsl.l   #8,%d0
@@ -1122,9 +1376,171 @@ po_free:
 po_free1:
         clr.b   V_STATE(%a0)
         clr.l   V_GAIN(%a0)
+        clr.w   V_GPREV(%a0)             | silent: the next start resets its phases
         lea     V_STRIDE(%a0),%a0
         subq.l  #1,%d0
         bne     po_free1
+        rts
+
+| ---- po_fade: track d2's active voices go over ONE frame (28 Sep 2026) ---------
+| The chord-memory cut: state 2 with target gain 0, so po_fill ramps each from
+| the gain it had (V_GPREV) to 0 across the next frame instead of cutting it
+| (a step of up to T_GMAX = a click at every chord retrigger before). A voice
+| the new chord takes in this same start restarts phase-continuous from that
+| gain (po_st_note). T_LIM is kept: the limiter's ramp runs on. Clobbers d0, a0.
+po_fade:
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0
+        add.l   %d0,%a0
+        moveq   #4,%d0
+po_fade1:
+        tst.b   V_STATE(%a0)
+        beq     po_fade2
+        move.b  #3,V_STATE(%a0)          | fading (po_fr_cut: 8 frames), unless the new chord takes it warm first
+po_fade2:
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_fade1
+        rts
+
+| ---- po_carry: the mono voice becomes a paraphonic voice (BUILD 32) -----------
+| A paraphonic START (VOIC 2..4) while the mono voice sounds (S_GPREV != 0: VOIC
+| went 1 -> 2..4 across a note, live or by a lock). The mono voice's fields +0..+35
+| (phases, index envelope, increments, I * E, gain, feedback, the modulator's last
+| sample -- the voice record's first 36 bytes are the same layout) move into a
+| free voice (else the quietest active one), state 3: it FADES over 8 frames
+| (po_fr_cut, T_GMAX / 8 a frame -- from 32767 at VOIC 4 that is 16 frames, 5.8
+| ms) at its own pitch (V_ROOT such that po_start's fold of T_LAST - T_REF and the
+| new T_REF leave its target word at S_CUR's), phase-continuous from S_GPREV --
+| unless the chord's allocation takes it warm first (po_alloc: rank 0 like a free
+| voice, but stamped newest, so free voices go first). The gains are capped at
+| 32767 (po_fill's 16 x 16 multiply; the mono voice's 32768 would read as -1).
+| The mono record is silent after it (S_GAIN / S_GPREV 0). a3 = the track record,
+| d2 = track. Clobbers d0, d1, a0, a1.
+po_carry:
+        move.l  %d3,-(%sp)
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0
+        add.l   %d0,%a0                  | the track's voices
+        move.l  %a0,%a1                  | the pick so far (the first, until better)
+        move.l  #0x7fffffff,%d3
+        moveq   #4,%d0
+po_ca_pick:
+        tst.b   V_STATE(%a0)
+        beq     po_ca_free
+        move.l  V_GAIN(%a0),%d1
+        cmp.l   %d3,%d1
+        bcc     po_ca_next
+        move.l  %d1,%d3
+        move.l  %a0,%a1
+po_ca_next:
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_ca_pick
+        bra     po_ca_take
+po_ca_free:
+        move.l  %a0,%a1
+po_ca_take:
+        move.l  %a3,%a0
+        moveq   #9,%d0
+po_ca_copy:
+        move.l  (%a0)+,(%a1)+            | +0..+35
+        subq.l  #1,%d0
+        bne     po_ca_copy
+        lea     -36(%a1),%a1
+        move.b  #3,V_STATE(%a1)
+        clr.b   V_KEY(%a1)
+        move.l  S_CUR(%a3),%d0
+        move.l  %d0,V_CUR(%a1)           | the slewed word, Q12, as it is
+        asr.l   #8,%d0
+        asr.l   #4,%d0                   | the word
+        sub.l   T_LAST(%a3),%d0
+        add.l   T_REF(%a3),%d0           | po_start folds T_LAST - T_REF into every active root, then T_REF := T_W:
+        move.l  %d0,V_ROOT(%a1)          | the target T_W - T_REF + V_ROOT comes out at the word
+        clr.l   V_HOLD(%a1)
+        lea     po_seq(%pc),%a0
+        addq.l  #1,(%a0)
+        move.l  (%a0),V_AGE(%a1)         | stamped newest
+        lea     po_clock(%pc),%a0
+        move.l  CK_FRAMES(%a0),%d0
+        move.l  %d0,V_FRAME(%a1)
+        mvz.w   S_GPREV(%a3),%d0
+        cmpi.l  #32767,%d0
+        bls     po_ca_gp
+        move.l  #32767,%d0
+po_ca_gp:
+        move.w  %d0,V_GPREV(%a1)
+        move.l  S_GAIN(%a3),%d0
+        cmpi.l  #32767,%d0
+        bls     po_ca_g
+        move.l  #32767,%d0
+po_ca_g:
+        move.l  %d0,V_GAIN(%a1)
+        clr.l   S_GAIN(%a3)
+        clr.w   S_GPREV(%a3)
+        move.l  (%sp)+,%d3
+        rts
+
+| ---- po_fade_frame: the fading voices' frame under the MONO voice (BUILD 32) ----
+| The mono path's frame (sy_mono_frame, the frame's second call): every active
+| voice of track d2 (state 3 after sy_warm's po_fade; any state is treated so)
+| steps down by T_GMAX / 8 a frame (at least 2048: the T_GMAX of the last
+| paraphonic start, 0 before any) and is freed once po_fill has ramped it to
+| silence, as po_frame's po_fr_rel2 does. a3 = the track record. Clobbers nothing.
+po_fade_frame:
+        lea     -20(%sp),%sp
+        movem.l %d0/%d1/%d3/%d4/%a0,(%sp)
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0
+        add.l   %d0,%a0
+        move.l  T_GMAX(%a3),%d3
+        lsr.l   #CUT_SHIFT,%d3
+        cmpi.l  #2048,%d3
+        bcc     po_ff_step
+        move.l  #2048,%d3
+po_ff_step:
+        moveq   #4,%d0
+po_ff_loop:
+        tst.b   V_STATE(%a0)
+        beq     po_ff_next
+        move.l  V_GAIN(%a0),%d1
+        sub.l   %d3,%d1
+        bpl     po_ff_1
+        moveq   #0,%d1
+po_ff_1:
+        cmpi.l  #64,%d1                  | -54 dB: target 0 ...
+        bgt     po_ff_store
+        moveq   #0,%d1
+        mvz.w   V_GPREV(%a0),%d4
+        cmpi.l  #64,%d4                  | ... and free once po_fill has ramped it down there
+        bgt     po_ff_store
+        clr.b   V_STATE(%a0)
+po_ff_store:
+        move.l  %d1,V_GAIN(%a0)
+po_ff_next:
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_ff_loop
+        movem.l (%sp),%d0/%d1/%d3/%d4/%a0
+        lea     20(%sp),%sp
+        rts
+
+| ---- po_any: Z clear when any voice of track d2 is active. Clobbers d0, d1, a0. -
+po_any:
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0
+        add.l   %d0,%a0
+        mvz.b   V_STATE(%a0),%d0
+        mvz.b   V_STRIDE+V_STATE(%a0),%d1
+        or.l    %d1,%d0
+        mvz.b   2*V_STRIDE+V_STATE(%a0),%d1
+        or.l    %d1,%d0
+        mvz.b   3*V_STRIDE+V_STATE(%a0),%d1
+        or.l    %d1,%d0
         rts
 
 | ---- po_voices_of: a6 = track d2's four voice records, a2 = their end ---------
@@ -1390,9 +1806,8 @@ po_st_shape:
 | 1 never comes here (the mono path).
         tst.l   %d3
         beq     po_st_single
-        bsr     po_free                  | chord memory: the previous chord goes (clobbers d0, a0)
-        move.l  %d6,%d3                  | k = n
-        bra     po_st_k
+        bsr     po_fade                  | chord memory: the previous chord fades over the next frame (clobbers d0, a0);
+        bra     po_st_note               | its voices are the oldest releasing ones po_alloc hands the new notes
 po_st_single:
         bsr     po_st_cpress             | a chord press at the cap? (d0 = 1: this key gets no voice)
         bne     po_st_dup
@@ -1414,8 +1829,10 @@ po_st_cut:
         tst.l   %d3                      | the excess: that many of the oldest active voices go
         ble     po_st_note
         bsr     po_steal                 | a0 = the oldest active voice (clobbers d0, d1, d4, a6)
-        clr.b   V_STATE(%a0)
-        clr.l   V_GAIN(%a0)
+        move.b  #3,V_STATE(%a0)          | it fades over 8 frames (po_fr_cut: T_GMAX / 8 a frame), not a cut
+        lea     po_seq(%pc),%a6
+        addq.l  #1,(%a6)
+        move.l  (%a6),V_AGE(%a0)         | stamped newest: po_steal does not pick it again
         subq.l  #1,%d3
         bra     po_st_cut
 po_st_note:                              | the voicing's notes (a shape: its n notes ascending; "----": the one)
@@ -1423,11 +1840,20 @@ po_st_note:                              | the voicing's notes (a shape: its n n
         cmpi.l  #SHAPE_END,%d3
         beq     po_st_done
         bsr     po_alloc                 | a0 = the voice to use
-        clr.l   V_PHM(%a0)               | as the mono voice's start: modulator, feedback, envelope,
-        clr.l   V_LASTM(%a0)             | ramp restart; the carrier phase runs on
-        clr.l   V_GAIN(%a0)
-        move.l  #ENV_ONE,%d0
+        tst.w   V_GPREV(%a0)             | it sounded last frame (a retrigger, a tail, a chord-memory fade):
+        bne     po_st_warm               | phase-continuous, its gain ramps on from where po_fill left it
+        clr.l   V_PHC(%a0)               | a silent voice: both operators at phase 0 ...
+        clr.l   V_PHM(%a0)
+        clr.l   V_LASTM(%a0)
+        clr.l   V_GAIN(%a0)              | ... and the ramp from 0 (28 Sep 2026; before: the carrier ran on, the gain cut to 0)
+        clr.l   V_IEFF(%a0)              | the index climbs to I * E within the first frame, under the gain from 0
+        clr.w   V_ERAMP(%a0)
+        move.l  #ENV_ONE,%d0             | the index envelope restarts at once (BUILD 38: only cold)
         move.l  %d0,V_ENV(%a0)
+        bra     po_st_env
+po_st_warm:
+        move.w  #16,V_ERAMP(%a0)         | warm: the index envelope ramps from its level to ENV_ONE over 16 frames (po_frame; BUILD 38)
+po_st_env:
         move.l  #SEMI,%d0
         muls.l  %d3,%d0
         add.l   T_W(%a5),%d0             | the note's word
@@ -1441,15 +1867,12 @@ po_st_note:                              | the voicing's notes (a shape: its n n
         lea     po_clock(%pc),%a6
         move.l  CK_FRAMES(%a6),%d0
         move.l  %d0,V_FRAME(%a0)         | when (the dedupe above)
-        moveq   #1,%d0
-        tst.l   %d7
-        bne     po_st_live
-        move.l  #CV_STRIDE,%d1           | a sequencer note is gated for the step's HOLD (the lock,
-        muls.l  %d2,%d1                  | else the Part's byte): frames = hold * frames a step
-        lea     CURVALS,%a4
-        mvz.b   CV_HOLD(%a4,%d1.l),%d1
+        move.l  #CV_STRIDE,%d1           | EVERY note is gated for the lane's HOLD (the lock, else the Part's
+        muls.l  %d2,%d1                  | byte): frames = hold * frames a step -- a sequencer note and a live
+        lea     CURVALS,%a4              | key alike (plan B: the DSP's own timer ran from the START whoever
+        mvz.b   CV_HOLD(%a4,%d1.l),%d1   | started it, stage 1; 127 = INF: until the note-off / the next trig)
         cmpi.l  #127,%d1
-        beq     po_st_state              | INF: until the next trig
+        beq     po_st_hinf
         lea     po_hold128(%pc),%a4
         mvz.w   (%a4,%d1.l*2),%d1        | 1/128 steps
         lea     po_clock(%pc),%a4
@@ -1458,8 +1881,11 @@ po_st_note:                              | the voicing's notes (a shape: its n n
         lsr.l   #7,%d1
         addq.l  #1,%d1
         move.l  %d1,V_HOLD(%a0)
+po_st_hinf:
         move.l  FP_PTR,%a4               | (a4 = the parameter record again)
-        bra     po_st_state
+        moveq   #1,%d0
+        tst.l   %d7
+        beq     po_st_state
 po_st_live:
         cmpi.l  #0x80,%d7
         bcs     po_st_lkey
@@ -1676,6 +2102,8 @@ po_ho_fresh:
         clr.l   V_PHM(%a0)               | as po_st_note starts one
         clr.l   V_LASTM(%a0)
         clr.l   V_GAIN(%a0)
+        clr.l   V_IEFF(%a0)
+        clr.w   V_ERAMP(%a0)
         move.l  #ENV_ONE,%d1
         move.l  %d1,V_ENV(%a0)
         move.l  %d0,V_ROOT(%a0)
@@ -1940,8 +2368,12 @@ po_rank_act:                             | po_steal: free voices last
 | record, 52(sp) = track. Each voice adds c * gain (Q15, at most T_GMAX =
 | 32768 / sqrt(VOIC)) into the L long: the sum is Q29 with FS = 0x20000000 =
 | 32768 * 0x4000, the mono voice's full scale (c = +-0x4000), the ceiling
-| the DSP chain wants (above it the track clipped, 28 Sep 2026). The final
-| pass (29 Sep 2026) is a PEAK LIMITER, a gain and not a curve: the frame's
+| the DSP chain wants (above it the track clipped, 28 Sep 2026). PLAN B (28 Sep
+| 2026): the final pass is the doubling into the mono format with a SATURATING
+| CLAMP on the sum only -- the peak limiter that follows in this note is HISTORY
+| (removed: its gain movement was itself a level modulation under chords; the
+| level law 1/sqrt(VOIC) alone bounds a single note at 0.5 FS and a VOIC 4 chord's
+| coincident peaks at 2.0 FS, clamped). History (29 Sep 2026): a PEAK LIMITER, a gain and not a curve: the frame's
 | peak |x| is scanned; the track's gain g (T_LIM, Q16) releases toward 1.0
 | by 1/2048 of the deficit a frame (tau = 0.74 s) and is pulled down to FS /
 | peak at once when this frame's peak would pass FS, so no sample ever
@@ -1959,19 +2391,35 @@ po_rank_act:                             | po_steal: free voices last
 | a sample for the scan and 4 for the multiply (only while g < 1.0), plus a
 | divu.l a frame while limiting. The saturation after the doubling is only a
 | guard: |x * g| <= FS always.
+po_fill_add:                             | BUILD 32: the mono voice's samples are in the record (sy_gend): the
+        moveq   #1,%d4                   | fading voices are ADDED to them -- each L long, (c * g) << 1 with its low
+        bra     po_fill1                 | word cleared, is halved into the sum's format (c * g) first
 po_fill:
+        moveq   #0,%d4                   | the record is cleared first
+po_fill1:
         move.l  52(%sp),%d2              | track
-        lea     -16(%sp),%sp
+        lea     -24(%sp),%sp             | (sp) L longs, 4 count, 8 voices' end, 12 track record, 16 the voice's gain step, 20 its index step
         move.l  %a1,(%sp)                | the first L long
         move.l  %d7,4(%sp)               | the count
-        move.l  %a3,12(%sp)              | the track record (the limiter's T_LIM)
+        move.l  %a3,12(%sp)              | the track record
         move.l  %a1,%a0
         move.l  %d7,%d0
+        tst.l   %d4
+        bne     po_fi_half
 po_fi_clear:
         clr.l   (%a0)
         addq.l  #8,%a0
         subq.l  #1,%d0
         bne     po_fi_clear
+        bra     po_fi_voices
+po_fi_half:
+        move.l  (%a0),%d1
+        asr.l   #1,%d1
+        move.l  %d1,(%a0)
+        addq.l  #8,%a0
+        subq.l  #1,%d0
+        bne     po_fi_half
+po_fi_voices:
         bsr     po_voices_of             | a6 = the voices, a2 = their end
         move.l  %a2,8(%sp)
 po_fi_voice:
@@ -1985,6 +2433,20 @@ po_fi_voice:
         move.l  V_INC(%a3),%d5
         move.l  V_INCM(%a3),%a2
         move.l  V_LASTM(%a3),%a4
+        mvs.w   V_ISTEP(%a3),%d1         | the index step a sample (po_frame's; consumed: a voice po_frame does not
+        move.l  %d1,20(%sp)              | visit -- one fading under the mono voice -- holds its index)
+        clr.w   V_ISTEP(%a3)
+        move.l  V_GAIN(%a3),%d1          | the gain this frame ends at (po_frame's target) ...
+        mvz.w   V_GPREV(%a3),%d2         | ... from the one the last frame ended at
+        move.w  %d1,V_GPREV(%a3)
+        sub.l   %d2,%d1
+        swap    %d1
+        clr.w   %d1                      | (target - previous) << 16 ...
+        divs.l  %d7,%d1                  | ... / the frame's samples = the step, Q15.16
+        move.l  %d1,16(%sp)
+        swap    %d2
+        clr.w   %d2
+        move.l  %d2,%a5                  | the running gain, Q15.16 (a5 is restored by sy_done)
         lea     sy_tab(%pc),%a0
         moveq   #24,%d3
 po_fi_loop:
@@ -2004,7 +2466,10 @@ po_fi_loop:
         asr.l   #8,%d2
         add.l   %d2,%d4                  | m, Q14
         move.l  %d4,%a4                  | m_prev
-        muls.l  V_IEFF(%a3),%d4          | m * I: the phase offset (wraps: it is a phase)
+        move.l  V_IEFF(%a3),%d1          | the index one step on (a linear ramp across the frame; BUILD 38)
+        add.l   20(%sp),%d1
+        move.l  %d1,V_IEFF(%a3)
+        muls.l  %d1,%d4                  | m * I: the phase offset (wraps: it is a phase)
         add.l   %d0,%d4                  | carrier phase, modulated
         move.l  %d4,%d2
         lsr.l   %d3,%d2
@@ -2018,7 +2483,10 @@ po_fi_loop:
         asr.l   #8,%d2
         asr.l   #8,%d2
         add.l   %d2,%d1                  | c, Q14
-        muls.l  V_GAIN(%a3),%d1          | * gain, Q15
+        adda.l  16(%sp),%a5              | the gain one step on (a linear ramp across the frame: no step at its edge)
+        move.l  %a5,%d2
+        swap    %d2                      | its integer part, Q15
+        muls.w  %d2,%d1                  | c * gain (16 x 16: c is +-0x4000, the gain at most 23170)
         add.l   %d1,(%a1)                | into the sum
         addq.l  #8,%a1
         add.l   %d5,%d0
@@ -2032,64 +2500,10 @@ po_fi_next:
         lea     V_STRIDE(%a6),%a6
         cmp.l   8(%sp),%a6
         bne     po_fi_voice
-| ---- the limiter: the frame's peak, the gain, the samples scaled ------------
-        move.l  (%sp),%a1
-        move.l  4(%sp),%d7
-        moveq   #0,%d4                   | the peak |x| of the frame
-po_fi_peak:
-        move.l  (%a1),%d0
-        bpl     po_fi_pk1
-        neg.l   %d0
-po_fi_pk1:
-        cmp.l   %d4,%d0
-        bls     po_fi_pk2
-        move.l  %d0,%d4
-po_fi_pk2:
-        addq.l  #8,%a1
-        subq.l  #1,%d7
-        bne     po_fi_peak
-        move.l  12(%sp),%a0              | the track record
-        move.l  T_LIM(%a0),%d1           | the gain, Q16 ...
-        beq     po_fi_reset              | (unset after boot, or every voice freed: 1.0)
-        tst.l   %d4
-        beq     po_fi_reset              | silence: 1.0
-        move.l  #LIM_ONE,%d0
-        sub.l   %d1,%d0
-        lsr.l   #8,%d0
-        lsr.l   #LIM_REL-8,%d0           | the deficit / 2048 ...
-        addq.l  #1,%d0                   | ... at least 1: it reaches 1.0
-        add.l   %d0,%d1                  | ... releasing toward 1.0 ...
-        cmpi.l  #LIM_ONE,%d1
-        bls     po_fi_peak2
-po_fi_reset:
-        move.l  #LIM_ONE,%d1
-po_fi_peak2:
-        cmpi.l  #LIM_FS,%d4
-        bls     po_fi_g                  | the peak is under the ceiling: no pull
-        lsr.l   #8,%d4
-        lsr.l   #6,%d4                   | peak >> 14: 32769..65536 for FS < peak <= 2 FS
-        move.l  #0x80000000,%d0
-        divu.l  %d4,%d0                  | FS / peak, Q16 (< 65536)
-        cmp.l   %d1,%d0
-        bcc     po_fi_g
-        move.l  %d0,%d1                  | ... pulled down to it at once
-po_fi_g:
-        move.l  %d1,T_LIM(%a0)
-        move.l  (%sp),%a1
-        move.l  4(%sp),%d7
-        cmpi.l  #LIM_ONE,%d1
-        beq     po_fi_out                | unity: the samples as they are
-        moveq   #15,%d0
-        lsl.l   %d0,%d1                  | g, Q31
-po_fi_lim:
-        move.l  (%a1),%d0
-        mac.l   %d0,%d1,%acc0            | x * g (fractional mode: >> 31)
-        movclr.l %acc0,%d0
-        move.l  %d0,(%a1)
-        addq.l  #8,%a1
-        subq.l  #1,%d7
-        bne     po_fi_lim
-        move.l  (%sp),%a1                | the final pass: sum * 2 (the mono format), saturated (a guard), L and R
+| ---- the final pass (plan B: the peak limiter is gone -- the sum is what the
+| voices add up to, saturated only if it wraps) ---------------------------------
+po_fi_unity:
+        move.l  (%sp),%a1                | the final pass: sum * 2 (the mono format), saturated (the clamp), L and R
         move.l  4(%sp),%d7
 po_fi_out:
         move.l  (%a1),%d1
@@ -2101,7 +2515,7 @@ po_fi_put:
         move.l  %d1,(%a1)+               | R
         subq.l  #1,%d7
         bne     po_fi_out
-        lea     16(%sp),%sp
+        lea     24(%sp),%sp
         bra     sy_done
 po_fi_sat:
         bmi     po_fi_satp               | the doubled sum wrapped: its sign says which way
@@ -3300,43 +3714,61 @@ po_is_synth:
         adda.l  %d0,%a0
         adda.l  #SLOT_OFF,%a0
         mvz.b   (%a0),%d0                | its FLEX slot, 0-based
+        bsr     po_slot_marker           | d0 := 1 when that slot's sample is the marker
+        bra     po_is_out
+po_is_no:
+        moveq   #0,%d0
+po_is_out:
+        movem.l (%sp),%d1/%d3/%a0/%a1
+        lea     16(%sp),%sp
+        tst.l   %d0
+        rts
+
+| ---- po_slot_marker: d0 = a FLEX slot (0-based) -> d0 = 1 when the slot's sample
+| is named FMSYNTH* / SYNTH* (the settings record's path, loaded into flex RAM or
+| not), else 0 (a slot above 127 -- none, or a recorder buffer -- is never one);
+| tst.l done. Clobbers d0 only. po_is_synth's scan, shared with the assigners
+| (po_became, 28 Sep 2026).
+po_slot_marker:
+        lea     -16(%sp),%sp
+        movem.l %d1/%d3/%a0/%a1,(%sp)
         cmpi.l  #127,%d0
-        bhi     po_is_no                 | none, or a recorder buffer
+        bhi     po_sm_no                 | none, or a recorder buffer
         move.l  #SETTINGS_STRIDE,%d1
         mulu.l  %d1,%d0
         addi.l  #SETTINGS_BASE,%d0
         movea.l %d0,%a0                  | the settings record: its path at +0
         movea.l %a0,%a1
         move.l  #255,%d3
-po_is_scan:
+po_sm_scan:
         mvz.b   (%a0)+,%d0
-        beq     po_is_scanned
+        beq     po_sm_scanned
         cmpi.l  #'/',%d0
-        bne     po_is_scan1
+        bne     po_sm_scan1
         movea.l %a0,%a1                  | after the last '/'
-po_is_scan1:
+po_sm_scan1:
         subq.l  #1,%d3
-        bne     po_is_scan
-po_is_scanned:
+        bne     po_sm_scan
+po_sm_scanned:
         move.w  #0x464d,%d0              | "FM": FMSYNTH* is the marker name too
         cmp.w   (%a1),%d0
-        bne     po_is_fm
+        bne     po_sm_fm
         addq.l  #2,%a1
-po_is_fm:
+po_sm_fm:
         lea     sy_name(%pc),%a0
         moveq   #5,%d3
-po_is_cmp:
+po_sm_cmp:
         mvz.b   (%a0)+,%d0
         mvz.b   (%a1)+,%d1
         cmp.l   %d1,%d0
-        bne     po_is_no
+        bne     po_sm_no
         subq.l  #1,%d3
-        bne     po_is_cmp
+        bne     po_sm_cmp
         moveq   #1,%d0
-        bra     po_is_out
-po_is_no:
+        bra     po_sm_out
+po_sm_no:
         moveq   #0,%d0
-po_is_out:
+po_sm_out:
         movem.l (%sp),%d1/%d3/%a0/%a1
         lea     16(%sp),%sp
         tst.l   %d0
@@ -3647,6 +4079,190 @@ po_moff_stock:
         cmp.l   %d1,%d0
         bne     po_moff_more
         jmp     0x4000dfdc
+
+| ---- po_rel: 0x4000b51a, the frame builder's AMP-release consumer `moveal
+| %sp@(114),%a3; movel %a1@(0,%a3:l:4),%d0` (8 bytes): the builder found bit 6
+| in the track's mailbox 0x46c80354[t] (0x4000b4e4; a1 = the mailbox base,
+| sp@(114) = the track), took the release bytes 0x80001828/9 into its frame,
+| wrote 4 into the LFO state 0x80004858[t], and here re-reads the word to clear
+| bit 6 (andl #-65 at 0x4000b522). Every path that posts 0x40 -- the panel key
+| release 0x4004fbfe.. (the last held key), the MIDI note-off's stock block
+| 0x4000dfdc (po_moff's last note), whatever the sequencer posts -- passes this
+| one site. A synth voice (S_ON bit 0) takes the released flag (S_ON bit 1):
+| plan B -- the mono voice's release starts (po_mono_env: the REL law), since the
+| DSP no longer fades anything -- unless the same word carries the START (bit 2):
+| the START retriggers the voice warm (sy_cold), nothing releases. d2 is reloaded from a3 at 0x4000b52c, a0
+| at 0x4000b540: both scratch here; d0 = the word, a3 = the track: kept.
+po_rel:
+        movea.l 114(%sp),%a3             | displaced: the track
+        move.l  (%a1,%a3.l*4),%d0        | displaced: its mailbox word (bit 6 set)
+        btst    #2,%d0                   | a START in the same word (a panel key pressed while one is held,
+        bne     po_rel_out               | LEG OFF: 0x4004fbfe posts the note-off and the START together): the
+        move.l  %a3,%d2                  | DSP restarts at full this frame, the release never fades -- no flag
+        lsl.l   #7,%d2                   | * ST_STRIDE
+        lea     sy_state(%pc),%a0
+        adda.l  %d2,%a0
+        btst    #0,S_ON(%a0)             | a synth plays: it has been released
+        beq     po_rel_out
+        bset    #1,S_ON(%a0)
+po_rel_out:
+        jmp     0x4000b522
+
+| ---- po_retrig: 0x4000c634 (8 bytes displaced: `moveal 114(sp),a1; moveb (a0,a1.l),d0`,
+| a0 = 0x46104d15) -- the frame builder's per-track copy of the DSP command byte
+| 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t] (0x4000c642), the one
+| funnel every START form passes on its way to the DSP and the packer. THE CAUSE
+| (BUILD 37, 29 Sep 2026; po_rtlog's ring, root29w/run_f37a.log): a sequencer trig
+| on a track whose voice still sounds is posted by the builder's own sequencer
+| path (0x4000b906: the trig record's byte +62, then the OR-0x10 of 0x4000b9aa /
+| 0x4000bd74 / 0x4000bdc0) as 0x10 | n -- the CF START bit 4 with the trig's
+| sub-frame position n (measured cycling 4, 0xc, 5, 0xd, ... at 120 BPM: a step
+| is 344.5 frames) and no bit 5; the packer splits the frame's render calls at n
+| and the DSP crossfades its old voice under the new one for ~26 samples. Both
+| are the engine's one continuous stream (sy_warm: the same oscillator carries
+| on), so old + new = a +5.6 dB bump at every trig. The panel key's START (the
+| raw mailbox word 0x1d of 0x40005030's raw-store exit) reaches the DSP as 0x30
+| -- bits 4 and 5, nibble 0 -- and is clean (x1.00, the DIAG round's kwh take).
+| THE FIX: on a synth track whose engine voice is on (S_ON != 0) every START byte
+| (bit 4 or 5 set) becomes exactly the key's clean form 0x30 -- the CF START at
+| the frame's first sample (the trig lands a frame boundary early, at most 15
+| samples = 0.34 ms), the packer's calls [0,0) + [0,16), sy_render's START rule
+| as before (HOLD re-armed, the index envelope restarted, the pitch snapped,
+| warm: phase-continuous from the level reached). A silent synth track (S_ON 0)
+| and every sample track keep stock's byte. po_rtlog counts the passes and the
+| rewrites and rings the START bytes (the rig peeks it at po_clock + 32).
+po_retrig:
+        movea.l 114(%sp),%a1             | displaced: a1 = the track
+        lea     -24(%sp),%sp
+        movem.l %d1-%d4/%a2-%a3,(%sp)
+        move.l  %a1,%d4                  | the track
+        cmpi.l  #8,%d4
+        bcc     po_retrig_out
+        mvz.b   (%a0,%a1.l),%d1          | the DSP command byte posted this frame
+        lea     po_rtlog(%pc),%a2
+        addq.l  #1,RT_CALLS(%a2)
+        move.l  %d1,%d2
+        andi.l  #0x30,%d2
+        beq     po_retrig_out            | no START of any form (a release, nothing): stock's byte stands
+        move.l  %d4,%d2
+        lsl.l   #7,%d2
+        lea     sy_state(%pc),%a3
+        add.l   %d2,%a3                  | the track's engine record
+        move.l  %d1,%d3                  | the byte as posted
+        tst.b   S_ON(%a3)
+        beq     po_retrig_log            | not a synth track with a voice on: stock's byte stands
+        moveq   #0x30,%d1
+        move.b  %d1,(%a0,%a1.l)          | the clean form: a CF START at the frame's first sample
+        addq.l  #1,RT_FIXED(%a2)
+po_retrig_log:
+        move.l  RT_HEAD(%a2),%d2
+        addq.l  #1,RT_HEAD(%a2)
+        andi.l  #31,%d2
+        lsl.l   #3,%d2
+        lea     RT_RING(%a2,%d2.l),%a2
+        move.l  po_clock+CK_FRAMES(%pc),%d2
+        move.l  %d2,(%a2)
+        mvz.b   S_ON(%a3),%d2
+        lsl.l   #8,%d2
+        or.l    %d1,%d2                  | the byte now
+        lsl.l   #8,%d2
+        or.l    %d3,%d2                  | the byte as posted
+        lsl.l   #8,%d2
+        or.l    %d4,%d2                  | the track
+        move.l  %d2,4(%a2)
+po_retrig_out:
+        movem.l (%sp),%d1-%d4/%a2-%a3
+        lea     24(%sp),%sp
+        move.b  (%a0,%a1.l),%d0          | displaced: the byte (rewritten or not) for the packer's nibble byte
+        jmp     0x4000c63c
+
+| ---- po_stop: 0x4000b2c8, the frame builder's `clrl 0x46c80350` (6 bytes) -- the
+| sequencer's STOP / restart word (3, or 1) consumed: the builder has just turned
+| it into the DSP-wide all-off command byte (0x10 / 0x30 into 0x46104d14), with no
+| per-track mailbox and no CF voice kill (stage 1). The DSP's envelope no longer
+| ends anything (plan B), so the engine ends everything here: every synth track's
+| mono voice takes the released flag (S_ON bit 1 -> po_mono_env's release) and
+| every sounding paraphonic voice releases (state 2 -> po_frame's release). The
+| tail fades under the DSP's all-off (inaudible) and the levels reach 0, so the
+| next START is cold. d0 is dead here (reloaded at 0x4000b2ce); a0 / d1 saved.
+po_stop:
+        clr.l   GLOBAL_WORD              | displaced
+        lea     -16(%sp),%sp
+        movem.l %d1/%d2/%a0/%a1,(%sp)
+        lea     sy_state(%pc),%a0
+        lea     po_voices(%pc),%a1
+        moveq   #8,%d1
+po_stop_t:
+        btst    #0,S_ON(%a0)
+        beq     po_stop_p
+        bset    #1,S_ON(%a0)
+        bset    #2,S_ON(%a0)             | STOPPED: REL INF releases at the 1 ms floor (po_mono_env, po_frame's T_RK)
+po_stop_p:
+        moveq   #4,%d2
+po_stop_v:
+        mvz.b   V_STATE(%a1),%d0
+        cmpi.l  #1,%d0
+        bne     po_stop_v1
+        move.b  #2,V_STATE(%a1)
+po_stop_v1:
+        lea     V_STRIDE(%a1),%a1
+        subq.l  #1,%d2
+        bne     po_stop_v
+        lea     ST_STRIDE(%a0),%a0
+        subq.l  #1,%d1
+        bne     po_stop_t
+        movem.l (%sp),%d1/%d2/%a0/%a1
+        lea     16(%sp),%sp
+        jmp     0x4000b2ce
+
+| ---- po_kill: 0x4000685c, the stock VOICE KILL 0x40006820(t)'s CF voice-byte
+| clear `clrb %d0; moveb %d0,%a1@(0,%a0:l)` (6 bytes; BUILD 33). The kill's
+| prologue takes the track from 4(sp): t >= 8 recurses through the entry for
+| 0..7, so this site sees one track at a time, d1 = t, a0 = 0x800049d8, a1 =
+| 168 t, interrupts masked (0x40006846: no render call is mid-flight). Every
+| path that ends a stock voice HARD comes here: the sequencer's STOP / pattern
+| change 0x40043c50 (per track), the sample preview stop 0x40093ec0 /
+| 0x40096ad4, the loaders 0x4007eb3e / 0x4008044e / 0x4000f518 (slot / project
+| change), the frame builder's own 0x4000d45a (its end mask), 0x40008110 /
+| 0x40006b30 / 0x4008055c. The DSP voice is dead at this instant -- an
+| immediate zero is inaudible -- so the engine's voices of the track END here:
+| S_GAIN / S_GPREV / S_HTIM := 0 and S_ON := 0 (the mono voice: silent, no
+| synth playing), the four paraphonic voices freed (po_free: state 0, V_GAIN /
+| V_GPREV 0) with V_KEY / V_HOLD := 0. The next START is cold (sy_cold:
+| S_GPREV == 0 -> phase 0 from 0). A sample track's record is zeroed the same
+| way (S_ON was 0 already). po_stop (0x4000b2c8) stays as belt-and-braces for a
+| STOP that posts the global word without a kill: on a killed track it finds
+| S_ON 0 and does nothing. d0 / a0 are dead here (reloaded at 0x40006862 /
+| 0x40006866), a2 is set at 0x40006868; d1 / d2 / a1 preserved.
+po_kill:
+        clr.b   %d0                      | displaced
+        move.b  %d0,(%a1,%a0.l)          | displaced: the CF voice byte := 0
+        lea     -8(%sp),%sp
+        movem.l %d2/%a1,(%sp)
+        move.l  %d1,%d2                  | d2 = the track (po_free's argument)
+        move.l  %d1,%d0
+        lsl.l   #7,%d0                   | * ST_STRIDE
+        lea     sy_state(%pc),%a0
+        add.l   %d0,%a0
+        clr.b   S_ON(%a0)                | nothing of ours plays on this track
+        clr.l   S_GAIN(%a0)
+        clr.w   S_GPREV(%a0)             | silent: the next START is cold
+        clr.l   S_HTIM(%a0)
+        bsr     po_free                  | the four voices: state 0, V_GAIN / V_GPREV 0 (clobbers d0, a0)
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0                   | * 4 voices * V_STRIDE
+        add.l   %d0,%a0
+        moveq   #4,%d0
+po_kill_v:
+        clr.b   V_KEY(%a0)               | no key owns it, no sequencer gate runs
+        clr.l   V_HOLD(%a0)
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_kill_v
+        movem.l (%sp),%d2/%a1
+        lea     8(%sp),%sp
+        jmp     KILL_RET
 
 | ---- po_mgate: 0x4000e452, the octave switch `movel %d6,%d0; subql #2,%d0; moveq
 | #5,%d2; cmpl %d0,%d2` (8 bytes; the bcs at 0x4000e45a follows). d6 = the octave
@@ -4247,6 +4863,234 @@ po_al_store:
         move.b  %d2,(%a0,%d0.l)          | displaced
         jmp     0x4003af14
 
+| ==== FINE DEFAULTS TO 0c WHEN A TRACK BECOMES A SYNTH TRACK (28 Sep 2026) =========
+| Tim's report: a freshly assigned synth track came up with FINE +63c -- FINE is
+| the stock RATE byte (PLAYBACK slot D; cents = raw - 64) and stock's RATE
+| default is 127, so every Part, and every track that was a sample track, carries
+| 127 there. The three stock sites that turn a track into a FLEX track of a given
+| slot are detoured; at each, when the track IS a synth track after the write
+| (machine FLEX, the FLEX column's slot a marker: po_slot_marker) and WAS NOT one
+| before it (the machine was not FLEX, or the FLEX slot was not a marker), RATE
+| := 64 is written into the Part's FLEX PLAYBACK bytes, their battery-RAM shadow
+| and the live lane (po_fine_reset), so the page reads FINE 0c at once and SAVE
+| keeps it. Nothing else is touched: a synth track's tuned FINE survives a
+| re-assignment of the same or another marker slot, a project load, a Part
+| reload, a pattern change and a warm boot (none of them run these sites); a
+| sample track is never written (a non-marker slot is no synth track); RATE
+| p-locks live in the pattern and are not read here.
+|   * po_assign at 0x400795ba, in the slot assigner 0x40079424 (both windows'
+|     apply paths call it when the slot differs): `addal #0x8f04a,%a0; moveb
+|     %d1,%a0@` -- a0 = the Part's slot byte of the new machine (a3), d1 = the
+|     new slot; the machine byte was written at 0x40079522 and the OLD machine
+|     is the outermost of the three arguments still on the stack (0x4007956c:
+|     old machine, track, part for 0x400972fc), 8(sp). The old slot of the new
+|     machine's column is read before the displaced store.
+|   * po_machwin at 0x40079816, the machine window's machine-only write
+|     0x400797cc (the slot equal, the machine changed -- the assigner exits at
+|     0x40079672 without writing): `addal #0x8eda2,%a0; mvsb %a0@,%d3` -- d3 :=
+|     the old machine, d4 = the new one, d1 = the track; the FLEX column's slot
+|     is the Part's (po_flex_slot).
+|   * po_machlist at 0x4005a848, the sample-list window's machine-only write
+|     0x4005a826, the same shape: `addal #0x8eda2,%a0; mvsb %a0@,%d4` -- d4 :=
+|     the old machine, the new one at 0x460d5c30, d2 = the track.
+| Not detoured: the paste of a copied track record (0x40027e4c kind 0, machine
+| and slot with every page byte from the source, so FINE comes along) and the
+| project / Part loaders (a saved Part keeps its bytes).
+
+| ---- 0x400795ba: the slot assigner's slot-byte write (8 bytes displaced) --------
+po_assign:
+        adda.l  #SLOT_COL,%a0            | displaced: a0 = the Part's slot byte of the new machine
+        mvz.b   (%a0),%d0                | the old slot in that column
+        move.b  %d1,(%a0)                | displaced: the new slot
+        lea     -16(%sp),%sp
+        movem.l %d1-%d4,(%sp)           | 16 bytes: the assigner's arguments for 0x400972fc are at 16 + (0 part, 4 track, 8 old machine)
+        move.l  %d0,%d3                  | old slot (of the new machine's column)
+        move.l  %d1,%d4                  | new slot
+        move.l  24(%sp),%d0              | the old machine
+        move.l  20(%sp),%d2              | the track
+        move.l  %a3,%d1                  | the new machine
+        bsr     po_became
+        movem.l (%sp),%d1-%d4
+        lea     16(%sp),%sp
+        jmp     ASSIGN_RET
+
+| ---- 0x40079816: the machine window's machine-byte write (8 bytes displaced) ----
+po_machwin:
+        adda.l  #MACH_OFF,%a0            | displaced: a0 = the Part's machine byte
+        mvs.b   (%a0),%d3                | displaced: the old machine
+        lea     -24(%sp),%sp
+        movem.l %d0-%d2/%d4/%a0-%a1,(%sp)
+        move.l  %d3,%d0                  | old machine
+        move.l  %d1,%d2                  | the track
+        move.l  %d4,%d1                  | new machine
+        moveq   #-1,%d3                  | the FLEX column's slot: the Part's (unchanged here)
+        bsr     po_became
+        movem.l (%sp),%d0-%d2/%d4/%a0-%a1
+        lea     24(%sp),%sp
+        mvs.b   (%a0),%d3                | (not written yet)
+        jmp     MACHWIN_RET
+
+| ---- 0x4005a848: the sample-list window's machine-byte write (8 bytes displaced) -
+po_machlist:
+        adda.l  #MACH_OFF,%a0            | displaced: a0 = the Part's machine byte
+        mvs.b   (%a0),%d4                | displaced: the old machine
+        lea     -24(%sp),%sp
+        movem.l %d0-%d3/%a0-%a1,(%sp)
+        move.l  %d4,%d0                  | old machine
+        move.l  LISTWIN_MACH,%d1         | new machine (the window's; d2 = the track already)
+        moveq   #-1,%d3                  | the FLEX column's slot: the Part's
+        bsr     po_became
+        movem.l (%sp),%d0-%d3/%a0-%a1
+        lea     24(%sp),%sp
+        jmp     LISTWIN_RET
+
+| ---- po_became: d0 = the old machine, d1 = the new one, d2 = the track, d3 = the
+| FLEX column's old slot (-1: unchanged, read it from the Part), d4 = its new slot
+| (with d3 >= 0). Resets FINE when the track is a synth track now and was not one
+| before. Preserves every register.
+po_became:
+        lea     -40(%sp),%sp
+        movem.l %d0-%d7/%a0-%a1,(%sp)
+        subq.l  #1,%d1
+        bne     po_bc_out                | not FLEX now: no synth track
+        tst.l   %d3
+        bpl     po_bc_slots
+        bsr     po_flex_slot             | d3 := d4 := the Part's FLEX slot of track d2
+po_bc_slots:
+        move.l  %d0,%d7                  | old machine
+        move.l  %d4,%d0
+        bsr     po_slot_marker           | a synth track now?
+        beq     po_bc_out
+        subq.l  #1,%d7
+        bne     po_bc_reset              | the machine changed to FLEX: it became one
+        move.l  %d3,%d0
+        bsr     po_slot_marker           | was one already (FLEX with a marker slot)?
+        bne     po_bc_out                | its FINE is the user's
+po_bc_reset:
+        bsr     po_fine_reset
+po_bc_out:
+        movem.l (%sp),%d0-%d7/%a0-%a1
+        lea     40(%sp),%sp
+        rts
+
+| ---- po_flex_slot: d3 := d4 := the Part's FLEX-column slot byte of track d2
+| (clobbers a0, d3, d4).
+po_flex_slot:
+        movea.l PART_PTR,%a0
+        mvz.b   PART_IDX,%d3
+        move.l  #6322,%d4
+        muls.l  %d4,%d3
+        adda.l  %d3,%a0                  | the Part
+        move.l  %d2,%d3
+        lsl.l   #2,%d3
+        add.l   %d2,%d3                  | track * 5
+        adda.l  %d3,%a0
+        adda.l  #SLOT_OFF,%a0
+        mvz.b   (%a0),%d3
+        move.l  %d3,%d4
+        rts
+
+| ---- po_fine_reset: RATE := 64 (FINE 0c) for track d2 -- the Part's FLEX PLAYBACK
+| byte (PLAY_SLOTS + 6 + 3), its battery-RAM shadow and the live lane's flat slot
+| 3, as the page's knob writes them. Preserves every register.
+po_fine_reset:
+        lea     -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
+        movea.l PART_PTR,%a0
+        mvz.b   PART_IDX,%d0
+        move.l  #6322,%d1
+        muls.l  %d1,%d0                  | part * 6322
+        move.l  %d2,%d1
+        lsl.l   #5,%d1
+        sub.l   %d2,%d1
+        sub.l   %d2,%d1                  | track * 30
+        add.l   %d0,%d1
+        addi.l  #PLAY_SLOTS+6+CV_RATE,%d1 | + FLEX (machine 1) * 6 + slot D
+        moveq   #64,%d0
+        move.b  %d0,(%a0,%d1.l)          | the Part
+        lea     PART_SHADOW,%a1
+        move.b  %d0,(%a1,%d1.l)          | its shadow
+        move.l  #CV_STRIDE,%d1
+        muls.l  %d2,%d1
+        lea     CURVALS,%a0
+        move.b  %d0,CV_RATE(%a0,%d1.l)   | the live lane
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea     16(%sp),%sp
+        rts
+
+| ---- 0x40022686: the file browser's select (0x40022610: d4 = the machine, 1 =
+| FLEX, d3 = the slot, d5 = the chosen file's path, d2 = the slot's settings
+| record; the three sprintf arguments record / format / path are on the stack)
+| writes the path into the record with `jsr 0x40013a08`, replaced by `jsr
+| po_loadsel`. THE NEW-PROJECT CASE (Tim, MKI, 2.9 + the FINE fix: the FIRST
+| FM machine of a project read +63c): in a fresh project every track already
+| owns its slot in both columns (T1 = slot 1 .. T8 = slot 8, every slot empty;
+| the port boots them STATIC), so the first marker goes INTO the track's own slot -- the machine window's YES on that
+| slot takes the assigner's same-slot exit (0x40079672 -> 0x40021d94 -> the
+| browser, and again after the load), the sample-list window's LOAD FILE never
+| touches the Part: the machine and the slot byte do not change, none of the
+| three assigner sites runs, and the track has become a synth track by its
+| slot's FILE changing. So the change of a FLEX slot's file is the fourth site:
+| the slot's marker state is read before the path write and after it, and when
+| it went non-marker (or empty) -> marker, every FLEX track whose FLEX slot is
+| this slot became a synth track: RATE := 64 for each (po_fine_reset). A marker
+| replaced by a marker changes nothing (its synth tracks keep their FINE), a
+| marker replaced by a sample, a STATIC slot, a recorder buffer: nothing.
+po_loadsel:
+        lea     -12(%sp),%sp
+        movem.l %d2/%d6-%d7,(%sp)        | 12 B: the return address at 12(sp), the arguments at 16 / 20 / 24
+        moveq   #0,%d7
+        moveq   #1,%d0
+        cmp.l   %d4,%d0
+        bne     po_ls_call               | not the FLEX list
+        move.l  %d3,%d0
+        bsr     po_slot_marker
+        move.l  %d0,%d7                  | d7 := the slot's file WAS a marker
+po_ls_call:
+        move.l  24(%sp),-(%sp)           | the path
+        move.l  24(%sp),-(%sp)           | the format
+        move.l  24(%sp),-(%sp)           | the record
+        jsr     LOADSEL_SPRINTF          | stock: the path into the record
+        lea     12(%sp),%sp
+        moveq   #1,%d0
+        cmp.l   %d4,%d0
+        bne     po_ls_out
+        tst.l   %d7
+        bne     po_ls_out                | a marker already: its synth tracks keep their FINE
+        move.l  %d3,%d0
+        bsr     po_slot_marker
+        beq     po_ls_out                | not a marker now: no synth track
+        move.l  %d3,%d6                  | the slot
+        moveq   #0,%d2                   | the track
+po_ls_track:
+        movea.l PART_PTR,%a0
+        mvz.b   PART_IDX,%d0
+        move.l  #6322,%d1
+        muls.l  %d1,%d0
+        adda.l  %d0,%a0                  | the Part
+        move.l  %d2,%d0
+        addi.l  #MACH_OFF,%d0
+        mvz.b   (%a0,%d0.l),%d0
+        subq.l  #1,%d0
+        bne     po_ls_next               | not FLEX
+        move.l  %d2,%d0
+        lsl.l   #2,%d0
+        add.l   %d2,%d0
+        addi.l  #SLOT_OFF,%d0
+        mvz.b   (%a0,%d0.l),%d0          | its FLEX slot
+        cmp.l   %d6,%d0
+        bne     po_ls_next
+        bsr     po_fine_reset            | d2 = the track: FINE 0c (preserves every register)
+po_ls_next:
+        addq.l  #1,%d2
+        moveq   #8,%d0
+        cmp.l   %d2,%d0
+        bne     po_ls_track
+po_ls_out:
+        movem.l (%sp),%d2/%d6-%d7
+        lea     12(%sp),%sp
+        rts
+
 | ---- data ----------------------------------------------------------------------
 sy_name:
         .ascii  "SYNTH"
@@ -4347,25 +5191,54 @@ po_names:                                | 4 bytes each: the name, at most three
 po_gmax:
         .long   32768, 32768, 23170, 18919, 16384
 
+| ---- po_atk: AMP ATK raw -> the attack step a frame, Q15 (full = 32768) ----------
+| The DSP's attack as measured (stage 1, root29o/ana_env.txt): a LINEAR ramp to
+| full in t = 3.85 ms x 2^(ATK / 8.53) (8: 7.5 ms, 16: 15, 32: 50, 64: 700, 96:
+| 9.45 s); step = 32768 / max(16, t / 0.3628 ms) a frame -- the 16-frame ramp
+| (5.8 ms, ATK 0..8) is the floor, and the Q15 step's floor of 1 makes ATK >= 91
+| an 11.9 s ramp (the DSP's 96 is 9.5 s, its 127 anomalous). root29p/gen_env_tables.py.
+po_atk:
+        .short  2048, 2048, 2048, 2048, 2048, 2048, 1896, 1748
+        .short  1612, 1486, 1370, 1263, 1165, 1074, 990, 913
+        .short  841, 776, 715, 659, 608, 560, 517, 476
+        .short  439, 405, 373, 344, 317, 293, 270, 249
+        .short  229, 211, 195, 180, 166, 153, 141, 130
+        .short  120, 110, 102, 94, 86, 80, 74, 68
+        .short  62, 58, 53, 49, 45, 42, 38, 35
+        .short  33, 30, 28, 26, 24, 22, 20, 18
+        .short  17, 16, 14, 13, 12, 11, 10, 10
+        .short  9, 8, 8, 7, 6, 6, 5, 5
+        .short  5, 4, 4, 4, 3, 3, 3, 3
+        .short  2, 2, 2, 2, 2, 2, 1, 1
+        .short  1, 1, 1, 1, 1, 1, 1, 1
+        .short  1, 1, 1, 1, 1, 1, 1, 1
+        .short  1, 1, 1, 1, 1, 1, 1, 1
+        .short  1, 1, 1, 1, 1, 1, 1, 1
+
 | ---- po_relk: AMP REL raw -> the release k, Q16 per frame ---------------------
-| gain -= gain * k: tau = 5 ms * 1000^(rel / 126), 127 = INF (k = 0).
+| gain -= gain * k: the DSP's release as measured (stage 1): EXPONENTIAL with
+| tau = 0.295 ms x 2^(REL / 8.53) (40: 7.6 ms, 60: 38.5, 80: 196, 100: 994,
+| 126: 9 s), 127 = INF (k = 0); tau is floored at 1 ms (REL 0..15) -- the DSP's
+| REL 0 is a one-sample dead cut (Tim's click), the engine's is -20 dB in 2.3 ms,
+| -40 dB in 4.6 ms. (Until plan B: tau = 5 ms x 1000^(rel / 126), 134 ms at REL
+| 60 where the DSP takes 38.) root29p/gen_env_tables.py.
 po_relk:
-        .short  4755, 4502, 4262, 4034, 3819, 3615, 3422, 3240
-        .short  3067, 2903, 2749, 2602, 2463, 2332, 2207, 2090
-        .short  1978, 1873, 1773, 1678, 1589, 1504, 1424, 1348
-        .short  1276, 1208, 1143, 1082, 1025, 970, 918, 869
-        .short  823, 779, 737, 698, 661, 626, 592, 561
-        .short  531, 502, 476, 450, 426, 403, 382, 362
-        .short  342, 324, 307, 290, 275, 260, 246, 233
-        .short  221, 209, 198, 187, 177, 168, 159, 150
-        .short  142, 135, 128, 121, 114, 108, 102, 97
-        .short  92, 87, 82, 78, 74, 70, 66, 63
-        .short  59, 56, 53, 50, 48, 45, 43, 40
-        .short  38, 36, 34, 32, 31, 29, 27, 26
-        .short  25, 23, 22, 21, 20, 19, 18, 17
-        .short  16, 15, 14, 13, 13, 12, 11, 11
-        .short  10, 10, 9, 9, 8, 8, 7, 7
-        .short  7, 6, 6, 6, 5, 5, 5, 0
+        .short  19941, 19941, 19941, 19941, 19941, 19941, 19941, 19941
+        .short  19941, 19941, 19941, 19941, 19941, 19941, 19941, 19941
+        .short  18661, 17419, 16245, 15137, 14093, 13112, 12190, 11327
+        .short  10518, 9762, 9055, 8396, 7781, 7209, 6676, 6180
+        .short  5719, 5292, 4894, 4526, 4184, 3868, 3574, 3302
+        .short  3051, 2818, 2602, 2403, 2219, 2048, 1891, 1745
+        .short  1611, 1486, 1372, 1266, 1168, 1077, 994, 917
+        .short  846, 780, 720, 664, 612, 565, 521, 480
+        .short  443, 408, 377, 347, 320, 295, 272, 251
+        .short  232, 214, 197, 182, 167, 154, 142, 131
+        .short  121, 112, 103, 95, 87, 81, 74, 69
+        .short  63, 58, 54, 50, 46, 42, 39, 36
+        .short  33, 30, 28, 26, 24, 22, 20, 19
+        .short  17, 16, 15, 13, 12, 11, 11, 10
+        .short  9, 8, 8, 7, 6, 6, 6, 5
+        .short  5, 4, 4, 4, 3, 3, 3, 0
 
 | ---- po_hold128: the AMP HOLD byte -> steps in 1/128 (the firmware's own table of
 | strings at 0x400d18d0: 0.0078 .. 128.0, 127 = INF), the sequencer note's gate ----
@@ -4446,6 +5319,8 @@ po_mtail:                                | ... and tail (the note-on's), per tra
         .fill   8, 1, 0
 po_clock:                                | the sequencer clock (po_tick), read by the quantizer through qz_clock
         .long   0, 0, FPS_DEFAULT, 0, -1, -1, -1, 0
+po_rtlog:                                | po_retrig's counters and ring (po_clock + 32; the rig peeks it)
+        .fill   RT_SIZE, 1, 0
 po_lfo_built:
         .byte   0
         .align  4

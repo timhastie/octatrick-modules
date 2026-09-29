@@ -87,6 +87,138 @@ release from the AMP REL byte, per-voice glide, live keys held together
 chord note snapped onto the quantizer's SCALE (its mask through the pinned
 trampoline SCALE_AT).
 
+CLICKS AND CRACKLE (28 Sep 2026, poly.s po_fill / po_st_note / po_fade): the
+peak limiter's gain and every paraphonic voice's gain ramp linearly across
+the 16-sample frame from last frame's value to this frame's (the per-frame
+steps were a click at each of the 8 attack frames and a beat-rate crackle
+while a chord was held: Tim's MKI, 2.3 .. 2.9); a silent voice starts both
+operators at phase 0 with a 16-frame (5.8 ms) attack ramp; a retriggered,
+stolen or chord-memory-cut voice is phase-continuous and fades over one
+frame instead of being cut. The level law is unchanged (T_GMAX = 32768 /
+sqrt(VOIC), chords held at the mono voice's peak). README "Clicks and crackle".
+The mono voice (VOIC 1; poly.s sy_render's marker block, sy_mono / sy_loop)
+got the same treatment in the next commit: its gain ramps linearly per sample
+across each render call (S_GPREV -> S_GAIN, one divs.l a call, a 16 x 16
+multiply on gain / 2 -- bit for bit the old output at full gain), a 16-frame
+attack (RAMP_STEP 2048), both operators at phase 0 from silence, phase-
+the safety-net cut a one-frame fade. OCTATRIK11's pop on every note.
+BUILD 25: T_MLEG (MIDI IN's legato flag, po_mon / po_mrec) moved +126 -> +37 --
+it aliased S_LASTF's word (the warm rule's frame stamp).
+BUILD 26: EVERY START IS COLD -- the warm rule (S_GPREV != 0 and S_LASTF within a
+frame: keep the phases and the gain) and S_LASTF are gone; every START clears
+S_PHC / S_PHM / S_LASTM / S_GAIN / S_GPREV, both operators at phase 0 and the
+gain ramps from 0 over 16 frames. The DSP's AMP envelope restarts at full on the
+start frame's first sample at EVERY start, so a warm start after the envelope had
+released the note (a re-press, REL 20) exposed the CF's full continuous gain as a
+bare step (x22 .. x25 the steady slope) and the CF cannot see that envelope (no
+release event covers every path: a sequencer HOLD ends inside the DSP). A phase
+reset at gain 0 is inaudible; a retrigger while sounding gets a short dip (the
+normal retrigger character); LEG MONO hand-overs never START. The paraphonic
+voices keep their warm rule (phase kept, gain ramped from where it is: clean).
+PLAN B (28 Sep 2026, BUILD 31): THE ENGINE OWNS THE AMP ENVELOPE. On a synth
+track the DSP is presented with an always-open envelope -- sy_render writes the
+DSP voice record's halfwords 0/1/2 (0x80000110 + (ping << 9) + 64 t: ATK / HOLD /
+REL) := 0 / 0x7f00 / 0x7f00 every synth call, after the copier, the scene morph
+and the LFO stage and before the DMA, the live lane the UI shows untouched (the
+shape of the PTCH / RATE override) -- and applies ATK / HOLD / REL from the live
+lane itself (locks, scenes, LFOs included) with the DSP's laws as measured in
+stage 1: ATK a linear ramp to full in 3.85 ms x 2^(v/8.53) (the 16-frame ramp
+the floor), HOLD the DSP's timer from the START (po_hold128 steps x frames a
+step; 127 = INF) for live keys and trigs alike, ending the note by itself, REL
+exponential with tau = 0.295 ms x 2^(v/8.53) floored at 1 ms (a ~2 ms minimum
+fade even at REL 0; 127 = INF). THE START RULE replaces BUILD 27/28's four
+conditions: a voice that still sounds (S_GPREV / V_GPREV != 0) continues the
+SAME oscillator phase-continuously from its current level (the attack re-runs
+from there); a silent one starts at phase 0 from 0. Note ends: every note-off
+path (po_rel), the HOLD timer, MIDI note-off, the key mask, the sequencer trig,
+and STOP (po_stop, a new detour at the frame builder's consumption of the
+sequencer's STOP word 0x46c80350, after it posts the DSP all-off). Voice
+stealing and chord-memory cuts fade over 8 frames (2.9 ms, state 3). The
+per-frame peak limiter is REMOVED: the sum is clamped (saturated) only; the
+level law 1/sqrt(VOIC) is unchanged. README "The engine owns the envelope".
+BUILD 32 (round 2): a START across a VOIC change never cuts the sounding tone
+(VOIC 1 -> 2..4: po_carry moves the mono voice into a fading paraphonic voice;
+2..4 -> 1: the voices fade over 8 frames under the mono voice, po_fade_frame /
+po_fill_add); STOP ends every voice (S_ON bit 2: REL INF takes the 1 ms floor,
+so the level reaches 0 and the next START is cold); T_AK moved off T_POS.
+BUILD 37 (29 Sep 2026): SEQUENCER TRIGS ON A STILL-SOUNDING NOTE NO LONGER BUMP.
+The frame builder's sequencer path posts a trig on a sounding track to the DSP as
+the command byte 0x10 | n (the CF START bit with the trig's sub-frame position n;
+0x46104d15[t], copied into the packer's nibble byte at 0x4000c642); the DSP
+crossfades its old voice under the new one for ~26 samples, and since both are
+the engine's one continuous stream (the warm START rule) the sum is a +5.6 dB /
+1.8 ms bump at every trig (BUILD 33's take a: per-frame amplitude 1.85 1.58 1.32
+1.13). The panel key's START reaches the DSP as 0x30 (bits 4 and 5, nibble 0)
+and is clean. po_retrig, a detour at the copy (0x4000c634), rewrites every START
+byte on a synth track whose engine voice is on (S_ON) to that clean form; the
+trig lands a frame boundary early (at most 0.34 ms). Measured (root29w/run_f37a.log,
+a trig on every step at 120 BPM, VOIC 1 C4, ATK 0 HOLD INF REL 60 INDX 0): max
+|step| / the tone's slope x1.01, max |d2| 9, per-frame amplitude 1.00 on every
+frame of every trig, the fix fired on every trig (po_rtlog: 39 rewrites, the
+bytes 0x14 0x1c 0x15 0x1d ... -> 0x30). po_rtlog (po_clock + 32) stays: 272 B
+of counters and a ring, cheap and peekable.
+
+BUILD 38 (29 Sep 2026): A WARM START RAMPS THE INDEX ENVELOPE. With a non-zero
+INDX the START rule's instant restart of the FM index envelope (S_ENV / V_ENV :=
+ENV_ONE while the carrier continued) was a hard step at every sequencer trig on a
+sounding note (BUILD 37 take b: x7.45 the tone's slope, |d2| 4961, 2008 -> 4786
+in one sample, the centroid 322 -> 498 Hz in a frame). Now sy_cold / po_st_note
+arm a 16-frame ramp (S_ERAMP +81 / V_ERAMP +62): the envelope climbs linearly
+from its current value to ENV_ONE in 5.8 ms (sy_env_ramp / po_fr_envk: the
+remaining distance over the remaining frames), then the DEC decay runs from the
+peak as before; a cold START (a silent voice) keeps the instant restart. And the
+per-sample multiplier I * E is interpolated across every frame: S_IEFF / V_IEFF
+are the running value, sy_loop / po_fi_loop step them by S_ISTEP (+126, the
+word S_HOLD / S_KEYED held) / V_ISTEP (+38), (target - running) / 16, once a
+frame -- no frame-edge step for the ramp, the decay or a knob. V_GPREV is a word
+at +60. Measured (root29x/run_v38b.log, take b: HOLD INF REL 60 INDX 40 DEC 40,
+a trig every step): max |step| / the tone's slope x1.07, max |d2| 88 against
+the take's own 99.9th pct 108, the centroid moving over ~8 ms.
+
+BUILD 33 (round 3): STOP ENDS THE ENGINE'S VOICES AT THE STOCK VOICE KILL. Round 2
+measured (root29q-verify/run_stop.log) that po_stop's site 0x4000b2c8 never runs
+on the rig for any STOP form -- the global word's writers (0x4009bbb8 / 0x4009c3a0
+/ 0x400a4d8c) sit behind [0x80000060] and the pattern-state bytes 0x80006511/12,
+and the frame builder's consumer behind two more gates -- so a REL INF tone kept
+sounding 1.1 .. 1.6 s past STOP until the stock voice ended, S_GPREV stayed at
+full, and the next START after a STOP was warm at full into a re-opened DSP
+voice: a click. What every UI path uses to end a stock voice HARD is the VOICE
+KILL 0x40006820(t; t >= 8 = all tracks, recursing per track): the sequencer's
+STOP / pattern change 0x40043c50, the sample preview stop 0x40093ec0 /
+0x40096ad4, the loaders 0x4007eb3e / 0x4008044e / 0x4000f518, the frame
+builder's own 0x4000d45a. po_kill is a detour at its CF voice-byte clear
+0x4000685c (interrupts masked, d1 = the track): the killed track's engine
+record ends at that instant -- S_GAIN / S_GPREV / S_HTIM / S_ON := 0, the four
+paraphonic voices freed with V_KEY / V_HOLD 0 -- so nothing of ours sounds
+after the kill and the next START is cold. po_stop stays as belt-and-braces (a
+killed track has S_ON 0: it does nothing there).
+History, BUILD 27: WARM ONLY WHEN THE DSP IS PROVABLY SUSTAINING AT FULL -- BUILD 26's
+cold start made a new key while the old note still sounds (LEG OFF, HOLD INF) a
+hard cut at the frame edge (a -12 dB 5 ms click). sy_cold keeps the phases and
+the gain (the pitch changes, no ramp) only when (a) the HOLD the lane held at the
+sounding note's START was INF (S_HOLD, +126, stored at every START, locks
+applied), (b) no release reached the frame builder since (S_ON bit 1: po_rel, a
+detour at the builder's mailbox-0x40 consumer 0x4000b51a, one site for the panel
+release, the MIDI note-off and the sequencer; not set when the same word carries
+the START, bit 2 -- the panel's key-while-held), (c) S_GPREV != 0; else cold.
+BUILD 28: (d) THE START IS A LIVE KEY'S OR A MIDI NOTE'S -- a sequencer trig
+STARTs the mono voice with no note-off anywhere (at HOLD INF the flag is never
+set), and the DSP restarts something at each trig the CF cannot see: warm there
+layered (+5.75 dB over the mono voice, a bare step a trig, BUILD 27 measured).
+sy_cold reads qz_pkey[t] (KEYS_AT, the identity the quantizer posts for a
+CHROMATIC key, index + 1, and po_mon for a MIDI note, 0x80 | note; 0 for a
+sequencer trig -- what po_start takes as d7) before the mono path clears it,
+stores it at S_KEYED (+127, the record's last byte, peekable) and the START is
+warm only when it is nonzero as well; a sequencer START is always cold.
+Also BUILD 26: the ramp's step a sample is (target - previous) / 16, the FRAME's
+slope, and S_GPREV takes the gain the ramp reached -- a sequencer trig splits
+every frame at its sub-frame offset, so dividing by the call's samples put the
+frame's whole step into the short second call (a stair on every sequencer note,
+103/s; BUILD 25's warm rule made those notes a bare step each, x14 .. x24).
+Measured BUILD 26: onset x0.99, re-press 50 / 200 / 600 ms x1.07 / x1.02 / x1.07,
+16th trigs HOLD 6 max |d2| 24 (was 4769), the retrigger while sounding a cut to
+0 then the 16-frame attack (the cost, -15 dB for 6 ms); README.
+
 MIDI IN (30 Sep 2026, poly.s "MIDI IN"): MIDI notes into a synth track
 behave like the panel keys. The STANDARD note map's chromatic block
 (0x4000e6e2; AUDIO NOTE IN = STANDARD, or FOLLOW TM in the TRACKS trig
@@ -122,6 +254,34 @@ lock starting from the Part's PTCH; one detour at the trig-mode selector's
 window test 0x40051fce (po_octave), which stores as the lock editor does
 and redraws the page. No trig held, a sample track, GRID RECORDING off:
 the selector, byte for byte.
+
+FINE DEFAULTS TO 0c (28 Sep 2026, poly.s po_assign / po_machwin /
+po_machlist). FINE is the stock RATE byte, whose default is 127 (+63c), so a
+fresh synth track read +63c until the user turned it down (Tim's report).
+Three 8-byte jmp detours at the stock sites that make a track a FLEX track
+of a slot -- the slot assigner's slot-byte write 0x400795ba (both the
+machine window and the sample-list window call the assigner 0x40079424
+when the slot differs) and the two windows' machine-only writes 0x40079816
+/ 0x4005a848 (the slot equal, the machine changed) -- reset RATE := 64 in
+the Part's FLEX PLAYBACK bytes, their battery-RAM shadow and the live lane
+when the track IS a synth track after the write (FLEX, the FLEX slot's
+sample named FMSYNTH* / SYNTH*) and WAS NOT one before it (the machine not
+FLEX, or the slot not a marker). A synth track already keeps its FINE
+(re-assignments, project load, Part reload, pattern change, warm boot: no
+site runs), a sample track is never written, RATE p-locks are untouched.
+THE NEW-PROJECT CASE (BUILD 22, poly.s po_loadsel): Tim's MKI still read
++63c on the FIRST FM machine of a project -- in a fresh project every track
+already owns its slot in both columns (T1 = slot 1 .. T8 = slot 8, every slot
+empty; the port boots them STATIC), the first marker is loaded INTO the
+track's own slot, and neither the machine nor the
+slot byte changes (the assigner takes its same-slot exit; the sample-list
+window's LOAD FILE never touches the Part): none of the three sites runs.
+The fourth site is the file browser's select 0x40022610, whose `jsr
+0x40013a08` (sprintf) writes the chosen path into the slot's settings record
+-- `jsr po_loadsel` reads the slot's marker state before and after the
+write and, when it went non-marker -> marker, resets FINE on every FLEX
+track whose FLEX slot is that slot. A marker over a marker, a sample over a
+marker, a STATIC slot, a recorder buffer: untouched.
 
 Verified in ot_emu through the virtual panel and the pipe (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
@@ -164,6 +324,14 @@ MIDI_OFF_HOOK = 0x4000dfd4               # `mvsb %a0@,%d1; mvsb %a3@,%d0; cmpl %
 MIDI_OFF_STOCK = bytes.fromhex("7310" "7113" "b081" "661c")
 MIDI_GATE_HOOK = 0x4000e452              # `movel %d6,%d0; subql #2,%d0; moveq #5,%d2; cmpl %d0,%d2`
 MIDI_GATE_STOCK = bytes.fromhex("2006" "5580" "7405" "b480")
+RETRIG_HOOK = 0x4000c634                 # the frame builder's per-track copy of the DSP command byte 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t]: `moveal 114(sp),a1; moveb (a0,a1.l),d0` (a0 = 0x46104d15; BUILD 37: po_retrig turns a sequencer START on a sounding synth voice, 0x10 | n, into the key's clean 0x30)
+RETRIG_STOCK = bytes.fromhex("226f0072" "10309800")
+STOP_HOOK = 0x4000b2c8                   # `clrl 0x46c80350` (the frame builder consumes the sequencer's STOP / restart word after posting the DSP all-off; plan B: po_stop ends every engine voice)
+STOP_STOCK = bytes.fromhex("42b9" "46c80350")
+KILL_HOOK = 0x4000685c                   # the stock VOICE KILL 0x40006820(t): `clrb %d0; moveb %d0,%a1@(0,%a0:l)`, the CF voice byte 0x800049d8 + 168 t := 0, interrupts masked; d1 = t (BUILD 33: po_kill ends the engine's voices of the track at that instant)
+KILL_STOCK = bytes.fromhex("4200" "13808800")
+REL_HOOK = 0x4000b51a                    # `moveal %sp@(114),%a3; movel %a1@(0,%a3:l:4),%d0` (the frame builder's AMP-release consumer, mailbox bit 6: every note-off path)
+REL_STOCK = bytes.fromhex("266f0072" "2031bc00")
 MIDI_OFFGATE_HOOK = 0x4000de10           # `subql #2,%d0; moveq #5,%d3; cmpl %d0,%d3` (the note-off's octave switch)
 MIDI_OFFGATE_STOCK = bytes.fromhex("5580" "7605" "b680")
 MIDI_REC_HOOK = 0x400625e0               # `movel %a2@(4),%d0; movel %d0,0x46c7e956`
@@ -192,6 +360,23 @@ AMP_LANE_STOCK = bytes.fromhex("41f98000083c" "11820800")
 # layer's tables 0x400bf628 / 0x400bf2b4 name it) tests its window here.
 OCT_HOOK = 0x40051fce                    # `tstl 0x400bebae` (the selector window's handle: closed, a press opens it; open, presses step the mode)
 OCT_STOCK = bytes.fromhex("4ab9400bebae")
+# FINE defaults to 0c when a track becomes a synth track (28 Sep 2026, poly.s
+# po_assign / po_machwin / po_machlist): the slot assigner's slot-byte write and
+# the two windows' machine-only writes.
+ASSIGN_HOOK = 0x400795ba                 # `addal #0x8f04a,%a0; moveb %d1,%a0@` (the assigner 0x40079424: the Part's slot byte of the new machine)
+ASSIGN_STOCK = bytes.fromhex("d1fc0008f04a" "1081")
+MACHWIN_HOOK = 0x40079816                # `addal #0x8eda2,%a0; mvsb %a0@,%d3` (the machine window's apply path 0x400797cc: the machine byte, the slot equal)
+MACHWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7710")
+LISTWIN_HOOK = 0x4005a848                # `addal #0x8eda2,%a0; mvsb %a0@,%d4` (the sample-list window's apply path 0x4005a826: the same)
+LISTWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7910")
+# The new-project case (Tim, MKI: the FIRST FM machine of a project read +63c;
+# poly.s po_loadsel): the file browser's select 0x40022610 writes the chosen path
+# into the slot's settings record -- the only way a FLEX slot's FILE changes
+# under a track that already has that slot (a fresh project: T1 = FLEX slot 1 ..
+# T8 = slot 8, every slot empty; the assigner then takes its same-slot exit and
+# the sample-list window's LOAD FILE never touches the Part).
+LOADSEL_HOOK = 0x40022686                # `jsr 0x40013a08` (sprintf: record, "%s..", path) in the browser's select 0x40022610
+LOADSEL_STOCK = bytes.fromhex("4eb940013a08")
 
 # The FM voice engine is a DRAM unit since 24 Sep 2026 (poly.s, the
 # paraphonic engine): linked into the platform runtime at the base of the
@@ -299,8 +484,8 @@ MODULE = Module(
         "voice (STRT/LEN/RTRG/RTIM = ratio/index/feedback/decay); the DSP "
         "shapes and effects it as a sample. Its PLAYBACK page reads RATO/INDX/"
         "FDBK/DEC with icons and the title FM SYNTH; PTCH is semitones (-64..+63) "
-        "and RATE is FINE (cents) on a synth track. A FLEX or STATIC sample track "
-        "with LEG MONO and GLIDE slides its pitch (2.8).",
+        "and RATE is FINE (cents) on a synth track, 0c the moment a track becomes one. "
+        "A FLEX or STATIC sample track with LEG MONO and GLIDE slides its pitch (2.8).",
     linked=(
         Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True),
     ),
@@ -332,6 +517,18 @@ MODULE = Module(
         Detour(MIDI_OFF_HOOK, MIDI_OFF_STOCK, "poly", "po_moff",
                "MIDI IN note-off: a paraphonic synth track releases that note's voice alone; the last note's release posts the stock AMP release",
                kind="jmp", pad_to=8),
+        Detour(REL_HOOK, REL_STOCK, "poly", "po_rel",
+               "the frame builder's AMP-release consumer (mailbox 0x40, every note-off path): a synth voice takes the released flag -- plan B: the engine's own release starts (po_mono_env)",
+               kind="jmp", pad_to=8),
+        Detour(STOP_HOOK, STOP_STOCK, "poly", "po_stop",
+               "the frame builder's STOP / restart word consumer (after the DSP all-off): every engine voice releases (plan B: the DSP's envelope ends nothing, so no note may stick)",
+               kind="jmp"),
+        Detour(RETRIG_HOOK, RETRIG_STOCK, "poly", "po_retrig",
+               "the frame builder's copy of the DSP command byte into the packer's nibble byte (every START form's funnel): a START posted on a synth track whose engine voice is on (S_ON) becomes the key's clean form 0x30 -- the CF START bit with sub-frame position 0 -- so the DSP does not crossfade its old voice under the engine's one continuous stream (BUILD 37: the +5.6 dB bump at a sequencer trig on a still-sounding note)",
+               kind="jmp", pad_to=8),
+        Detour(KILL_HOOK, KILL_STOCK, "poly", "po_kill",
+               "the stock VOICE KILL's CF voice-byte clear (STOP / pattern change 0x40043c50, the loaders, the sample preview, the frame builder's end mask): the engine's voices of the killed track end at that instant (S_GAIN / S_GPREV / S_HTIM / S_ON := 0, the paraphonic voices freed) -- the DSP voice is dead, the next START is cold (BUILD 33)",
+               kind="jmp"),
         Detour(MIDI_GATE_HOOK, MIDI_GATE_STOCK, "poly", "po_mgate",
                "MIDI IN note gate: a note outside 72..96 addressed to a synth track plays it chromatically (20..127 = -64..+43 semitones)",
                kind="jmp", pad_to=8),
@@ -366,6 +563,21 @@ MODULE = Module(
         Detour(AMP_LANE_HOOK, AMP_LANE_STOCK, "poly", "po_amplane",
                "AMP page-2 editor's live-lane write: a synth track's LEG never reaches the lane (the DSP's copy reads 0)",
                kind="jmp", pad_to=10),
+        Detour(ASSIGN_HOOK, ASSIGN_STOCK, "poly", "po_assign",
+               "slot assigner (both windows): a track that becomes a synth track by this slot write -- FLEX with an FMSYNTH*/SYNTH* slot, "
+               "not one before -- gets FINE 0c (RATE := 64 in the Part, its shadow and the live lane); a synth track already, or a sample track: untouched",
+               kind="jmp", pad_to=8),
+        Detour(MACHWIN_HOOK, MACHWIN_STOCK, "poly", "po_machwin",
+               "machine window, the machine-only write (the slot equal): a track that becomes a synth track by the machine change gets FINE 0c",
+               kind="jmp", pad_to=8),
+        Detour(LISTWIN_HOOK, LISTWIN_STOCK, "poly", "po_machlist",
+               "sample-list window, the machine-only write: the same",
+               kind="jmp", pad_to=8),
+        Detour(LOADSEL_HOOK, LOADSEL_STOCK, "poly", "po_loadsel",
+               "file browser select: the slot's path write (stock's sprintf, called from the stub) -- a FLEX slot's file going "
+               "non-marker -> FMSYNTH*/SYNTH* makes every FLEX track holding that slot a synth track: FINE 0c for each (the new-project case: "
+               "T1 = FLEX slot 1, the first marker loaded into slot 1, no machine or slot byte changes)",
+               kind="jsr"),
     ),
     cf_patches=(
         CavePatch(

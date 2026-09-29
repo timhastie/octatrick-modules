@@ -1,4 +1,57 @@
-| SCALE QUANTIZER -- ColdFire unit (13 Sep 2026). GNU as, -mcpu=5475.
+| SCALE QUANTIZER -- the DRAM unit (13 Sep 2026; a DRAM unit since 28 Sep 2026). GNU as.
+|
+| OCTATRICK 2.9 (28 Sep 2026): ROOT, and the move into DRAM.
+|   * ROOT: a fifth SEQUENCER row, right under SCALE (GLIDE is the sixth
+|     now): C C# D D# E F F# G G# A A# B, the root the scale is
+|     built on, a battery-RAM byte (NV_ROOT 0x100b14ee, beside SCALE and
+|     GLIDE; core.s clamps it 0..11 at boot and sets C with the defaults),
+|     saved as "#SEQUENCER_ROOT=n" after the SCALE line. Every snap this unit
+|     does -- the PTCH knob, a PTCH lock, a CHROMATIC key -- and the chord
+|     snap the synth engine does through SCALE_AT read ONE mask, core.s's
+|     qz_scale_mask: the scale's pitch classes rotated by ROOT, so "MINOR,
+|     ROOT A" is the A minor pitch classes on the C-based pitch class of
+|     every note (raw 64 = C on a synth track, raw 64 = 0 st on a sample
+|     track). With a scale on, the CHROMATIC keyboard is transposed so that
+|     key 1 sounds the root: a synth track's key is n = key - 12 + ROOT +
+|     12 * octave (so [TRIG 13] at octave 0 is the root an octave above key
+|     1), a sample track's index is key + ROOT clamped at 24 (= +12 st, the
+|     stock ceiling); the number beside the keyboard reads "A -1" where it
+|     read "-1" (qz_octnum: the root's name is written into the format the
+|     stock printer is handed). ROOT = C is 2.8 in every path -- the pitches,
+|     the knob and the locks byte for byte, the keyboard's number reading
+|     "C 0" where 2.8 read "0" with a scale on -- and SCALE = OFF ignores
+|     ROOT altogether (every path leaves at its OFF test before ROOT is
+|     read).
+|   * THE SAMPLE TRACK'S TWO POSITIONS (the second pass). Stock lays the 16
+|     keys over index 0..24 (-12..+12 st, TRIG 13 = index 12 = the sample's
+|     own pitch) in two positions of ONE word, OCT_WORD (0 at boot; FUNC +
+|     LEFT / RIGHT eor it): position 0 = index key-1 (keys 1..16 = -12..+3
+|     st, the 16-key picture), position 1 = index key+11 (keys 1..13 = 0..+12
+|     st; keys 14..16 fail the handler's range check, the 13-key picture).
+|     With ROOT r > 0 only ONE complete root-to-root octave fits the stock
+|     range, r-12 .. r: position 0 plays it (key 1 = the root below the
+|     sample's pitch, key 13 = the root above, keys 14..16 = r+1 .. r+3,
+|     clamped at +12 for A# / B only). Position 1 is necessarily partial: for
+|     r <= 6 it is r .. r+12 with the top r keys clamped at +12 st (as the
+|     first pass did for every root); for r > 6 (G .. B) the whole keyboard
+|     drops two octaves there, r-24 .. r-12, and only the bottom 12 - r keys
+|     clamp at -12 st -- the side that clamps FEWER keys. The number beside
+|     the keyboard reads the position as an octave: "A 0" in position 0,
+|     "A -1" in position 1 with r > 6, "D 1" with r <= 6 (qz_octnum). ROOT C
+|     is stock's two positions exactly. The MIDI note a key sends out stays the
+|     key's own (72 + key), as in 2.8 -- it never followed the octave either.
+|   * DRAM: this unit is Linked(dram=True) -- linked into octabam's platform
+|     runtime at the bottom of the audio page arena with the synth's poly.s,
+|     depacked by the loader at the boot redirect 0x4000050c (before the
+|     .data copy 0x4000f938 and main 0x40000db0, so before every detour site
+|     of this unit can run; measured under the port with --watch-pc, README).
+|     The OS image keeps only core.s (qz_boot, qz_defaults, qz_scale_mask,
+|     the mask table: ~150 B) and the two pinned stubs keys.s / scale.s. A
+|     ROM unit cannot name a DRAM symbol and a DRAM unit cannot name a ROM
+|     one at link time, so this unit reaches the pinned mailbox and the
+|     scale accessor as FIXED addresses (KEYS_AT, SCALE_AT: the contracts
+|     poly.s uses), and the manifest's detours and TableGrow entries name
+|     this unit's symbols through the platform's symbol table.
 |
 | A per-project SCALE setting (PROJECT > CONTROL > SEQUENCER, fourth row,
 | OFF by default) and three places it acts:
@@ -86,12 +139,19 @@
 
         .text
         .global qz_knob, qz_plock, qz_chrom, qz_draw, qz_ld_entry, qz_ld_line, qz_wr
-        .global qz_boot, qz_defaults
         .global qz_get, qz_set, qz_lbl_scale, qz_scale
         .global qz_get_glide, qz_set_glide, qz_lbl_glide, qz_leg1, qz_leg2
-        .global qz_leg0, qz_leg3, qz_leg4, qz_leg5, qz_scale_mask
+        .global qz_leg0, qz_leg3, qz_leg4, qz_leg5
+        .global qz_get_root, qz_set_root, qz_lbl_root
         .global qz_keyidx, qz_octkey, qz_octdraw, qz_octnum
         .set    OCT_WORD, 0x460d16fc      | stock's CHROMATIC octave word: 0 or 1 (FUNC + LEFT/RIGHT eor it)
+        .set    KEYS_AT, 0x400d2cb0       | keys.s, pinned (manifest KEYS_AT): the paraphonic key mailbox
+        .set    qz_pkey, KEYS_AT          |   the live key (index + 1) per track, 8 bytes
+        .set    qz_pmask, KEYS_AT+8       |   the held keys per track, 8 longs
+        .set    qz_clock, KEYS_AT+40      |   the engine's clock address (0 until it has run)
+        .set    qz_oct, KEYS_AT+44        |   a synth track's CHROMATIC octave, -4..+4
+        .set    SCALE_AT, 0x400d2ca8      | scale.s, pinned: `jmp qz_scale_mask` (core.s) -- d0 := the scale's
+                                          | pitch-class mask rotated by ROOT, 0 = OFF; clobbers a0, d0, keeps d1
         .set    UI_TRACK, 0x100b14cc
         .set    LOCK_WRITE, 0x40042158    | (track, flat slot, value, step, ctx): the stock p-lock writer
         .set    REC_CTX, 0x46c7e956       | the recorder's context the handler passes it
@@ -123,8 +183,10 @@
 | (0x40025ac2: a cold boot, a new project, and the loader before it stores).
         .set    NV_SCALE, 0x100b14ec
         .set    NV_GLIDE, 0x100b14ed
-        .set    qz_scale, NV_SCALE      | 0 = OFF, 1..24 = index into qz_masks / qz_names
+        .set    NV_ROOT,  0x100b14ee
+        .set    qz_scale, NV_SCALE      | 0 = OFF, 1..24 = index into core.s qz_masks / qz_names
         .set    qz_glide, NV_GLIDE      | 0 = OFF, 1..127 (modules/synth GLIDE_AT: keep equal)
+        .set    qz_root,  NV_ROOT       | 0..11 = C .. B (28 Sep 2026; core.s clamps and defaults it with the others)
 
 | qz_glide_of: d0 := the GLIDE value, 0 = OFF, 1..127 (d2 = track, unused: the
 | setting is per project). The one place this unit reads the storage
@@ -133,48 +195,8 @@ qz_glide_of:
         mvz.b   qz_glide,%d0
         rts
 
-| qz_boot: jsr detour at 0x40010212, inside stock's boot-time sanitiser of the
-| UI-mirror bytes (0x4000fec8, from 0x40025770: the warm boot with a project).
-| Battery RAM after a battery change, a reinitialisation or a first boot on
-| this OS can hold anything: out of range -> OFF, as stock does for its own
-| bytes. Ends with the displaced tst.b so the caller's bge sees its flags.
-qz_boot:
-        mvz.b   NV_SCALE,%d0
-        cmpi.l  #24,%d0
-        jbls     qz_b_glide
-        clr.b   NV_SCALE
-qz_b_glide:
-        mvz.b   NV_GLIDE,%d0
-        cmpi.l  #127,%d0
-        jbls     qz_b_back
-        clr.b   NV_GLIDE
-qz_b_back:
-        tst.b   0x100b14ae              | displaced
-        rts
-
-| qz_defaults: jsr detour at 0x40025ac2, inside stock's project defaults
-| (0x40025848: a cold boot, a boot with no project, the loader 0x4009000c
-| before its storing pass, a new project): SCALE and GLIDE := OFF with the
-| rest of the block.
-qz_defaults:
-        clr.b   NV_SCALE
-        clr.b   NV_GLIDE
-        clr.l   0x100b14d4              | displaced
-        rts
-
-| qz_scale_mask: d0 := the SCALE's pitch-class mask (bit k = semitone k above
-| the root, qz_masks), 0 = OFF. The synth's paraphonic engine reaches it
-| through the pinned trampoline scale.s to snap chord notes the way qz_chrom
-| snaps a key. Clobbers a0 and d0.
-qz_scale_mask:
-        lea     qz_scale,%a0
-        mvz.b   (%a0),%d0
-        jbeq    qz_sm_ret
-        lea     qz_masks(%pc),%a0
-        add.l   %d0,%d0
-        mvz.w   -2(%a0,%d0.l),%d0
-qz_sm_ret:
-        rts
+| qz_boot (0x40010212), qz_defaults (0x40025ac2) and qz_scale_mask (the
+| SCALE_AT trampoline's target) are core.s, the ROM core, since 28 Sep 2026.
 
 | qz_polytrack: d0 := 1 (flags NE) when track d2 is a FLEX track whose
 | assigned FLEX slot holds a SYNTH*-named sample AND its Part's VOIC byte
@@ -378,7 +400,7 @@ qz_p_done:
         rts
 
 | ---- qz_quant: d2 := d2 stepped |d1| degrees in the direction of d1 -------------
-| d0 = the scale index (1..24), a3 = the descriptor (min at +0x6a, count at
+| SCALE is on (the mask comes from SCALE_AT), a3 = the descriptor (min at +0x6a, count at
 | +0x9a for slot A). Each step goes to the next raw value on a semitone of the
 | scale (raw = 64 + 5 * n; qz_pcraw maps raw - min to a pitch class); a value
 | between degrees snaps to the nearest one in the turn direction; at the ends
@@ -393,9 +415,8 @@ qz_quant:
         move.l  %d7,-(%sp)
         move.l  %a0,-(%sp)
         move.l  %a1,-(%sp)
-        lea     qz_masks(%pc),%a1
-        add.l   %d0,%d0
-        move.w  -2(%a1,%d0.l),%d3       | d3 = the scale's pitch-class mask
+        jsr     SCALE_AT                | d3 = the scale's pitch-class mask, rotated by ROOT (core.s)
+        move.l  %d0,%d3
         move.l  0x6a(%a3),%d4           | d4 = the parameter's minimum (4; 0 on the synth page)
         move.l  0x9a(%a3),%d5
         add.l   %d4,%d5
@@ -484,12 +505,14 @@ qz_pc_tab:
         rts
 
 | ---- CHROMATIC trig mode: jsr planted at 0x4004fc58 (10 bytes) ----------------
-| In 0x4004fb94 (track d2, key index a2 = 0..24 with 12 = the root, TRIG 13),
+| In 0x4004fb94 (track d2, key index a2 = 0..24 with 12 = C, TRIG 13),
 | the press path is about to turn the index into the raw pitch (5 * idx + 4)
 | that becomes the lock byte the voice is trigged with (0x46c7dfda + t*32),
 | the PTCH lock of a held or live-recorded trig (0x40042158 with a2) and the
-| box on the screen. Snap the index first; the MIDI note the key sends out
-| stays the key's own (d3, matched on release).
+| box on the screen. With a scale on, transpose the index by ROOT (clamped at
+| 24 = +12 st, the stock ceiling: a sample track's PTCH runs -12..+12) and
+| snap it; the MIDI note the key sends out stays the key's own (d3, matched
+| on release).
 qz_chrom:
         jbsr    qz_is_synth             | a synth track (d2): raw = 64 + (key - 12) + 12 * octave
         jbne    qz_c_synth
@@ -499,11 +522,26 @@ qz_chrom:
         move.l  %d2,-(%sp)
         move.l  %d3,-(%sp)
         move.l  %d4,-(%sp)
-        lea     qz_masks(%pc),%a0
-        add.l   %d0,%d0
-        move.w  -2(%a0,%d0.l),%d3       | the scale's mask
+        jsr     SCALE_AT                | the scale's mask, rotated by ROOT (core.s; clobbers a0, d0)
+        move.l  %d0,%d3
         lea     qz_pc25(%pc),%a0
-        move.l  %a2,%d2                 | the key index
+        move.l  %a2,%d2                 | the key index (key + 12 * stock's octave word: 0..15, or 12..24) ...
+        mvz.b   NV_ROOT,%d1
+        add.l   %d1,%d2                 | ... transposed by ROOT: key 1 sounds the root (28 Sep 2026)
+        moveq   #6,%d4
+        cmp.l   %d4,%d1                 | ROOT G..B (r > 6) in the OTHER position (the word 1, 13 keys): the
+        jble    qz_c_top                | keyboard drops two octaves, r .. r+12 -> r-24 .. r-12 st, the octave
+        tst.l   OCT_WORD                | below the default position's r-12 .. r; the bottom 12 - r keys clamp
+        jbeq    qz_c_top                | at -12 st instead of the top r keys at +12 (the second pass, below)
+        subi.l  #24,%d2
+        jbpl    qz_c_top
+        moveq   #0,%d2                  | below -12 st: the stock floor (index 0)
+qz_c_top:
+        moveq   #24,%d1
+        cmp.l   %d1,%d2
+        jble    qz_c_inrange
+        move.l  %d1,%d2                 | past +12 st: the stock ceiling (index 24)
+qz_c_inrange:
         moveq   #0,%d4                  | distance: 0, 1, 2 ... -- lower candidate first
 qz_c_loop:
         move.l  %d2,%d1
@@ -536,8 +574,9 @@ qz_c_replay:
         rts
 
 | The synth track's key: a2 = the physical key 0..15 (qz_keyidx keeps the stock
-| word 0 on such a track; key 12 = [TRIG 13] = the root), n = key - 12 + 12 *
-| qz_oct (-60..+51), snapped to the nearest degree of SCALE by pitch class
+| word 0 on such a track; key 12 = [TRIG 13] = C at ROOT C), n = key - 12 + 12 *
+| qz_oct (-60..+51) -- plus ROOT with a scale on, so key 1 sounds the root --
+| snapped to the nearest degree of the ROOT-rotated SCALE mask by pitch class
 | (lower first at each distance, the rule qz_c_loop and po_snap follow), raw =
 | 64 + n. The lea is not replayed: a2 := raw.
 qz_c_synth:
@@ -551,7 +590,9 @@ qz_c_synth:
         add.l   %d0,%d1                 | n = key - 12 + 12 * octave, -60..+51
         lea     qz_scale,%a0
         tst.b   (%a0)
-        jbeq    qz_cs_raw               | SCALE OFF
+        jbeq    qz_cs_raw               | SCALE OFF: ROOT ignored, 2.8's raw
+        mvz.b   NV_ROOT,%d0
+        add.l   %d0,%d1                 | ... + ROOT: key 1 sounds the root (28 Sep 2026), -60..+62
         move.l  %d1,%d0
         addi.l  #120,%d0                | n + 120 >= 0
         move.l  %d0,%d4
@@ -560,10 +601,8 @@ qz_c_synth:
         mulu.l  %d3,%d4
         sub.l   %d4,%d0                 | pc = (n + 120) mod 12
         move.l  %d0,%a1                 | a1 = pc
-        mvz.b   (%a0),%d3               | the scale index ...
-        add.l   %d3,%d3
-        lea     qz_masks(%pc),%a0
-        move.w  -2(%a0,%d3.l),%d3       | ... its pitch-class mask
+        jsr     SCALE_AT                | the scale's pitch-class mask rotated by ROOT (core.s; keeps d1 = n)
+        move.l  %d0,%d3
         moveq   #0,%d4                  | distance 0, 1, 2 ...
 qz_cs_loop:
         move.l  %a1,%d0
@@ -591,8 +630,16 @@ qz_cs_down:
 qz_cs_up:
         add.l   %d4,%d1
 qz_cs_raw:
-        addi.l  #64,%d1                 | raw = 64 + n: 4..115, and a snap moves at most 2 (every
-        move.l  %d1,%a2                 | mask has the root; the widest gap in qz_masks is 3), so 2..117
+        addi.l  #64,%d1                 | raw = 64 + n: 4..126 with ROOT, and a snap moves at most 2 (every
+        cmpi.l  #127,%d1                | mask has the root; the widest gap in qz_masks is 3): clamped to
+        jble    qz_cs_hi_ok             | the synth page's 0..127 (ROOT B, octave +4, key 16 could pass it)
+        moveq   #127,%d1
+qz_cs_hi_ok:
+        tst.l   %d1
+        jbge    qz_cs_lo_ok
+        moveq   #0,%d1
+qz_cs_lo_ok:
+        move.l  %d1,%a2
         move.l  (%sp)+,%d4
         move.l  (%sp)+,%d3
         mvz.b   0x100b14cf,%d0          | displaced: the part (the lea is replaced by the raw above)
@@ -671,16 +718,48 @@ qz_od_cmp:
 
 | 0x400449b8, the number beside the keyboard: `movel OCT_WORD,%d0; movel
 | %d0,%sp@-` (8 bytes) -> jmp qz_octnum; the value is printed by stock's own
-| "%d" (0x400b465d) at 0x400449c0, so a synth track's -4..+4 prints as is.
+| "%d" (0x400b465d) at 0x400449c0 -- the formatter 0x40013904 takes (ctx,
+| font, x 0x44, y 9, 1, 0, buf 0x400b527d, fmt, value) and 0x400449ec pops
+| the nine -- so a synth track's -4..+4 prints as is. With a scale on (28 Sep
+| 2026) the format is this unit's qz_ofmt, ROOT's name + " %d" ("A %d"), pushed
+| in place of stock's, the continuation at 0x400449c6: same nine arguments.
 qz_octnum:
         jbsr    qz_ui_synth
         jbeq    qz_on_stock
         mvs.b   qz_oct,%d0              | the synth track's octave (keys.s, pinned)
         jbra    qz_on_out
 qz_on_stock:
-        move.l  OCT_WORD,%d0            | displaced
+        move.l  OCT_WORD,%d0            | displaced: a sample track's position, 0 or 1
+        jbeq    qz_on_out               | the default position: 0
+        lea     qz_scale,%a0
+        tst.b   (%a0)
+        jbeq    qz_on_out               | SCALE OFF: stock's 1
+        mvz.b   NV_ROOT,%d1
+        subq.l  #7,%d1
+        jbmi    qz_on_out               | ROOT C..F#: the other position is the octave above, 1
+        moveq   #-1,%d0                 | ROOT G..B: it is the octave below (qz_chrom drops the keyboard): -1
 qz_on_out:
-        move.l  %d0,-(%sp)              | displaced
+        move.l  %d0,-(%sp)              | displaced: the number
+        lea     qz_scale,%a0
+        tst.b   (%a0)
+        jbeq    qz_on_fmt               | SCALE OFF: stock's "%d" (ROOT ignored)
+        lea     qz_ofmt(%pc),%a0        | ROOT's name, then " %d": "A -1" where stock printed "-1"
+        mvz.b   NV_ROOT,%d0             | (d0 / d1 / a0 / a1 are C scratch at the site: the call follows)
+        lea     qz_rootnames(%pc),%a1
+        movea.l (%a1,%d0.l*4),%a1
+qz_on_copy:
+        mvz.b   (%a1)+,%d1
+        jbeq    qz_on_copied
+        move.b  %d1,(%a0)+
+        jbra    qz_on_copy
+qz_on_copied:
+        move.b  #32,(%a0)+              | ' '
+        move.b  #37,(%a0)+              | '%'
+        move.b  #100,(%a0)+             | 'd'
+        clr.b   (%a0)
+        pea     qz_ofmt(%pc)            | the format, in place of stock's pea "%d" at 0x400449c0
+        jmp     0x400449c6
+qz_on_fmt:
         jmp     0x400449c0
 
 | ---- GLIDE legato: two jmp detours in the same handler --------------------------
@@ -798,9 +877,7 @@ qz_g2_nofunc:
         move.b  %d3,(%a0)               | ... recorded as trigless (qz_leg3)
         jbra    qz_g2_trigless
 qz_g2_para:
-        lea     qz_pkey,%a0             | the engine is told which key this trig is (index + 1), and the
-        move.b  %d3,(%a0,%d2.l)         | stock trig starts a fresh voice
-        jbra    qz_g2_trig
+        jbra    qz_g2_trig              | a fresh voice: the stock trig, the key posted for the engine below
 qz_g2_mono:
         lea     HELD,%a0
         tst.b   (%a0,%d2.l)             | a key still held on this track (qz_leg1 kept it)?
@@ -813,7 +890,11 @@ qz_g2_mono:
 qz_g2_trigless:
         jmp     0x4004fc9c
 qz_g2_trig:
-        jmp     0x4004fcb2
+        lea     qz_pkey,%a0             | the engine is told which key this trig is (index + 1) on EVERY
+        move.b  %d3,(%a0,%d2.l)         | fresh-note trig (BUILD 28: the mono voice's sy_cold reads it as its
+        jmp     0x4004fcb2              | condition (d) -- a live key, not a sequencer trig -- and clears it at
+                                        | the START; po_start does the same for a paraphonic voice, a sample
+                                        | track's START clears it in sy_no; before, only the paraphonic path posted it)
 
 | 0x4004fce0: `tstl 0x46c7dd26; beqs 0x4004fcf8` (8 bytes) -> jmp qz_leg3. The
 | same press, a few instructions on, is handed to the LIVE RECORDER (the
@@ -1144,7 +1225,7 @@ qz_noteoff:
 | ---- the SEQUENCER window ------------------------------------------------------
 | Its draw loop (0x40065b14) draws min(visible, count) rows but indexes the
 | label / getter tables from 0, so a fourth row could never scroll into
-| view: with the count grown to 5 (manifest poke; SCALE, GLIDE) and 3
+| view: with the count grown to 6 (manifest poke; SCALE, ROOT, GLIDE) and 3
 | visible, start the index at the list's scroll offset instead. jmp planted
 | at 0x40065bca.
 qz_draw:
@@ -1153,8 +1234,9 @@ qz_draw:
         lea     32(%sp),%sp             | displaced
         jmp     0x40065bd0
 
-| The fourth and fifth rows' getters and setters, reached through the grown
-| tables (labels 0x400b27d0, getters 0x400b27dc, setters 0x400b282c). A getter
+| The fourth, fifth and sixth rows' (SCALE, ROOT, GLIDE) getters and setters,
+| reached through the grown tables (labels 0x400b27d0, getters 0x400b27dc,
+| setters 0x400b282c). A getter
 | returns the value's string (C scratch d0/d1/a0/a1). A setter is jumped to
 | with (delta, wrap) at 4(%sp) / 8(%sp) exactly like CHAIN AFTER's 0x400659ec:
 | the LEVEL knob passes its detents (x7 with FUNC) and wrap = 0, [YES] passes
@@ -1181,9 +1263,18 @@ qz_gg_num:
         lea     qz_gbuf(%pc),%a0
         move.l  %a0,%d0
         rts
+qz_get_root:                            | "C" .. "B"
+        mvz.b   NV_ROOT,%d0
+        lea     qz_rootnames(%pc),%a0
+        move.l  (%a0,%d0.l*4),%d0
+        rts
 qz_set:
         lea     qz_scale,%a0
         moveq   #24,%d1
+        jbra     qz_set_any
+qz_set_root:
+        lea     qz_root,%a0
+        moveq   #11,%d1
         jbra     qz_set_any
 qz_set_glide:
         lea     qz_glide,%a0
@@ -1215,7 +1306,8 @@ qz_s_store:
 | ---- the project file ------------------------------------------------------------
 | The loader 0x400866c4 reads project.work line by line; a line starting
 | with '#' is skipped at 0x400867a2 before any key is compared, on stock
-| firmware too. Ours: "#SEQUENCER_SCALE=n" and "#SYNTH_GLIDE=n". Entry (jmp at
+| firmware too. Ours: "#SEQUENCER_SCALE=n", "#SEQUENCER_ROOT=n" (28 Sep 2026)
+| and "#SYNTH_GLIDE=n". Entry (jmp at
 | 0x400866cc): a storing pass (second argument != 0) starts from OFF, so a
 | project saved without the lines loads as OFF. Line (jmp at 0x400867a2):
 | d3 = the line; d0/d1 must hold its first character when stock continues at
@@ -1227,6 +1319,8 @@ qz_ld_entry:
         lea     qz_scale,%a0
         clr.b   (%a0)
         lea     qz_glide,%a0
+        clr.b   (%a0)
+        lea     qz_root,%a0
         clr.b   (%a0)
 qz_e_back:
         jmp     0x400866d4
@@ -1245,6 +1339,10 @@ qz_ld_line:
         lea     qz_key2(%pc),%a1
         jbsr     qz_l_cmp
         jbeq     qz_l_glide
+        move.l  %d3,%a0
+        lea     qz_key3(%pc),%a1
+        jbsr     qz_l_cmp
+        jbeq     qz_l_root
         moveq   #35,%d5                 | another comment: stock skips it
         mvs.b   %d1,%d0
 qz_l_back:
@@ -1272,6 +1370,14 @@ qz_l_glide:
         moveq   #0,%d0
 qz_l_gok:
         lea     qz_glide,%a0
+        jbra    qz_l_store
+qz_l_root:
+        jbsr     qz_l_dec
+        cmpi.l  #11,%d0
+        jbls     qz_l_rok
+        moveq   #0,%d0                  | out of range: C
+qz_l_rok:
+        lea     qz_root,%a0
 qz_l_store:
         tst.l   58(%sp)                 | parse-only pass: nothing is stored
         jbne     qz_l_next
@@ -1302,6 +1408,9 @@ qz_wr:
         mvz.b   (%a0),%d0
         lea     qz_fmt(%pc),%a0
         jbsr     qz_wr_line
+        mvz.b   NV_ROOT,%d0
+        lea     qz_fmt3(%pc),%a0
+        jbsr     qz_wr_line
         jbsr     qz_glide_of             | (d2 = the writer's buffer, not a track: the accessor ignores it)
         lea     qz_fmt2(%pc),%a0
         jbsr     qz_wr_line
@@ -1327,11 +1436,15 @@ qz_key:         .asciz  "#SEQUENCER_SCALE="
 qz_fmt:         .asciz  "#SEQUENCER_SCALE=%d\r\n"
 qz_key2:        .asciz  "#SYNTH_GLIDE="
 qz_fmt2:        .asciz  "#SYNTH_GLIDE=%d\r\n"
+qz_key3:        .asciz  "#SEQUENCER_ROOT="
+qz_fmt3:        .asciz  "#SEQUENCER_ROOT=%d\r\n"
 qz_lbl_scale:   .asciz  "SCALE"
+qz_lbl_root:    .asciz  "ROOT"
 qz_lbl_glide:   .asciz  "GLIDE"
 qz_synthname:   .ascii  "SYNTH"
         .balign 4
 qz_gbuf:        .fill   8, 1, 0          | the GLIDE row's number (RAM)
+qz_ofmt:        .fill   8, 1, 0          | the keyboard's octave format with ROOT's name: "A# %d" (RAM)
 qz_legato:      .byte   0                | the press in flight is a legato one (qz_leg2 -> qz_leg3)
 qz_synthq:      .byte   0                | qz_quant runs for a synth track (qz_pcof reads it)
         .balign 4
@@ -1366,33 +1479,24 @@ qz_n21:  .asciz  "PELOG"
 qz_n22:  .asciz  "DBLHARM"
 qz_n23:  .asciz  "SUPRLOC"
 qz_n24:  .asciz  "LYD.DOM"
+        .balign 4
+qz_rootnames:                           | ROOT 0..11 -> its name (the ROOT row's value, the keyboard readout)
+        .long   qz_r0, qz_r1, qz_r2, qz_r3, qz_r4, qz_r5, qz_r6, qz_r7, qz_r8, qz_r9, qz_r10, qz_r11
+qz_r0:  .asciz  "C"
+qz_r1:  .asciz  "C#"
+qz_r2:  .asciz  "D"
+qz_r3:  .asciz  "D#"
+qz_r4:  .asciz  "E"
+qz_r5:  .asciz  "F"
+qz_r6:  .asciz  "F#"
+qz_r7:  .asciz  "G"
+qz_r8:  .asciz  "G#"
+qz_r9:  .asciz  "A"
+qz_r10: .asciz  "A#"
+qz_r11: .asciz  "B"
         .balign 2
-qz_masks:                               | scale 1..24 -> pitch-class mask, bit k = semitone k above the root
-        .word   0x0ab5                    |  1 MAJOR    {0,2,4,5,7,9,11}
-        .word   0x06ad                    |  2 DORIAN   {0,2,3,5,7,9,10}
-        .word   0x05ab                    |  3 PHRYGIAN {0,1,3,5,7,8,10}
-        .word   0x0ad5                    |  4 LYDIAN   {0,2,4,6,7,9,11}
-        .word   0x06b5                    |  5 MIXOLYD  {0,2,4,5,7,9,10}
-        .word   0x05ad                    |  6 MINOR    {0,2,3,5,7,8,10}
-        .word   0x056b                    |  7 LOCRIAN  {0,1,3,5,6,8,10}
-        .word   0x04a9                    |  8 PENT.MIN {0,3,5,7,10}
-        .word   0x0295                    |  9 PENT.MAJ {0,2,4,7,9}
-        .word   0x0aad                    | 10 MEL.MIN  {0,2,3,5,7,9,11}
-        .word   0x09ad                    | 11 HARM.MIN {0,2,3,5,7,8,11}
-        .word   0x0555                    | 12 WHOLE    {0,2,4,6,8,10}
-        .word   0x04e9                    | 13 BLUES    {0,3,5,6,7,10}
-        .word   0x05b3                    | 14 PHRYGDOM {0,1,4,5,7,8,10}
-        .word   0x0b6d                    | 15 WH.DIM   {0,2,3,5,6,8,9,11}
-        .word   0x06db                    | 16 HW.DIM   {0,1,3,4,6,7,9,10}
-        .word   0x09cd                    | 17 HUNG.MIN {0,2,3,6,7,8,11}
-        .word   0x018d                    | 18 HIRAJOSH {0,2,3,7,8}
-        .word   0x04a3                    | 19 IN-SEN   {0,1,5,7,10}
-        .word   0x0463                    | 20 IWATO    {0,1,5,6,10}
-        .word   0x018b                    | 21 PELOG    {0,1,3,7,8}
-        .word   0x09b3                    | 22 DBL.HARM {0,1,4,5,7,8,11}
-        .word   0x055b                    | 23 SUPERLOC {0,1,3,4,6,8,10}
-        .word   0x06d5                    | 24 LYD.DOM  {0,2,4,6,7,9,10}
-qz_pc25:                                | chromatic key index 0..24 -> pitch class (12 = the root, TRIG 13)
+| qz_masks, the 24 pitch-class masks, is core.s's (read through SCALE_AT).
+qz_pc25:                                | chromatic key index 0..24 -> pitch class (12 = C, TRIG 13 at ROOT C)
         .byte   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0
 qz_pcraw:                               | PTCH raw - 4 (0..120) -> pitch class when on a semitone (raw = 64 + 5*n), else 0xff
         .byte   0, 0xff, 0xff, 0xff, 0xff, 1, 0xff, 0xff, 0xff, 0xff
