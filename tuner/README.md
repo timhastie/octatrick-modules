@@ -129,7 +129,9 @@ USBSIG-style cards whose tracks play mono tones); the cost rig on the pipe
 - The frequency prints one decimal; the cents are quantised to 1 (the
   12-bit ratio gives 0.42 cents per unit, so a reading can sit one cent
   off at the boundary: 110 Hz read -1c).
-- Not measured on hardware. The hooks are read from the image and the
+- On hardware: UP + TEMPO opens the window and tunes on the author's MKI
+  (octabam test build 3.0 b40, 29 Sep 2026); the readings are not measured
+  against a reference there. The hooks are read from the image and the
   stubs replay the displaced instructions; the arena read is USB AUDIO's,
   hardware-proven on the MKI.
 - One reading is one 93 ms window; there is no averaging. A tuner that

@@ -107,28 +107,22 @@ with the stock compiler; no data).
 
 ## Using them
 
-**In octabam** (once merged, or on the PR branch): the module folders
-`modules/synth`, `modules/quantizer`, `modules/direct-jump` and
-`modules/tuner` are thin wrappers whose `upstream/` is this repository. Clone with
-`--recurse-submodules` (or `git submodule update --init`), then follow
-octabam's build guide (`docs/remixes/BUILDING.md`): `make setup`, `make os`
-and `make recon` with your own OS 1.40C, and
+**In octabam** (merged 30 Sep 2026, sambanks/octabam PR #526): the module
+folders `modules/synth`, `modules/quantizer`, `modules/direct-jump` and
+`modules/tuner` are thin wrappers whose `upstream/` is this repository
+(tag `v2.9`). Clone octabam with `--recurse-submodules` (or `git submodule
+update --init`), follow its build guide (`docs/guide/BUILDING.md`: `make
+setup`, `make os` and `make recon` with your own OS 1.40C), and
 
 ```
-make image REMIX=octatrick-usb BUILD=1 VERSION=OCTATRICK1
+make image REMIX=octatrick BUILD=1 VERSION=OCTATRK2.9
 ```
 
-(`REMIX=octatrick` for the build without USB, `REMIX=octatrick-tuner` for
-USB plus the tuner.) The remixes `remixes/octatrick.py` (synth, quantizer
-and direct jump plus the fourteen stock effects, fallback NONE, so both DSP
-payloads and the effect chooser stay stock), `remixes/octatrick-usb.py`
-(the same plus markandrus's USB MIDI and USB AUDIO) and
-`remixes/octatrick-tuner.py` (`octatrick-usb` plus TUNER) live in octabam
-beside the wrappers.
-
-**Ready to build today:** [timhastie/octatrick](https://github.com/timhastie/octatrick)
-is octabam's `main` plus those wrappers, this repository as the submodule,
-and the three remixes -- the tree the author's own images are built from.
+builds the one `octatrick` remix: the four modules with markandrus's USB
+MIDI and 20-channel USB audio out, Bryan T's USB audio in (the computer's
+audio onto inputs A-D) and the stock effects less SPATIALIZER (its DSP
+words hold the USB input). The author's own images have been built from
+octabam's `main` since 30 Sep 2026.
 
 **Standalone:** the manifests import `remix.schema` from octabam's `tools/`
 and the build runs from octabam's repo root, so this repository is not
@@ -146,8 +140,8 @@ from the author's tree
 ([timhastie/octatrick](https://github.com/timhastie/octatrick), the same
 wrappers over the same submodule); at 2.9 ROOT, the quantizer as a DRAM
 unit, FINE 0c, the engine-owned AMP envelope and the limiter's removal ran
-there, the held-chord crackle and the live-key pops gone, by ear. The last
-two 2.9 fixes (a sequencer trig on a sounding note, the index ramp) are
+there, the held-chord crackle and the live-key pops gone, by ear; the tuner
+(UP + TEMPO) works there too (29 Sep 2026). The last two 2.9 fixes (a sequencer trig on a sounding note, the index ramp) are
 emulator-verified and not yet flashed. Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
