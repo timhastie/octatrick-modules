@@ -149,7 +149,7 @@
         .set    C4_INC, 25480119         | C4: 261.6256 / 44100 * 2^32
         .set    ENV_ONE, 0x01000000      | the index envelope's 1.0 (Q24)
         .set    ENV_FLOOR, 0x00100000    | it decays toward 1/16
-        .set    K_NUM, 3068384           | k = K_NUM / RTIM^2, Q20 per frame: tau = 2 s at 127
+        .set    K_NUM, 3068384           | k = K_NUM / RTIM^2, Q20 per frame: tau = 2 s * (RTIM/127)^2; 127 holds
         .set    K_MAX, 0xfffff
         .set    INDEX_SCALE, 2628        | 8 rad / 127 in cycles * 2^18 (offset = m_Q14 * I)
         .set    FB_SCALE, 516            | 0.25 cycle / 127 * 2^16
@@ -221,7 +221,7 @@
         .set    T_REF, 44                | paraphonic: the PTCH word at the last voice start
         .set    T_LAST, 48               | paraphonic: the PTCH word seen last frame
         .set    T_MASK, 52               | paraphonic: the held-key mask seen last frame
-        .set    T_DK, 56                 | paraphonic: the index decay k this frame (0 = hold)
+        .set    T_DK, 56                 | paraphonic: the index decay k this frame (0 = hold, RTIM 127)
         .set    T_RK, 60                 | paraphonic: the release k this frame (Q16)
         .set    T_RATIO, 64              | paraphonic: the ratio this frame (Q8)
         .set    T_I, 68                  | paraphonic: the index I this frame
@@ -616,7 +616,13 @@ sy_mono_inc:
 sy_env_k:
         mvz.w   10(%a4),%d1              | RTIM -> the index envelope
         lsr.l   #8,%d1
-        beq     sy_nodecay
+        moveq   #127,%d0                 | RTIM 127 (the last position): the index holds;
+        cmp.l   %d0,%d1                  | 0 = the shortest -- read as 1, whose k is the cap
+        bcc     sy_nodecay               | K_MAX (5 Oct 2026: HOLD moved from 0 to 127;
+        tst.l   %d1                      | 1..126 unchanged)
+        bne.s   sy_env0
+        moveq   #1,%d1
+sy_env0:
         move.l  %d1,%d2
         mulu.l  %d2,%d1                  | raw^2
         move.l  #K_NUM,%d0
@@ -635,7 +641,7 @@ sy_env1:
         sub.l   %d1,S_ENV(%a3)
         bra     sy_envdone
 sy_nodecay:
-        move.l  #ENV_ONE,%d1             | RTIM 0: the index holds
+        move.l  #ENV_ONE,%d1             | RTIM 127: the index holds
         move.l  %d1,S_ENV(%a3)
 sy_envdone:
         mvz.w   4(%a4),%d1               | LEN -> index
@@ -1191,9 +1197,15 @@ po_fr_params:
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
         move.l  %d1,S_FB(%a5)
-        mvz.w   10(%a4),%d1              | RTIM -> the index decay k (0 = hold)
-        lsr.l   #8,%d1
-        beq     po_fr_hold
+        mvz.w   10(%a4),%d1              | RTIM -> the index decay k (127 = hold: k 0;
+        lsr.l   #8,%d1                   | 0 = the shortest: read as 1, k the cap K_MAX)
+        moveq   #127,%d0
+        cmp.l   %d0,%d1
+        bcc     po_fr_hold
+        tst.l   %d1
+        bne.s   po_fr_k
+        moveq   #1,%d1
+po_fr_k:
         move.l  %d1,%d0
         mulu.l  %d0,%d1                  | raw^2
         move.l  #K_NUM,%d0

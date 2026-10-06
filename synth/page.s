@@ -7,7 +7,7 @@
 | PLAYBACK page presents the FM voice instead of a sample player -- the slot
 | names read PTCH RATO INDX FINE FDBK DEC (four characters: the boxes are 19 px), the values format as the voice
 | understands them (RATIO from the ratio table "0.25".."16", INDEX and FDBK
-| 0..127, DECAY as "HOLD" / the milliseconds alone / "1.1s" -- four characters
+| 0..127, DECAY as the milliseconds alone / "1.1s" / "HOLD" at 127 -- four characters
 | at most, the width of the value field), the four synth slots show their
 | value all the time (Digitone style) and draw an icon where the sample dial
 | was: two operator boxes, the modulator feeding the carrier (RATIO), a
@@ -269,10 +269,12 @@ pg_fr_out:
         movel   %sp@+,%d2
         rts
 
-pg_fmt_decay:                            | tau = 2 s * (raw/127)^2: "HOLD", "32", "286", "1.1s", "2.0s"
+pg_fmt_decay:                            | tau = 2 s * (raw/127)^2: "0", "32", "286", "1.1s", "1.9s", 127 "HOLD"
         movel   %d2,%sp@-
         movel   %sp@(12),%d0             | raw
-        beq     pg_fd_hold
+        moveq   #127,%d1                 | 127 (the last position): HOLD; 0 = the shortest, prints "0"
+        cmpl    %d1,%d0                  | (5 Oct 2026: HOLD moved from 0 to 127; the short
+        bccs    pg_fd_hold               | branches keep the cave at 1,812 B)
         movel   %d0,%d1
         mulul   %d0,%d1                  | raw^2
         movel   #2000,%d0
@@ -281,7 +283,7 @@ pg_fmt_decay:                            | tau = 2 s * (raw/127)^2: "HOLD", "32"
         movel   #16129,%d1
         divul   %d1,%d0                  | / 127^2, rounded: ms
         cmpil   #1000,%d0
-        bcc     pg_fd_sec
+        bccs    pg_fd_sec
         movel   %d0,%sp@-
         pea     FMT_D                    | "%d": the milliseconds alone -- the value field
         movel   %sp@(16),%sp@-           | fits four characters and "598ms" ran into the divider
@@ -430,7 +432,8 @@ pg_ic_fdbk:
 
 | DECAY: the index envelope -- an instant rise at column 1, then pg_env's
 | exponential fall stretched over L = 2 + value * 13 / 127 columns to the
-| floor (row 1 = I/16), columns 2..15; value 0 holds, a flat top
+| floor (row 1 = I/16), columns 2..15; value 127 holds, a flat top (0 = the
+| shortest fall, L = 2)
 pg_ic_decay:
         lea     pg_img_base(%pc),%a0
         bsr     pg_copy
@@ -438,9 +441,10 @@ pg_ic_decay:
         moveq   #1,%d1
         moveq   #11,%d2
         bsr     pg_vline                 | the attack edge
-        movel   #0x7fff,%d5              | value 0: i stays 0, h stays 11
-        tstl    %d6
-        beq     pg_dc_go
+        movel   #0x7fff,%d5              | value 127 (HOLD): i stays 0, h stays 11
+        moveq   #127,%d0
+        cmpl    %d0,%d6
+        bccs    pg_dc_go
         movel   %d6,%d5
         moveq   #13,%d0
         mulul   %d0,%d5

@@ -1,5 +1,22 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
+**Octatrick 2.10 (5 Oct 2026, not tagged yet): DEC puts HOLD at 127.** The
+PLAYBACK page's DEC knob read `HOLD` at raw 0, then the shortest decay at 1
+up to `2.0s` at 127; HOLD (the index envelope holds: the maximum sustain of
+the decay) is now the LAST position on the right. **127 = `HOLD`** (the
+index holds for the whole note; the paraphonic k `T_DK` is 0), **0 = the
+shortest** (k = `K_MAX`, the instant decay; the page prints `0`), and **1..126
+are unchanged** -- the same k (`K_NUM / raw²`, capped at `K_MAX`) and the same
+milliseconds as before, so a saved DEC other than 0 or 127 sounds the same; a
+saved 0 (was HOLD) now decays at once and a saved 127 (was `2.0s`) now holds.
+The icon follows: a flat top at 127, the shortest fall (L = 2 columns) at 0.
+Sites: `poly.s` `sy_env_k` (the mono voice) and the paraphonic frame's RTIM
+-> `T_DK` (`po_fr_hold`); `page.s` `pg_fmt_decay` and `pg_ic_decay`. The page
+cave stays **1,812 B** (two short branches pay for the compare; `PINNED_PAGE`
+re-ratified); the DRAM unit grows 18,452 -> 18,472 B. FUNC + detent from 0
+now steps 0 16 32 .. 112 127 = HOLD at the end. The measured records below
+predate this and keep the old law (DEC 0 = HOLD).
+
 **OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
 becomes a synth track.** A track that is made a synth track -- a FLEX track
 given an `FMSYNTH*` / `SYNTH*` slot in the machine window or the sample-list
@@ -1753,7 +1770,7 @@ byte read back after the turn; the page's text is the shot.
 - **INDX, FDBK, DEC** from 0, each: plain 1; FUNC + detent 16, again 32;
   pressed 7; FUNC x9 up: 16 32 48 64 80 96 112 127 127; FUNC down from 127:
   111; FUNC down from 0: 0. (DEC 16 prints `32`, its milliseconds; 127
-  `2.0s`.)
+  `2.0s` -- `HOLD` since 2.10, where 0 prints `0`.)
 - **The baseline (BUILD 12, handlers "0")**: pressed + detent on T2's PTCH
   already gave 71 (`+7`: the stock default stepper `0x4003240c` reads the
   push switch), FUNC + detent gave 65 (`+1`, no FUNC layer), FUNC + detent
@@ -2798,8 +2815,9 @@ names read **PTCH RATO INDX RATE FDBK DEC** (four characters: the boxes are
 19 px wide and a five-character name fills them edge to edge, measured
 below); the four synth slots show their value all the time, Digitone style,
 formatted as the voice understands them -- RATO the ratio table's entry
-(`0.25 … 1 1.41 … 3.5 … 16`), INDX and FDBK `0..127`, DEC `HOLD` / `32ms` /
-`286ms` / `2.0s`; and each draws an icon where the sample dial was: the two
+(`0.25 … 1 1.41 … 3.5 … 16`), INDX and FDBK `0..127`, DEC `32ms` /
+`286ms` / `1.9s` / `HOLD` (since 2.10 HOLD is raw 127 and raw 0 prints `0`,
+the shortest; before, raw 0 was `HOLD` and 127 `2.0s`); and each draws an icon where the sample dial was: the two
 operators **M→C** (RATO), a **sideband spectrum** whose bars grow with the
 index (INDX), the modulator **with its feedback loop** when FDBK > 0, and the
 **index envelope**, a falling curve whose length follows the value (DEC; a
@@ -2966,13 +2984,15 @@ DEC: the baseline, an instant rise at column 1 (rows 1–11), then
 I/16) stretched over `L = 2 + 13·v/127` columns 2–15 (`i = 16·(c−1)/L`,
 clipped to 16), drawn as the vertical runs between consecutive heights (an
 outline);
-v = 0 keeps `i = 0`, a flat top at row 11 — the index holds.
+v = 127 keeps `i = 0`, a flat top at row 11 — the index holds (v = 0 until
+2.10; v = 0 is now the shortest fall, L = 2).
 
 **Formatters** (`fmt(buf, value)`, C convention, `sprintf` `0x40013a08`):
 `pg_fmt_plain` `"%d"` (INDX, FDBK); `pg_fmt_ratio` looks the raw value up in
 a copy of `sy_ratio` (`raw >> 2`, Q8) and prints `"%d"` when the fraction
 is 0, `"%d.5"` when it is .50, else `"%d.%02d"` (`0.25 0.5 0.75 1 1.01 1.25
-1.41 1.5 1.75 2 2.01 … 16`); `pg_fmt_decay` prints `HOLD` for 0, else
+1.41 1.5 1.75 2 2.01 … 16`); `pg_fmt_decay` prints `HOLD` for 127 (for 0
+until 2.10; 0 now takes the formula and prints `0`), else
 `ms = (2000·raw² + 8064) / 16129` (τ = 2 s·(raw/127)², rounded) as the
 milliseconds alone (`"%d"`) below 1000 and `"%d.%ds"` above (raw 8 → `8`,
 16 → `32`, 48 → `286`, 79 → `774`, 96 → `1.1s`, 127 → `2.0s`) -- the value
@@ -3134,7 +3154,7 @@ FDBK / DEC, with icons -- "Phase 3: the page" below):
 | LEN (C) | **INDEX** | `fp[2]` = `+4` | I = 8 rad · raw/127, linear (the word's low byte counts: LFO and scene fractions morph smoothly); INDEX 0 = a clean sine |
 | RATE (D) | playback rate | `fp[3]` = `+6` | the stock rate arithmetic (RATE scales the pitch increment; 127 = ×1) |
 | RTRG (E) | **FEEDBACK** | `fp[4]` = `+8` | 0 .. 0.25 cycle of modulator phase per full-scale modulator sample, linear in raw; the stock retrig it used to be is switched off for synth voices |
-| RTIM (F) | **DECAY** | `fp[5]` = `+10` | the index envelope: E := 1 at the trig, then `E -= (E − 1/16)·k` per frame, k = 3,068,384 / raw² (Q20; ≥ 1 = instant), i.e. an exponential toward I/16 with time constant τ = 2 s · (raw/127)²: raw 8 = 8 ms, 16 = 32 ms, 32 = 127 ms, 48 = 286 ms, 64 = 0.5 s, 96 = 1.14 s, 127 = 2.0 s; **0 = no decay** (the index holds) |
+| RTIM (F) | **DECAY** | `fp[5]` = `+10` | the index envelope: E := 1 at the trig, then `E -= (E − 1/16)·k` per frame, k = 3,068,384 / raw² (Q20; ≥ 1 = instant), i.e. an exponential toward I/16 with time constant τ = 2 s · (raw/127)²: raw 8 = 8 ms, 16 = 32 ms, 32 = 127 ms, 48 = 286 ms, 64 = 0.5 s, 96 = 1.14 s, 126 = 1.97 s; **127 = no decay** (the index holds), **0 = the shortest** (k = K_MAX, instant) -- since 2.10; until then 0 held and 127 was 2.0 s |
 
 Locks, scenes and LFOs on those slots reach the voice every frame because
 the cave reads the per-frame record the frame builder already fills for

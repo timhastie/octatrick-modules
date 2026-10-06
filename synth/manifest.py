@@ -12,7 +12,8 @@ phi_m at RATIO times the pitch. The FLEX PLAYBACK page's other slots are its
 parameters, read per frame from the DSP parameter record (halfwords, raw <<
 8): STRT = RATIO (32-step table 0.25..16), LEN = INDEX (0..8 rad), RTRG =
 FEEDBACK (0..0.25 cycle), RTIM = DECAY of the index toward 1/16 (time
-constant 2 s * (raw/127)^2; 0 = hold). Phase 3 relabels the slots.
+constant 2 s * (raw/127)^2; 127 = hold, 0 = the shortest). Phase 3
+relabels the slots.
 
 WHERE IT HOOKS. The per-frame record packer (0x4000d3fc) renders each track's
 audio through a per-track renderer pointer copied from the kind table
@@ -42,7 +43,7 @@ its PLAYBACK-page table load (0x40031ece): for a track whose assigned FLEX
 slot's sample is named SYNTH* -- by the settings record's path, loaded into
 flex RAM or not -- it returns a clone of the FLEX descriptor whose slots read
 PTCH RATO INDX FINE FDBK DEC, whose title makes the footer read FM SYNTH>FLEX,
-whose formatters print the ratio table's value, 0..127 and HOLD/ms/s, and
+whose formatters print the ratio table's value, 0..127 and ms/s/HOLD, and
 whose widgets draw the M->C operator diagram, a sideband spectrum, the
 modulator with its feedback loop and the index envelope over the stock dial.
 THE TUNING SYSTEM (27 Sep 2026): on a synth track PTCH is semitones, raw 64
@@ -388,7 +389,7 @@ LOADSEL_STOCK = bytes.fromhex("4eb940013a08")
 # resolver (0x40031da4, the kind-0 `tbl[machine]` load at 0x40031ece) returns a
 # runtime clone of the FLEX descriptor -- names PTCH RATO INDX FINE FDBK DEC, the title
 # "FM SYNTH" (the footer reads FM SYNTH>FLEX), formatters (the ratio table's
-# value, 0..127, HOLD/ms/s), widgets that draw the operator diagram, the
+# value, 0..127, ms/s/HOLD), widgets that draw the operator diagram, the
 # sideband spectrum, the feedback loop and the index envelope over the stock
 # dial -- when the current track's assigned FLEX sample is named FMSYNTH* (or SYNTH*).
 # The clone itself is built at runtime by poly.s (po_pgdesc, first use) from
@@ -404,7 +405,8 @@ RESOLVER_STOCK = bytes.fromhex("20300c00" "6002")
 # runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of the stock descriptor is gone,
 # and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
 # PTCH and FINE formatters and the range / handler overrides; 30 Sep 2026: 1812 B, the
-# FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare).
+# FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare; 5 Oct 2026:
+# still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the compare).
 PINNED_PAGE = bytes.fromhex(
     "20300c000c80400d31ae6600008e243c000018b24c012800d4892803e58cd883"
     "d4842042d1fc0008f04b75900c820000007f62000066283c000004484c024800"
@@ -423,8 +425,8 @@ PINNED_PAGE = bytes.fromhex(
     "2001e0880281000000ff74644c021000e0896700003e0c81000000326700001c"
     "2f012f00487a030a2f2f00144eb940013a084fef0010600000302f00487a02fa"
     "2f2f00104eb940013a084fef000c600000182f004879400b465d2f2f00104eb9"
-    "40013a084fef000c241f4e752f02202f000c6700007c22004c001000203c0000"
-    "07d04c010000068000001f80223c00003f014c4100000c80000003e86400001c"
+    "40013a084fef000c241f4e752f02202f000c727fb081647822004c001000203c"
+    "000007d04c010000068000001f80223c00003f014c4100000c80000003e8641a"
     "2f004879400b465d2f2f00104eb940013a084fef000c60000048223c000003e8"
     "24004c41200272644c4100002202e789d282d28290812f002f02487a02612f2f"
     "00144eb940013a084fef001060000012487a02522f2f000c4eb940013a08508f"
@@ -438,7 +440,7 @@ PINNED_PAGE = bytes.fromhex(
     "72016100012e700c72016100012624060482000000386f0000aa70064c002000"
     "70474c4020026700009a7002720161000102700e7201610000fa6000008641fa"
     "0268610000cc4a866700007841fa029e610000ce6000006c41fa02d6610000b2"
-    "70017201740b610000ca2a3c00007fff4a86670000122a06700d4c005000707f"
+    "70017201740b610000ca2a3c00007fff707fbc8064102a06700d4c005000707f"
     "4c4050055485780b7e0224075382e98a4c4520020c82000000106f0000047410"
     "41fa00d475b02800264220072202240461000080280b52870c870000000f6f00"
     "ffca202f0040080000006700001841fa0150701022100a81fff0000020c15380"
