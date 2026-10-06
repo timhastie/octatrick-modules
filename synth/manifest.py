@@ -540,7 +540,7 @@ MODULE = Module(
                kind="jmp", pad_to=10),
         Detour(MIDI_TRIG_HOOK, MIDI_TRIG_STOCK, "poly", "po_mtrig",
                "MIDI IN with a trig held: a synth track's held trig gets its PTCH lock in semitones",
-               kind="jmp", pad_to=8),
+               kind="jmp", pad_to=10),      # the whole 10-byte displaced span (the lea's extension word included)
         Detour(OCT_HOOK, OCT_STOCK, "poly", "po_octave",
                "FUNC + UP/DOWN (the trig-mode selector): with a trig held on a synth track in GRID RECORDING, any trig mode, "
                "the held steps' PTCH lock moves an octave instead (no trig held, a sample track, GRID RECORDING off: the selector)",
