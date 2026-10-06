@@ -2544,7 +2544,9 @@ po_lfo3b:
         bne     po_l3b_depth
         cmpi.l  #2,%d2
         bne     po_l3b_depth
+        move.l  %a0,-(%sp)              | preserve the staging base across the frame clock
         bsr     po_tick                  | track 0, LFO 3: the clock, once a frame
+        movea.l (%sp)+,%a0              | the displaced lea below still needs stock a0
 po_l3b_depth:
         bsr     po_lfo3_depth
         jmp     0x4000d046
