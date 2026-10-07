@@ -24,7 +24,7 @@ predate this and keep the old law (DEC 0 = HOLD).
 
 **2.10 also (6 Oct 2026): the note-start click is gone.** Tim heard a click
 at the start of FM notes ("noticeable if you turn ratio all the way down, and
-play lower octaves"). The cause (b68 I1, emulator): the 16-frame linear attack
+play lower octaves"). The cause (measured on the emulator): the 16-frame linear attack
 (5.8 ms) is a fraction of one carrier period below about C3 and ends at an
 arbitrary phase, so the onset and the corner at its end put 17..35 dB more
 energy at 100 Hz..1 kHz than a dark low note (RATO 0.25) carries. Every attack
@@ -928,9 +928,9 @@ for it); the port's instruction count; the VOIC 1 -> 2..4 switch mid-note
 still cuts the mono voice at once. (The re-press click is closed: BUILD 26;
 the sequencer's warm START: BUILD 28.)
 
-### The note-start click (2.10, 6 Oct 2026; b68 I1 and P1)
+### The note-start click (2.10, 6 Oct 2026)
 
-**Cause** (b68 I1, proven on the emulator; the on-board 3.0 build is the same):
+**Cause** (proven on the emulator; the on-board 3.0 build is the same):
 the attack's 16-frame floor (5.8 ms, linear) is a fraction of one cycle below
 about C3 and stops at an arbitrary carrier phase; the onset and the corner at
 frame 16 put 17..35 dB of excess energy at 100 Hz..1 kHz above what a RATO 0.25
@@ -946,8 +946,8 @@ same kind of splatter.
    T_GMAX); a mono voice at full skips it (`cmpi.l #32768; bge`: two
    instructions), a paraphonic one already did. A step under 32 (ATK past
    ~370 ms) stays linear: the S-curve's integer truncations there stretched
-   ATK 64 by 11 % and ATK 87 by 2.1x (the law as I1 proposed it); with the
-   floor every ATK 0..127 keeps its total time within 6.2 % (`ana/alaw_time.py`:
+   ATK 64 by 11 % and ATK 87 by 2.1x (the law as first proposed); with the
+   floor every ATK 0..127 keeps its total time within 6.2 % (a frame-count model of the law, in the author's workspace, not in the repo:
    ATK 0/16/20/32 = 16/39/54/144 frames linear -> 17/40/55/146). The period's
    step is floored at 128 (at most 256 frames: a carrier under ~11 Hz, or none).
 2. `po_erlen` -- a warm START's index ramp (BUILD 38) lasts max(16, one period)
@@ -962,10 +962,10 @@ same kind of splatter.
    through `po_alaw` too: no faster than one period -- of the voice itself in
    po_fr_cut, of the lower of the voice and the mono voice in po_fade_frame, so
    a crossfade down lasts the new note's period -- and S-shaped.
-5. (b68 P2) `po_alaw`'s floor for a period of 16..32 frames (~F2..F3) is
+5. (second pass) `po_alaw`'s floor for a period of 16..32 frames (~F2..F3) is
    max(p, min(2p - 16, 32)) frames: C3 26 frames instead of 21. Nothing
    changes from F3 up (p <= 16: the 16-frame floor) or below F2 (p >= 32).
-6. (b68 P2) A paraphonic voice handed a note at a HIGHER pitch (half a
+6. (second pass) A paraphonic voice handed a note at a HIGHER pitch (half a
    semitone or more) while it still sounds -- chord memory reusing the
    previous chord's voices, a VOIC-cap steal -- fades first (state 3,
    `po_fr_cut`: one period of its own note, S-shaped) and the note starts cold
@@ -981,13 +981,14 @@ same kind of splatter.
    key's retrigger). A LOWER or the same pitch is taken warm, phase-continuous,
    as before (measured: fading a brighter old note scores worse, below).
 
-**Measured** (b68 P1 and P2, the Modwerk exporter's quantizer+synth image on
-the pinned ot_emu `--dsp`, I1's rig and measure unchanged: the onset splatter =
+**Measured** (both passes, the Modwerk exporter's quantizer+synth image on
+the pinned ot_emu `--dsp`, the same rig and measure throughout: the onset splatter =
 the energy above max(250 Hz, 8 f0 x ratio) in the first 10 ms over the tone's
 own 100 ms later, 23 ms FIR high-pass; RATO 0.25 INDX 40 unless said; dB, mean
-of two pattern loops; c = cold, w = warm. c51e304 = I1's / P1V's renders of
-that image; 1.-4. = 18dd40d (P1V's renders); 1.-6. = this image, 161d781d...,
-every case rendered again (b68 P2: P2/ana/click_final.json); targets in
+of two pattern loops; c = cold, w = warm. c51e304 = the renders of
+that image; 1.-4. = 18dd40d; 1.-6. = this image, 161d781d...,
+every case rendered again (the results file is in the author's workspace, not
+in the repo); targets in
 brackets (SPEC 13.5):
 
 | case | c51e304 | 1.-4. | 1.-6. |
@@ -1005,51 +1006,52 @@ brackets (SPEC 13.5):
 | VOIC 2 steals, C1>C1 / C1>C2 / C2>C1 / C2>C2 | +37.1 / +34.5 / +26.3 / +34.0 | +19.6 / +5.2 / +14.7 / +4.8 | +19.6 / +5.2 / +14.7 / +4.8 |
 | VOIC 4 MAJ chord, cold C1 / C2 / C3 / C5; C1 chord -> C2 chord (w) | +33.1 / +32.4 / +23.4 / +8.3; +35.4 | +16.6 / +15.8 / +13.9 / +1.8; +32.7 | +16.6 / +14.6 / +13.0 / +1.8; +16.2 |
 
-ATK 0 / 16 / 20 / 32 at C4 (time to 99 %, `P1V/ana/atk.py`), 1.-6. over
+ATK 0 / 16 / 20 / 32 at C4 (time to 99 % of full level), 1.-6. over
 c51e304: 0.965 / 0.978 / 0.983 / 0.991 (11.07 / 14.01 / 24.24 / 51.04 ms), the
 render sample-identical to 1.-4.'s. C4 defaults (PTCH 64, RATO 1, INDX 40):
 against c51e304 they differ only in the first ~28 ms of each cold onset (as
 1.-4.); against 1.-4. the render is sample-identical.
 
-**The two pitch changes downward miss SPEC 13.5's "10 dB better", and why** (b68 P2,
-`P2/ana/comp.py`, `model_parts.py`, `model_chord.py`). Rendered apart, the mono
+**The two pitch changes downward miss SPEC 13.5's "10 dB better", and why** (each part
+rendered on its own, and an integer model of the mono and chord cases; the
+scripts are in the author's workspace, not in the repo). Rendered apart, the mono
 C2>C1 crossfade's OLD TAIL ALONE (the new note muted) scores +29.4 -- the
 whole +28.1 -- and its new onset is the cold-start path (a cold C1: -0.2); for
 C1>C2 the parts are +2.0 and +3.5 (+6.2 together). The excess is the old C2
 tone itself: its own HF above 262 Hz sits ~30 dB over the C1 tone's own (the
 measure's reference), so any old tone left in the 10 ms window counts, and
-removing it faster is a click. In I1's integer model a C2 tone that simply
+removing it faster is a click. In an integer model of the engine a C2 tone that simply
 continues scores +29.9 and every fade scores more (S over 85 frames +31.1, 43
 +34.0, 16 +42.8, 8 +45.9); an index fade, a glide or the phase-continuous jump
-do not go under +29.7. I1's model predicted +9..+17 because its crossfade
+do not go under +29.7. That model first predicted +9..+17 because its crossfade
 switched at 500 ms, where the old note's index has decayed; the card switches
 after one 16th (125 ms: +31.1 in the same model). The same holds for chords:
 fading a VOIC 4 C2 chord before a C1 chord scored +40.2 on the emulator (model
 +51), so a voice moving DOWN is taken warm (6.) and `po_pmatch` keeps the
 common tone (C2) in its voice: +21.8 -> +14.5, 7.3 dB.
 
-**DEVIATIONS** (from SPEC 13.5 / I1's proposal):
-- A step under 32 stays linear (above); I1's law stretched slow attacks.
+**DEVIATIONS** (from SPEC 13.5 / the first proposal):
+- A step under 32 stays linear (above); the first law stretched slow attacks.
 - 5. adds frames to F2..F3's attacks (C3 21 -> 26) to bring C3 at INDX 40 into
-  the window; I1's law was one period.
+  the window; the first law was one period.
 - 6. fades only voices that move UP; a lower pitch stays warm (above). The
   in-place fade delays such a note by one period of the note it replaces.
 - 3. (the crossfade) stays mono; a paraphonic START is 6.'s.
 
-**Cost** (Modwerk's `gate.cpp` harness, 512 cases, instructions a render;
-P1/tests, P2/tests): mono mean 1,068 -> 1,161 (1.-4.) -> 1,165 (1.-6.), peak
+**Cost** (Modwerk's `gate.cpp` harness, 512 cases, instructions a render,
+both passes): mono mean 1,068 -> 1,161 (1.-4.) -> 1,165 (1.-6.), peak
 1,312 -> 2,515 -> 2,556 (a crossfade: the old tone renders as a voice for one
 period; cap 2,600); VOIC 4 mean 3,910 -> 4,028 -> 4,060, peak 5,348 -> 5,568
 -> 6,324 (1.136 x 1.-4.'s; cap 1.15 x). The DRAM unit grows 18,472 -> 18,896
 (1.-4.'s click part) -> 20,480 B (1.-6. with the LFO list and the key gate).
 
-## The LFO destination list (2.10, 6 Oct 2026; b68 I2 and P1)
+## The LFO destination list (2.10, 6 Oct 2026)
 
 Tim (6 Oct): "get rid of the parameters that don't exist for granular, and put
 the parameters for granular in as destinations. Do that for FM and syncussion
 machine too." On this line: FM.
 
-**Cause** (b68 I2): LFO SETUP's PMTR names a destination as page x 6 + slot
+**Cause** (found on the emulator): LFO SETUP's PMTR names a destination as page x 6 + slot
 (0 PLAYBACK, 1 LFO, 2 AMP, 3 FX1, 4 FX2) and prints it with the formatter
 `0x4003bf64` (the LFO descriptor's slot-6 formatter). It takes the PLAYBACK
 names from the machine table `0x400d5f38` itself (at `0x4003bff2`) and the LFO
@@ -1078,11 +1080,11 @@ Flex names. The audio edit `0x400392cc` walks the 30 entries in display order
 - `po_lfopage` (the resolver's LFO descriptor, a hook since phase 5): its FLEX
   test compares the low byte of d5 only (the resolver loads the machine with
   `moveb`, so a caller whose d5 was negative failed the long compare and got
-  the stock page -- the edit's backward walk then showed SPD3; I2).
+  the stock page -- the edit's backward walk then showed SPD3).
 
-**Measured** (b68 P1, the Modwerk exporter's quantizer+synth image with this
-change on the pinned ot_emu, I2's rig: LFO SETUP screenshots per detent, the
-Part byte read from the bank blob; P1/shots):
+**Measured** (the Modwerk exporter's quantizer+synth image with this
+change on the pinned ot_emu: LFO SETUP screenshots per detent, the
+Part byte read from the bank blob):
 - FM track, LFO 1, forward from PTCH: `PTCH RATO INDX FINE FDBK DEC`, `ATK HOLD
   REL VOL BAL <F>`, `SPD1 SPD2 DEP1 DEP2`, six FILTER, six DELAY, then it stays
   on the last; backward the same list reversed, staying on PTCH.
@@ -1095,7 +1097,7 @@ Part byte read from the bank blob; P1/shots):
 - An LFO on a renamed entry works: LFO 1 on INDX (DEP 127, a C4 note, RATO 1,
   DEC HOLD) moves the share of energy above 1.5 f0 between 0.04 and 1.0 (mean
   0.38, its main variation 0.35 Hz); the DEP 0 control stays 0.50..0.51
-  (I2's `analyze_lfo.py`).
+  (a spectral split of the render at 1.5 f0).
 - A trig held (TRACKS mode, no GRID RECORDING): the turn moves the Part byte
   (1 -> 4), as on c51e304. With GRID RECORDING on and a trig held,
   the turn stores nothing: neither the Part byte (2 throughout) nor a lock (the
@@ -1110,7 +1112,7 @@ Part byte read from the bank blob; P1/shots):
 The DRAM unit grows 18,896 -> 19,200 B (the three hooks and the step-over); the
 page cave (`page.s`) is unchanged.
 
-## A held key is the gate (2.10, 6 Oct 2026; b68 P1)
+## A held key is the gate (2.10, 6 Oct 2026)
 
 **The rule.** On a synth track a note started by a CHROMATIC key that is still
 held when its START reaches the engine has no HOLD timer: it sounds while the
@@ -1136,10 +1138,10 @@ note. The release itself is the existing path: stock's voice note-off at the
 key-up (`po_rel`) for the mono voice, the held mask (`po_frame`) for a
 paraphonic voice. The DRAM unit grows 19,200 -> 19,296 B.
 
-**Measured** (b68 P1, the Modwerk exporter's quantizer+synth image on the
+**Measured** (the Modwerk exporter's quantizer+synth image on the
 pinned ot_emu `--dsp`, T1 = FM SYNTH, AMP ATK 0 HOLD 32 REL 40, 120 BPM,
-the CHROMATIC trig mode; the level every 10 ms; P1/renders/gate2 vs
-P1/renders/base = c51e304's image, `ana/gate_tl.py`):
+the CHROMATIC trig mode; the level every 10 ms, this image's renders against
+c51e304's image's):
 
 | case | c51e304 | 2.10 |
 |---|---|---|
@@ -1151,7 +1153,7 @@ P1/renders/base = c51e304's image, `ana/gate_tl.py`):
 | key held across STOP (and HOLD INF on c51e304) | ends 0.7 s after STOP | ends 0.7 s after STOP (the rig's stop timing), key still held |
 | live recording (REC + PLAY), a key held 1.0 s, then two loops of playback | live 0.3 s; played back 1.0 s, 1.0 s | live 1.0 s; played back 1.0 s, 1.0 s (the same recorded length) |
 
-The first note of a session ignoring HOLD (b68 I1, finding 12) is untouched:
+The first note of a session ignoring HOLD (an earlier finding) is untouched:
 in the sequencer case above the first note lasts until the next trig.
 
 ## FINE defaults to 0c when a track becomes a synth track (28 Sep 2026)
@@ -2109,7 +2111,7 @@ Measured (27 Sep 2026, the panel on 8901, OCTATRIK12 = octatrick-tuner
 BUILD 12 with this tree, a copy of the OTLIVE card, T2 = FLEX slot 5
 SYNTH.wav, SCALE OFF, GLIDE OFF, INDX 0 / FDBK 0, AMP HOLD INF / REL 20;
 notes = spectral peaks over 0.3-0.5 s windows; `tuning/measure.py` in the
-session scratchpad, `report_*.txt`):
+author's workspace (not in the repo), `report_*.txt`):
 
 - **Keyboard octaves** (VOIC 1, key 13): octave -2 = 65.4 Hz, -1 = 130.8,
   0 = 261.6, +1 = 523.2, +3 = 2093.0; +4 = 4186.0 (key 16 = 4978.0, D#8);
@@ -2175,7 +2177,7 @@ envelopes, release and glide -- summed into the track's one source stream.
 LFO 3 is muted on a synth track (its slots are VOIC and CHRD there).** Normal
 FLEX tracks keep the stock page and their three LFOs. Emulation only
 (`ot_emu` through the virtual panel and the pipe), flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since); scripts,
-captures and screens in the session scratchpad `poly/`.
+captures and screens in the author's workspace (not in the repo) `poly/`.
 
 ### The DRAM chain (step 1)
 
@@ -2340,7 +2342,7 @@ tables at `0x400d7480..0x400d7594`.
   : 1.498 (3 notes). Level, as measured then: two voices in phase reached
   full scale, so the sum's peaks clipped and third-order products sat at
   about -26 dB (the phase 5 level design; **changed 28 Sep 2026, "The
-  level" below**). Scripts and captures: the session scratchpad
+  level" below**). Scripts and captures: the author's workspace (not in the repo)
   `voiccap/` (`measure.py`, `t1keys.py`, `ab.py`).
 
   **The voicings and the level, measured (29 Sep 2026)** (the panel on
@@ -2350,7 +2352,7 @@ tables at `0x400d7480..0x400d7594`.
   OFF, CHROMATIC keys, key 13 = C4; the emulator's clock reads C4 as 271.3
   Hz, ratio 1.037, every pitch below is scaled by it; peaks and lines over
   the last 0.5 s of a 0.9 s hold, the engine's `V_STATE` / `V_GAIN` /
-  `T_LIM` read beside them; scripts and captures in the session scratchpad
+  `T_LIM` read beside them; scripts and captures in the author's workspace (not in the repo)
   `level2/` -- `measure4.py`, `diag.py`, `diag2.py`). The mono voice (VOIC
   1) peaks at **-16.49 dBFS** at C4 and within 0.02 dB of it at E4 F4 G4 B4
   C5 F5 C6 C7: the reference.
@@ -2403,8 +2405,7 @@ tables at `0x400d7480..0x400d7594`.
   DELAY flattened on the copy first -- the project's resonant filter lifts
   C5 15 dB over C4 and the delay adds echoes, which had made the first pass
   unreadable; the emulator's clock reads C4 as 271.3 Hz, ratio 1.037;
-  peaks and lines over the last 0.5 s of a 0.9 s hold; the session
-  scratchpad `level/measure3.py`). The mono voice (VOIC 1, key 13) peaks
+  peaks and lines over the last 0.5 s of a 0.9 s hold; the author's workspace (not in the repo) `level/measure3.py`). The mono voice (VOIC 1, key 13) peaks
   at **-16.49 dBFS** at C4, and the same at C5, C6, C7, G4 and G5 through
   the keyboard octave (the flat chain): that is the reference.
   - single notes: VOIC 2 **-22.52** dBFS = **-6.02** dB re the mono voice,
@@ -3003,7 +3004,7 @@ index-1 form), this cave at 0x400d6d00, the page cave at 0x400d24d0
 byte at 0x400d2cdc (the second run: 112 B left between the page cave and it;
 the byte moved to battery RAM 0x100b14ed on 26 Sep 2026).
 
-### Measurements (24 Sep 2026, the panel on 8593, `--sound on`, T2 = SYNTH slot 5 of a copy of the OTLIVE card; the session scratchpad's `glide_audio2/3.py`, `glide_seq2.py`)
+### Measurements (24 Sep 2026, the panel on 8593, `--sound on`, T2 = SYNTH slot 5 of a copy of the OTLIVE card; the author's workspace's (not in the repo) `glide_audio2/3.py`, `glide_seq2.py`)
 
 The legato and glide numbers are in `modules/quantizer/README.md` ("GLIDE
 and legato", measurements 2-3): CHROMATIC [TRIG 13] held, [TRIG 16]
