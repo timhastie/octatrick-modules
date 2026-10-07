@@ -30,11 +30,15 @@ arbitrary phase, so the onset and the corner at its end put 17..35 dB more
 energy at 100 Hz..1 kHz than a dark low note (RATO 0.25) carries. Every attack
 now lasts at least one carrier period and is S-shaped; a warm START's index
 ramp lasts at least a period; a START at another pitch on a sounding mono note
-crossfades; a stolen voice fades over a period. **What you hear differently:**
-attacks below C3 are slower -- C1 reaches -3 dB in 20 ms and full level in
-31 ms, C2 in 10 / 16 ms, C3 in 5.4 / 8 ms, from C4 up as before (ATK 0: 6.2 ms,
-was 5.8) -- and every attack is S-shaped (the same total time, within 6 %, for
-every ATK). Details and numbers: "The note-start click (2.10)" below.
+crossfades; a stolen voice fades over a period, and a chord-memory or stolen
+voice that must jump UP in pitch fades out first and starts its new note cold.
+**What you hear differently:** attacks below C3 are slower -- C1 reaches -3 dB
+in 20 ms and full level in 31 ms, C2 in 10 / 16 ms, C3 (F2..F3) in 26 frames
+= 9.4 ms, from F3 up as before (ATK 0: 6.2 ms, was 5.8) -- and every attack is
+S-shaped (the same total time, within 6 %, for every ATK); at VOIC 2..4 a
+chord whose voices must move UP while all of them sound starts each such note
+one period of the note it replaces late (from a C1: up to 31 ms; from a C3:
+7.6 ms). Details and numbers: "The note-start click (2.10)" below.
 
 **2.10 also (6 Oct 2026): the LFO destination list speaks FM.** On a synth
 track LFO SETUP's PMTR lists the FM SYNTH page's own names -- `PTCH RATO INDX
@@ -958,51 +962,86 @@ same kind of splatter.
    through `po_alaw` too: no faster than one period -- of the voice itself in
    po_fr_cut, of the lower of the voice and the mono voice in po_fade_frame, so
    a crossfade down lasts the new note's period -- and S-shaped.
+5. (b68 P2) `po_alaw`'s floor for a period of 16..32 frames (~F2..F3) is
+   max(p, min(2p - 16, 32)) frames: C3 26 frames instead of 21. Nothing
+   changes from F3 up (p <= 16: the 16-frame floor) or below F2 (p >= 32).
+6. (b68 P2) A paraphonic voice handed a note at a HIGHER pitch (half a
+   semitone or more) while it still sounds -- chord memory reusing the
+   previous chord's voices, a VOIC-cap steal -- fades first (state 3,
+   `po_fr_cut`: one period of its own note, S-shaped) and the note starts cold
+   (phase 0, its attack): in a free voice of the track when one exists
+   (`po_st_xf`; the old one fades in its own), else in the same voice once
+   the fade has ended: the note waits in `po_pend` (8 tracks x 4 voices x 16
+   bytes: state, key, root, gate; `po_pfix` writes it, `po_pstart` starts it
+   from `po_frame` where the voice is freed; a key or MIDI note gone in the
+   meantime releases at once; `po_free`, `po_fade`, `po_stop`, a steal,
+   `po_carry` and the legato hand-over drop it; `po_start` folds PTCH moves
+   into it). Before any of that, `po_pmatch` gives a new note the fading voice
+   already at its pitch (a chord's common tones keep their voices, warm, as one
+   key's retrigger). A LOWER or the same pitch is taken warm, phase-continuous,
+   as before (measured: fading a brighter old note scores worse, below).
 
-**Measured** (b68 P1, the Modwerk exporter's quantizer+synth image on the
-pinned ot_emu `--dsp`, I1's rig and measure unchanged: the onset splatter = the
-energy above max(250 Hz, 8 f0 x ratio) in the first 10 ms over the tone's own
-100 ms later, 23 ms FIR high-pass; RATO 0.25 INDX 40 unless said; dB, mean of
-two pattern loops; c = cold, w = warm; P1/ana/p1_results.json):
+**Measured** (b68 P1 and P2, the Modwerk exporter's quantizer+synth image on
+the pinned ot_emu `--dsp`, I1's rig and measure unchanged: the onset splatter =
+the energy above max(250 Hz, 8 f0 x ratio) in the first 10 ms over the tone's
+own 100 ms later, 23 ms FIR high-pass; RATO 0.25 INDX 40 unless said; dB, mean
+of two pattern loops; c = cold, w = warm. c51e304 = I1's / P1V's renders of
+that image; 1.-4. = 18dd40d (P1V's renders); 1.-6. = this image, 161d781d...,
+every case rendered again (b68 P2: P2/ana/click_final.json); targets in
+brackets (SPEC 13.5):
 
-| case | c51e304 | 1.+2. | 1.-4. |
+| case | c51e304 | 1.-4. | 1.-6. |
 |---|---|---|---|
-| cold C1 / C2 / C3 / C5 (INDX 40) | +29.4 / +25.6 / +16.9 / +3.0 | -0.2 / +2.4 / +5.7 / +1.8 | -0.2 / +2.4 / +8.2 / +1.8 |
-| cold C1 / C2 / C3 (INDX 0; INDX 100) | +28.5 / +29.1 / +21.9; +33.2 / +21.5 / +17.4 | -2.5 / +3.3 / +6.7; +7.0 / +1.2 / +4.8 | (the same code path) |
-| warm C1 -> C2 under the tail (s_ case) | +36.3 | +32.7 | +4.5 |
-| retrigger every step, same pitch C1>C1 / C2>C2 | +23.5 / +19.4 | +7.7 / +6.0 | +1.2 / -0.5 |
-| retrigger every step, pitch change C1>C2 / C2>C1 | +25.6 / +31.6 | +25.6 / +30.4 | +6.4 / +28.2 |
-| VOIC 2 steals, C1>C1 / C1>C2 / C2>C1 / C2>C2 | +37.1 / +34.5 / +26.3 / +34.0 | +33.2 / +34.3 / +25.8 / +33.8 | +19.6 / +5.2 / +14.7 / +4.8 |
-| VOIC 4 MAJ chord, cold C1 / C2 / C3 / C5 | +33.1 / +32.4 / +23.4 / +8.3 | +16.6 / +15.8 / +13.9 / +1.8 | the same |
+| cold C1 / C2 / C3 / C5, INDX 40 [-3..+7; C5 no worse] | +29.4 / +25.6 / +16.9 / +3.0 | -0.2 / +2.4 / +8.2 / +1.8 | -0.2 / +2.4 / +5.7 / +1.8 |
+| cold C1 / C2 / C3 / C5, INDX 0 | +28.5 / +29.1 / +21.9 / +1.3 | -2.5 / +3.3 / +6.5 / +1.7 | -2.5 / +3.3 / +6.8 / +1.7 |
+| cold C1 / C2 / C3 / C5, INDX 100 | +33.2 / +21.5 / +17.4 / +6.5 | +7.0 / +1.2 / +5.9 / +0.6 | +7.0 / +1.2 / +4.6 / +0.6 |
+| cold C1 / C2 / C3 / C5, FDBK 60 | +35.3 / +32.1 / +12.9 / -4.8 | +10.6 / +12.3 / +1.4 / -11.1 | +10.6 / +12.3 / -0.7 / -11.1 |
+| cold C1 / C2 / C3 / C5, RATO 1 | +13.6 / +13.2 / +17.6 / +8.8 | -10.1 / -3.2 / +6.5 / +3.5 | -10.1 / -3.2 / +4.6 / +3.5 |
+| cold C1 / C2 / C3 / C5, ATK 16 | +17.2 / +12.0 / +6.1 / +0.1 | -0.2 / +2.4 / +1.4 / -0.8 | -0.2 / +2.4 / +1.4 / -0.8 |
+| warm C1 -> C2 under the tail (s_ case) | +36.3 | +4.5 | +4.5 |
+| retrigger every step, same pitch C1>C1 / C2>C2 [<= +8] | +23.5 / +19.4 | +1.2 / -0.5 | +1.2 / -0.5 |
+| retrigger every step, pitch change C1>C2 / C2>C1 [10 dB better] | +25.6 / +31.6 | +6.4 / +28.2 | +6.4 / +28.2 |
+| VOIC 4 MAJ chord memory every step, C1>C1 / C1>C2 / C2>C1 / C2>C2 [pitch changes 10 dB better] | +13.2 / +31.0 / +21.8 / +17.8 | +3.7 / +30.6 / +21.2 / +14.1 | -2.2 / +7.6 / +14.5 / +13.8 |
+| VOIC 2 steals, C1>C1 / C1>C2 / C2>C1 / C2>C2 | +37.1 / +34.5 / +26.3 / +34.0 | +19.6 / +5.2 / +14.7 / +4.8 | +19.6 / +5.2 / +14.7 / +4.8 |
+| VOIC 4 MAJ chord, cold C1 / C2 / C3 / C5; C1 chord -> C2 chord (w) | +33.1 / +32.4 / +23.4 / +8.3; +35.4 | +16.6 / +15.8 / +13.9 / +1.8; +32.7 | +16.6 / +14.6 / +13.0 / +1.8; +16.2 |
 
-C2>C1 (a crossfade down) stays high on this measure because the window holds the
-old C2 tone, whose own HF above 262 Hz is that far over the C1 tone's: the onset
-window's HF over the old tone's in the 10 ms just before it is +8.6 dB on
-c51e304 (up to +20 dB at single onsets), +7.6 with 1.+2., -2.5 with 1.-4. (every
-onset: the crossfade adds nothing; `ana/tail_check.py`). The s_ rows and the
-VOIC 4 row were rendered on the v34 image (3. with the fade over the old
-voice's own period; it differs from the final law only on a crossfade down).
-The cold C3 column moves +5.7 -> +8.2 only because the first loop's C3 now
-follows the state the second loop's always had: per note, both builds give
-+8.2 for that state (the measure is per onset; no single onset got worse).
-1.+2. is sample-for-sample I1's image (`s_r025_i40_f0`: identical PCM).
+ATK 0 / 16 / 20 / 32 at C4 (time to 99 %, `P1V/ana/atk.py`), 1.-6. over
+c51e304: 0.965 / 0.978 / 0.983 / 0.991 (11.07 / 14.01 / 24.24 / 51.04 ms), the
+render sample-identical to 1.-4.'s. C4 defaults (PTCH 64, RATO 1, INDX 40):
+against c51e304 they differ only in the first ~28 ms of each cold onset (as
+1.-4.); against 1.-4. the render is sample-identical.
+
+**The two pitch changes downward miss SPEC 13.5's "10 dB better", and why** (b68 P2,
+`P2/ana/comp.py`, `model_parts.py`, `model_chord.py`). Rendered apart, the mono
+C2>C1 crossfade's OLD TAIL ALONE (the new note muted) scores +29.4 -- the
+whole +28.1 -- and its new onset is the cold-start path (a cold C1: -0.2); for
+C1>C2 the parts are +2.0 and +3.5 (+6.2 together). The excess is the old C2
+tone itself: its own HF above 262 Hz sits ~30 dB over the C1 tone's own (the
+measure's reference), so any old tone left in the 10 ms window counts, and
+removing it faster is a click. In I1's integer model a C2 tone that simply
+continues scores +29.9 and every fade scores more (S over 85 frames +31.1, 43
++34.0, 16 +42.8, 8 +45.9); an index fade, a glide or the phase-continuous jump
+do not go under +29.7. I1's model predicted +9..+17 because its crossfade
+switched at 500 ms, where the old note's index has decayed; the card switches
+after one 16th (125 ms: +31.1 in the same model). The same holds for chords:
+fading a VOIC 4 C2 chord before a C1 chord scored +40.2 on the emulator (model
++51), so a voice moving DOWN is taken warm (6.) and `po_pmatch` keeps the
+common tone (C2) in its voice: +21.8 -> +14.5, 7.3 dB.
 
 **DEVIATIONS** (from SPEC 13.5 / I1's proposal):
 - A step under 32 stays linear (above); I1's law stretched slow attacks.
-- 4. reaches fewer cases than I1's model: at VOIC 4 with all four voices
-  busy (and every chord-memory start that reuses its voices), the stolen
-  voice is the one `po_alloc` hands the new note (a fading voice ranks like a
-  free one) -- it is taken warm, phase-continuous, and does not fade; that
-  case keeps 1.+2.'s numbers (C1>C2 +30.6, C2>C1 +21.2 at VOIC 4 MAJ, every
-  step). The fade runs where a free voice exists (VOIC 2 / 3 steals, VOIC
-  changes, the mono crossfade).
-- The crossfade (3.) is mono only; a paraphonic START at a new pitch takes a
-  voice of its own as before.
+- 5. adds frames to F2..F3's attacks (C3 21 -> 26) to bring C3 at INDX 40 into
+  the window; I1's law was one period.
+- 6. fades only voices that move UP; a lower pitch stays warm (above). The
+  in-place fade delays such a note by one period of the note it replaces.
+- 3. (the crossfade) stays mono; a paraphonic START is 6.'s.
 
 **Cost** (Modwerk's `gate.cpp` harness, 512 cases, instructions a render;
-P1/tests): mono mean 1,068 -> 1,161, peak 1,312 -> 2,515 (a crossfade: the
-old tone renders as a voice for one period); VOIC 4 mean 3,910 -> 4,028,
-peak 5,348 -> 5,560. The DRAM unit grows 18,472 -> 18,896 B.
+P1/tests, P2/tests): mono mean 1,068 -> 1,161 (1.-4.) -> 1,165 (1.-6.), peak
+1,312 -> 2,515 -> 2,556 (a crossfade: the old tone renders as a voice for one
+period; cap 2,600); VOIC 4 mean 3,910 -> 4,028 -> 4,060, peak 5,348 -> 5,568
+-> 6,324 (1.136 x 1.-4.'s; cap 1.15 x). The DRAM unit grows 18,472 -> 18,896
+(1.-4.'s click part) -> 20,480 B (1.-6. with the LFO list and the key gate).
 
 ## The LFO destination list (2.10, 6 Oct 2026; b68 I2 and P1)
 
