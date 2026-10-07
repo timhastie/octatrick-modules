@@ -764,8 +764,9 @@ po_me_store:
 | (1) no faster than ONE CARRIER PERIOD: the 16-frame floor (5.8 ms) is a fraction of a
 | cycle below ~C3, and the ramp's splatter (100 Hz .. 1 kHz) is louder than a dark low
 | tone's own content (RATO 0.25: Tim's click); one period's step is inc >> 13 (Q15 a
-| frame for 32768), scaled to full. (2) S-SHAPED: step' * (1/4 + 4 r (1 - r)), r = level /
-| full, step' = 1.28 step (the same total time) -- the linear ramp's corner at full (a
+| frame for 32768), scaled to full. (b68 P2) A period of 16..32 frames (~F2..F3) gets
+| 2p - 16 frames (at most 32): C3 26 instead of 21; nothing changes from F3 up or below F2.
+| (2) S-SHAPED: step' * (1/4 + 4 r (1 - r)), r = level / full, step' = 1.28 step (the same total time) -- the linear ramp's corner at full (a
 | slope step at an arbitrary phase) shrinks to a quarter. Preserves all but d0.
 po_alaw:
         lea     -12(%sp),%sp
@@ -779,6 +780,21 @@ po_alaw:
 po_al_p:
         cmpi.l  #4096,%d2
         bcc     po_al_s                  | the 8-frame fade / 16-frame attack floor is the slower: no change
+        cmpi.l  #2048,%d2
+        bcc     po_al_sc                 | (2.10, b68 P2) a period of 16 frames or less: one period
+        move.l  #32768,%d3
+        divu.l  %d2,%d3                  | p, frames
+        cmpi.l  #32,%d3
+        bcc     po_al_sc                 | p >= 32 (below ~F2): one period
+        add.l   %d3,%d3                  | 16 < p < 32 (~F2..F3): max(p, min(2p - 16, 32)) frames -- C3's
+        subi.l  #16,%d3                  | 21-frame attack ended on a corner that splattered (+8.2 dB at INDX 40); 26 frames
+        cmpi.l  #32,%d3
+        bls     po_al_f
+        moveq   #32,%d3
+po_al_f:
+        move.l  #32768,%d2
+        divu.l  %d3,%d2                  | the longer floor's step
+po_al_sc:
         move.l  %a1,%d3
         mulu.l  %d3,%d2
         moveq   #15,%d3
@@ -1553,6 +1569,7 @@ po_fr_rel2:
         cmpi.l  #64,%d0                  | ... and free once po_fill has ramped it down there (a cut
         bgt     po_fr_gain               | voice -- po_fade / po_st_cut -- fades over its last frame first)
         clr.b   V_STATE(%a6)
+        bsr     po_pstart                | (2.10) a note waiting for this voice starts now, cold
 po_fr_gain:
         move.l  %d1,V_GAIN(%a6)
 po_fr_next:
@@ -1569,6 +1586,14 @@ po_fr_next:
 | reset: the safety net when their owner -- the stock voice, or a paraphonic note --
 | is gone, and the chord-memory cut at a start with a shape. Clobbers d0, a0.
 po_free:
+        lea     po_pend(%pc),%a0         | (2.10) no note waits for them any more
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        add.l   %d0,%a0
+        clr.b   (%a0)
+        clr.b   16(%a0)
+        clr.b   32(%a0)
+        clr.b   48(%a0)
         lea     po_voices(%pc),%a0
         move.l  %d2,%d0
         lsl.l   #8,%d0
@@ -1590,6 +1615,14 @@ po_free1:
 | the new chord takes in this same start restarts phase-continuous from that
 | gain (po_st_note). T_LIM is kept: the limiter's ramp runs on. Clobbers d0, a0.
 po_fade:
+        lea     po_pend(%pc),%a0         | (2.10) the previous chord's waiting notes go with it
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        add.l   %d0,%a0
+        clr.b   (%a0)
+        clr.b   16(%a0)
+        clr.b   32(%a0)
+        clr.b   48(%a0)
         lea     po_voices(%pc),%a0
         move.l  %d2,%d0
         lsl.l   #8,%d0
@@ -1644,6 +1677,8 @@ po_ca_next:
 po_ca_free:
         move.l  %a0,%a1
 po_ca_take:
+        move.l  %a1,%a0
+        bsr     po_pclear                | (2.10) a note that waited for it is dropped
         move.l  %a3,%a0
         moveq   #9,%d0
 po_ca_copy:
@@ -1748,6 +1783,167 @@ po_ff_next:
         lea     24(%sp),%sp
         rts
 
+| ---- the waiting notes (2.10): a paraphonic voice taken for a note at another pitch while it
+| still sounds fades first (po_fr_cut: one period of its note, S-shaped) and the note starts
+| cold after it. po_pend: 8 tracks x 4 voices x 16 bytes, the voice's entry -- +0 the state
+| the note takes (1 sounding, 2 releasing; 0 none, 255 being written), +1 its V_KEY, +4 its
+| V_ROOT, +8 its V_HOLD.
+| po_pendof: a1 := voice a0's entry. Clobbers d0.
+po_pendof:
+        move.l  %a0,%d0
+        lea     po_voices(%pc),%a1
+        sub.l   %a1,%d0
+        lsr.l   #2,%d0
+        lea     po_pend(%pc),%a1
+        add.l   %d0,%a1
+        rts
+| po_pclear: voice a0's waiting note is dropped. Clobbers d0.
+po_pclear:
+        move.l  %a1,-(%sp)
+        bsr     po_pendof
+        clr.b   (%a1)
+        movea.l (%sp)+,%a1
+        rts
+| po_st_xf: a0 = the sounding voice po_alloc took for a note at another pitch (po_st_note). It
+| fades (state 3, no gate, stamped newest). A free voice of the track takes the note: a0 := it,
+| NE (the cold start). None: the note waits in a0's entry (255 + the fading root and word,
+| swapped in by po_pfix), EQ. Clobbers d0, a2, a6.
+po_st_xf:
+        move.b  #3,V_STATE(%a0)
+        clr.l   V_HOLD(%a0)
+        lea     po_seq(%pc),%a6
+        addq.l  #1,(%a6)
+        move.l  (%a6),V_AGE(%a0)
+        bsr     po_voices_of
+po_xf_scan:
+        tst.b   V_STATE(%a6)
+        bne     po_xf_next
+        movea.l %a6,%a0                  | a free voice: the note starts there, cold
+        clr.w   V_GPREV(%a0)
+        moveq   #1,%d0
+        rts
+po_xf_next:
+        lea     V_STRIDE(%a6),%a6
+        cmp.l   %a2,%a6
+        bne     po_xf_scan
+        move.l  %a1,-(%sp)               | none free: in place
+        bsr     po_pendof
+        move.l  V_ROOT(%a0),4(%a1)
+        move.l  V_CUR(%a0),8(%a1)
+        moveq   #-1,%d0
+        move.b  %d0,(%a1)
+        movea.l (%sp)+,%a1
+        moveq   #0,%d0
+        rts
+| po_pmatch (po_st_note): a0 := a fading voice of the track (state 3, still sounding, no note
+| waiting for it) at the pitch of the note d3 semitones over T_W (within half a semitone), NE;
+| none: EQ. Chord memory then keeps a common tone's voice (the same pitch: warm, as one key's
+| retrigger) instead of handing the voices out by age. Clobbers d0, d1, d4, a0, a2, a6.
+po_pmatch:
+        move.l  #SEMI,%d0
+        muls.l  %d3,%d0
+        add.l   T_W(%a5),%d0
+        bsr     po_snap
+        move.l  %d0,%d4
+        bsr     po_voices_of
+po_pm_loop:
+        mvz.b   V_STATE(%a6),%d0
+        subq.l  #3,%d0
+        bne     po_pm_next               | fading voices only
+        move.l  V_CUR(%a6),%d0
+        asr.l   #8,%d0
+        asr.l   #4,%d0
+        sub.l   %d4,%d0
+        bpl     po_pm_a
+        neg.l   %d0
+po_pm_a:
+        cmpi.l  #SEMI/2,%d0
+        bcc     po_pm_next               | another pitch
+        tst.w   V_GPREV(%a6)
+        beq     po_pm_next               | silent already
+        movea.l %a6,%a0
+        move.l  %a1,-(%sp)
+        bsr     po_pendof
+        tst.b   (%a1)
+        movea.l (%sp)+,%a1
+        beq     po_pm_yes                | no note waits for it: take it
+po_pm_next:
+        lea     V_STRIDE(%a6),%a6
+        cmp.l   %a2,%a6
+        bne     po_pm_loop
+        moveq   #0,%d0
+        rts
+po_pm_yes:
+        moveq   #1,%d0
+        rts
+| po_pfix (po_st_state): voice a0's entry is being written (255): the note po_st_note wrote into
+| the voice moves into the entry and the voice fades on at its old pitch. Clobbers d0.
+po_pfix:
+        move.l  %a1,-(%sp)
+        bsr     po_pendof
+        mvz.b   (%a1),%d0
+        cmpi.l  #255,%d0
+        bne     po_pf_out
+        move.l  V_ROOT(%a0),%d0
+        move.l  4(%a1),V_ROOT(%a0)
+        move.l  %d0,4(%a1)
+        move.l  8(%a1),V_CUR(%a0)
+        move.l  V_HOLD(%a0),8(%a1)
+        clr.l   V_HOLD(%a0)
+        move.b  V_KEY(%a0),1(%a1)
+        clr.b   V_KEY(%a0)
+        move.b  V_STATE(%a0),(%a1)
+        move.b  #3,V_STATE(%a0)
+po_pf_out:
+        movea.l (%sp)+,%a1
+        rts
+| po_pstart (po_frame, the voice a6 just freed): its waiting note starts, cold -- phase 0, the
+| gain from 0 (the attack from the next frame), the index envelope fresh, at its own pitch;
+| a key or MIDI note released while it waited releases at once. a5 = the track record, d2 =
+| track. Preserves every register.
+po_pstart:
+        lea     -16(%sp),%sp
+        movem.l %d0/%d1/%a0/%a1,(%sp)
+        movea.l %a6,%a0
+        bsr     po_pendof
+        mvz.b   (%a1),%d0
+        beq     po_ps_out
+        cmpi.l  #255,%d0
+        beq     po_ps_drop
+        move.b  %d0,V_STATE(%a6)
+        move.b  1(%a1),V_KEY(%a6)
+        move.l  4(%a1),V_ROOT(%a6)
+        move.l  8(%a1),V_HOLD(%a6)
+        move.l  T_W(%a5),%d0
+        sub.l   T_REF(%a5),%d0
+        add.l   4(%a1),%d0
+        lsl.l   #8,%d0
+        lsl.l   #4,%d0
+        move.l  %d0,V_CUR(%a6)
+        clr.l   V_PHC(%a6)
+        clr.l   V_PHM(%a6)
+        clr.l   V_LASTM(%a6)
+        clr.l   V_GAIN(%a6)
+        clr.w   V_GPREV(%a6)
+        clr.l   V_IEFF(%a6)
+        clr.w   V_ERAMP(%a6)
+        move.l  #ENV_ONE,%d0
+        move.l  %d0,V_ENV(%a6)
+        lea     po_clock(%pc),%a0
+        move.l  CK_FRAMES(%a0),%d0
+        move.l  %d0,V_FRAME(%a6)
+        mvz.b   V_KEY(%a6),%d0
+        beq     po_ps_drop
+        bsr     po_held
+        bne     po_ps_drop
+        move.b  #2,V_STATE(%a6)
+po_ps_drop:
+        clr.b   (%a1)
+po_ps_out:
+        movem.l (%sp),%d0/%d1/%a0/%a1
+        lea     16(%sp),%sp
+        rts
+
 | ---- po_any: Z clear when any voice of track d2 is active. Clobbers d0, d1, a0. -
 po_any:
         lea     po_voices(%pc),%a0
@@ -1780,12 +1976,20 @@ po_start:
         bsr     po_voices_of             | (clobbers d0)
         move.l  T_LAST(%a5),%d1
         sub.l   T_REF(%a5),%d1           | what PTCH moved since the last start:
+        lea     po_pend(%pc),%a0         | (2.10) a0 walks the voices' waiting notes beside a6
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        add.l   %d0,%a0
 po_st_fold:                              | fold it into the sounding voices' roots
         tst.b   V_STATE(%a6)
         beq     po_st_fold1
         add.l   %d1,V_ROOT(%a6)
+        tst.b   (%a0)                    | (2.10) and into a note waiting for the voice
+        beq     po_st_fold1
+        add.l   %d1,4(%a0)
 po_st_fold1:
         lea     V_STRIDE(%a6),%a6
+        lea     16(%a0),%a0
         cmp.l   %a2,%a6
         bne     po_st_fold
         move.l  T_W(%a5),%d1
@@ -2049,6 +2253,7 @@ po_st_cut:
         tst.l   %d3                      | the excess: that many of the oldest active voices go
         ble     po_st_note
         bsr     po_steal                 | a0 = the oldest active voice (clobbers d0, d1, d4, a6)
+        bsr     po_pclear                | (2.10) a note that waited for it goes too
         move.b  #3,V_STATE(%a0)          | it fades over 8 frames (po_fr_cut: T_GMAX / 8 a frame; 2.10: at least a period, S-shaped), not a cut
         lea     po_seq(%pc),%a6
         addq.l  #1,(%a6)
@@ -2059,9 +2264,27 @@ po_st_note:                              | the voicing's notes (a shape: its n n
         mvs.b   (%a1)+,%d3               | semitones above the note; SHAPE_END ends "----" after its one note
         cmpi.l  #SHAPE_END,%d3
         beq     po_st_done
+        bsr     po_pmatch                | (2.10) a fading voice at this note's pitch (chord memory, a steal):
+        bne     po_st_warm               | taken warm, at its own pitch (a0)
         bsr     po_alloc                 | a0 = the voice to use
+        bsr     po_pclear                | (2.10) a note that waited for it is dropped: it is taken now
         tst.w   V_GPREV(%a0)             | it sounded last frame (a retrigger, a tail, a chord-memory fade):
-        bne     po_st_warm               | phase-continuous, its gain ramps on from where po_fill left it
+        beq     po_st_cold               | at the same pitch it is taken warm -- phase-continuous, its gain ramps on
+        move.l  #SEMI,%d0                | from where po_fill left it; (2.10) at ANOTHER pitch it fades first
+        muls.l  %d3,%d0                  | (po_st_xf) and the note starts cold
+        add.l   T_W(%a5),%d0
+        bsr     po_snap                  | the note's word (uses d1, d4)
+        move.l  V_CUR(%a0),%d1
+        asr.l   #8,%d1
+        asr.l   #4,%d1                   | the word the voice sounds at
+        sub.l   %d0,%d1
+        bpl     po_st_warm               | the same pitch or a LOWER note: warm (a fade of the brighter old note
+        neg.l   %d1                      | measured worse than the phase-continuous jump)
+        cmpi.l  #SEMI/2,%d1
+        bcs     po_st_warm               | the same pitch: warm
+        bsr     po_st_xf                 | a0 := a free voice (NE: cold there), or the same voice (EQ: the note waits)
+        beq     po_st_env
+po_st_cold:
         clr.l   V_PHC(%a0)               | a silent voice: both operators at phase 0 ...
         clr.l   V_PHM(%a0)
         clr.l   V_LASTM(%a0)
@@ -2133,6 +2356,7 @@ po_st_state:
         lea     po_seq(%pc),%a6
         addq.l  #1,(%a6)
         move.l  (%a6),V_AGE(%a0)
+        bsr     po_pfix                  | (2.10) a note waiting for this voice: the voice fades on at its old pitch
         subq.l  #1,%d6
         bne     po_st_note
 po_st_done:
@@ -2323,6 +2547,7 @@ po_ho_as:
 po_ho_fresh:
         move.l  %d0,-(%sp)
         bsr     po_alloc                 | a0 = a free voice (k < n: one exists; clobbers d0, d1, d4, a6)
+        bsr     po_pclear                | (2.10) a note that waited for it is dropped
         move.l  (%sp)+,%d0
         clr.l   V_PHM(%a0)               | as po_st_note starts one
         clr.l   V_LASTM(%a0)
@@ -4591,6 +4816,13 @@ po_stop_v1:
         lea     ST_STRIDE(%a0),%a0
         subq.l  #1,%d1
         bne     po_stop_t
+        lea     po_pend(%pc),%a0         | (2.10) STOP: no waiting note starts after it
+        moveq   #32,%d1
+po_stop_pd:
+        clr.b   (%a0)
+        lea     16(%a0),%a0
+        subq.l  #1,%d1
+        bne     po_stop_pd
         movem.l (%sp),%d1/%d2/%a0/%a1
         lea     16(%sp),%sp
         jmp     0x4000b2ce
@@ -5683,6 +5915,8 @@ sy_state:                                | 8 tracks x 128 bytes
         .fill   8 * ST_STRIDE, 1, 0
 po_voices:                               | 8 tracks x 4 voices x 64 bytes
         .fill   8 * 4 * V_STRIDE, 1, 0
+po_pend:                                 | (2.10) 8 tracks x 4 voices x 16 bytes: the notes waiting for a fading voice (po_st_xf)
+        .fill   8 * 4 * 16, 1, 0
 po_seq:                                  | the allocation stamp
         .long   0
 po_chord:                                | 8 tracks x 32 bytes: the fingered chord being recorded (po_keyrec / po_keyrel)
