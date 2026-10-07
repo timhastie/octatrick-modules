@@ -59,7 +59,8 @@
 |     / HOLD INF / REL INF on a synth track (sy_ison) and each voice, mono or
 |     paraphonic, runs the live lane's ATK / HOLD / REL with the DSP's measured
 |     laws (po_mono_env, po_frame): ATK a linear ramp to full in 3.85 ms x
-|     2^(v/8.53) (16 frames the floor, po_atk); HOLD a timer from the START,
+|     2^(v/8.53) (16 frames the floor, po_atk; 2.10: at least one carrier
+|     period, S-shaped, po_alaw); HOLD a timer from the START,
 |     po_hold128 x frames a step (127 = INF), the note ends by itself; REL
 |     exponential, tau = 0.295 ms x 2^(v/8.53) floored at 1 ms (po_relk), 127
 |     = INF: the voice sustains until stolen -- except after STOP (po_stop:
@@ -82,7 +83,8 @@
 |     (plan B: the peak limiter is gone). A single note is 3.0 / 4.8 / 6.0 dB
 |     below the mono voice at VOIC 2 / 3 / 4; a VOIC 4 chord's coincident
 |     peaks reach 2.0 FS and clamp. A stolen or chord-memory voice fades over
-|     8 frames (state 3, T_GMAX / 8 a frame); a voice above the cap (a tail
+|     8 frames (state 3, T_GMAX / 8 a frame; 2.10: at least one period of the
+|     voice, S-shaped); a voice above the cap (a tail
 |     from a lower VOIC, the mono voice carried in) converges on it at that
 |     rate; a voice is freed below gain 64 (-54 dB re the mono voice's full
 |     scale) once po_fill has ramped it there;
@@ -92,6 +94,11 @@
 |     it; VOIC 2..4 -> 1: sy_warm's po_fade fades the voices over 8 frames
 |     under the mono voice (po_fade_frame steps them, po_fill_add sums them
 |     onto its samples) and the mono voice starts cold;
+|   * A PITCH CHANGE ON A SOUNDING MONO NOTE (2.10): a START at another pitch
+|     (half a semitone or more from the sounding word) crossfades -- the old
+|     tone becomes a fading voice (po_carry; one period of the lower note,
+|     S-shaped) and the new note starts cold from phase 0 with its attack; the
+|     same pitch stays phase-continuous (the index ramp, po_erlen);
 | The stock voice lifecycle is untouched: a new key restarts the DSP voice
 | (the AMP and filter envelopes run over the whole mix as for a sample), a
 | released last key posts the AMP release as stock. Musically: AMP ATK 0,
@@ -198,7 +205,8 @@
         .set    PING_AT, 0x800000e0      | the frame builder's ping (the copier 0x4000caf4 reads it: the record set being built this frame)
         .set    DSP_REC, 0x80000110      | the DSP voice records: + (ping << 9) + 64 * track, halfwords 0/1/2 = AMP ATK / HOLD / REL (value << 8)
         .set    CV_ATK, 12               | flat slot 12 = AMP page slot 0 (ATK)
-        .set    CUT_SHIFT, 3             | a stolen voice fades over 8 frames (2.9 ms): T_GMAX / 8 a frame (plan B)
+        .set    CUT_SHIFT, 3             | a stolen voice fades over 8 frames (2.9 ms): T_GMAX / 8 a frame (plan B) -- 2.10: at least one
+                                         | period of the voice, S-shaped (po_alaw from po_fr_cut / po_fade_frame)
         .set    GLOBAL_WORD, 0x46c80350  | the sequencer's STOP / restart word the frame builder turns into the DSP all-off (po_stop)
         .set    KILL_RET, 0x40006862     | the stock VOICE KILL 0x40006820: after its CF voice-byte clear (po_kill)
 | ---- the per-track record, 128 bytes: the mono voice (0..43, synth.s's layout) and the poly frame
@@ -416,7 +424,11 @@ sy_cold_nohold:
 sy_cold_hold:
         move.l  %d1,S_HTIM(%a3)
         tst.w   S_GPREV(%a3)
-        bne     sy_warm_env              | sounding: continuous
+        beq     sy_cold1                 | silent: cold
+        bsr     po_xfq                   | (b68) sounding: a mono note at ANOTHER pitch crossfades -- the old tone
+        beq     sy_warm_env              | fades as a voice (po_carry, state 3: one period, S-shaped, po_fade_frame)
+        bsr     po_carry                 | and the new note starts cold from phase 0 with its attack; the same
+                                         | pitch (within half a semitone) or a paraphonic note: continuous
 sy_cold1:
         clr.l   S_PHC(%a3)               | silent: phase 0, the gain from 0
         clr.l   S_PHM(%a3)
@@ -429,7 +441,7 @@ sy_cold1:
         move.l  %d1,S_ENV(%a3)
         bra     sy_warm
 sy_warm_env:
-        move.b  #16,S_ERAMP(%a3)         | warm: the index envelope ramps from its level to ENV_ONE over 16 frames
+        move.b  #255,S_ERAMP(%a3)        | warm: the index envelope ramps from its level to ENV_ONE over max(16, one period) frames (255 = fresh: po_erlen)
 sy_warm:                                 | (sy_env_ramp, 5.8 ms), the carrier and the level continuous (BUILD 38)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                   | the retrig count the packer just latched: no stock retrigs
@@ -606,6 +618,8 @@ sy_mono_inc:
         move.l  %d1,S_FB(%a3)
         mvz.b   S_ERAMP(%a3),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
         beq     sy_env_k                 | the remaining frames -- linear, ENV_ONE exactly at the last; the decay
+        move.l  S_INC(%a3),%d0
+        bsr     po_erlen                 | (b68) a fresh ramp's length: max(16, one carrier period)
         move.l  #ENV_ONE,%d0             | waits for it
         sub.l   S_ENV(%a3),%d0
         divs.l  %d1,%d0
@@ -679,7 +693,9 @@ sy_envdone:
 |   SOUNDING: gain += po_atk[ATK] (Q15 a frame: a LINEAR ramp to full in 3.85 ms x
 |     2^(ATK / 8.53), the 16-frame ramp its floor, the step at least 1), capped
 |     at full -- from wherever the level is (a warm START re-attacks from its
-|     current level; a cold one from 0).
+|     current level; a cold one from 0). 2.10: the step goes through po_alaw --
+|     no faster than one carrier period, S-shaped at the same total time (linear
+|     for a step under 32) -- and a voice at full skips it (two instructions).
 | Clobbers d0, d1, a0.
 po_mono_env:
         move.l  S_GAIN(%a3),%d1
@@ -697,9 +713,16 @@ po_mono_env:
         bset    #1,S_ON(%a3)             | the hold ran out: release
         bra     po_me_rel
 po_me_atk:
+        cmpi.l  #32768,%d1               | at full: the attack is over, nothing to pay (po_alaw is for attacks only)
+        bge     po_me_store
         mvz.b   CV_ATK(%a0),%d0
         lea     po_atk(%pc),%a0
         mvz.w   (%a0,%d0.l*2),%d0
+        movea.l S_INC(%a3),%a0           | the onset law (po_alaw): no faster than one carrier period, S-shaped
+        move.l  %a1,-(%sp)
+        movea.l #32768,%a1
+        bsr     po_alaw
+        movea.l (%sp)+,%a1
         add.l   %d0,%d1
         cmpi.l  #32768,%d1
         ble     po_me_store
@@ -729,6 +752,118 @@ po_me_rel1:
         moveq   #0,%d1
 po_me_store:
         move.l  %d1,S_GAIN(%a3)
+        rts
+
+| ---- po_alaw: the attack's step this frame (b68 I1, the low-note onset click) ----
+| d0 = the ATK law's linear step (Q15 of full, a frame), d1 = the level now, a0 = the
+| voice's carrier increment, a1 = full (32768 mono, T_GMAX paraphonic) -> d0 = the step.
+| (1) no faster than ONE CARRIER PERIOD: the 16-frame floor (5.8 ms) is a fraction of a
+| cycle below ~C3, and the ramp's splatter (100 Hz .. 1 kHz) is louder than a dark low
+| tone's own content (RATO 0.25: Tim's click); one period's step is inc >> 13 (Q15 a
+| frame for 32768), scaled to full. (2) S-SHAPED: step' * (1/4 + 4 r (1 - r)), r = level /
+| full, step' = 1.28 step (the same total time) -- the linear ramp's corner at full (a
+| slope step at an arbitrary phase) shrinks to a quarter. Preserves all but d0.
+po_alaw:
+        lea     -12(%sp),%sp
+        movem.l %d1-%d3,(%sp)
+        move.l  %a0,%d2
+        moveq   #13,%d3
+        lsr.l   %d3,%d2                  | one carrier period's step for full 32768
+        cmpi.l  #128,%d2
+        bcc     po_al_p
+        move.l  #128,%d2                 | (b68) at most 256 frames (93 ms; a carrier under ~11 Hz, or none)
+po_al_p:
+        cmpi.l  #4096,%d2
+        bcc     po_al_s                  | the 8-frame fade / 16-frame attack floor is the slower: no change
+        move.l  %a1,%d3
+        mulu.l  %d3,%d2
+        moveq   #15,%d3
+        lsr.l   %d3,%d2
+        addq.l  #1,%d2                   | ... scaled to full
+        cmp.l   %d0,%d2
+        bcc     po_al_s
+        move.l  %d2,%d0
+po_al_s:
+        moveq   #32,%d2
+        cmp.l   %d2,%d0
+        bcs     po_al_out                | (P1) a step under 32 (a slow ATK, past ~370 ms): linear -- the S-curve's
+        move.l  %d0,%d2                  | truncations there stretched ATK 64 by 11 %, 87 by 2.1x; its corner is inaudible
+        lsr.l   #2,%d2
+        add.l   %d2,%d0                  | step * 1.25
+        lsr.l   #3,%d2
+        add.l   %d2,%d0                  | + step / 32: 1.28
+        moveq   #15,%d3
+        lsl.l   %d3,%d1
+        move.l  %a1,%d3
+        divu.l  %d3,%d1                  | r, Q15
+        move.l  #32768,%d3
+        sub.l   %d1,%d3
+        bpl     po_al_q
+        moveq   #0,%d3
+po_al_q:
+        mulu.l  %d1,%d3
+        moveq   #15,%d1
+        lsr.l   %d1,%d3                  | r (1 - r), Q15: at most 8192
+        mulu.l  %d0,%d3
+        lsr.l   #8,%d3
+        lsr.l   #5,%d3                   | step' * 4 r (1 - r)
+        lsr.l   #2,%d0
+        add.l   %d3,%d0                  | + step' / 4
+        bne     po_al_out
+        moveq   #1,%d0
+po_al_out:
+        movem.l (%sp),%d1-%d3
+        lea     12(%sp),%sp
+        rts
+
+| ---- po_xfq (b68): Z clear when a warm START is a MONO note (VOIC 1, as sy_warm reads it) at
+| another pitch than the sounding one: the word now (sy_word) at least half a semitone from
+| S_CUR's. a3 = the track record, a4 = fp, d2 = track. Clobbers d0, d1, d6, a0.
+po_xfq:
+        move.l  #CV_STRIDE,%d1
+        muls.l  %d2,%d1
+        lea     CURVALS,%a0
+        mvz.b   CV_VOIC(%a0,%d1.l),%d1
+        subq.l  #2,%d1
+        cmpi.l  #2,%d1
+        bls     po_xq_no                 | VOIC 2..4: paraphonic (po_start's own rule)
+        bsr     sy_word                  | d6 = the new note's word
+        move.l  S_CUR(%a3),%d0
+        asr.l   #8,%d0
+        asr.l   #4,%d0                   | the sounding word
+        sub.l   %d6,%d0
+        bpl     po_xq_abs
+        neg.l   %d0
+po_xq_abs:
+        cmpi.l  #SEMI/2,%d0
+        bcc     po_xq_yes
+po_xq_no:
+        moveq   #0,%d0
+        rts
+po_xq_yes:
+        moveq   #1,%d0
+        rts
+
+| ---- po_erlen (b68 I1): d1 = a warm START's index-ramp frames left; 255 = fresh (sy_cold / po_st_note) ->
+| max(16, one carrier period of the increment d0: 2^28 / inc frames), at most 254. A 16-frame index jump on a
+| low note is the same onset splatter as the 16-frame attack (RATO 0.25, C1: +37 dB over the tone's own HF in
+| the model). Clobbers d0.
+po_erlen:
+        cmpi.l  #255,%d1
+        bne     po_erl_out
+        move.l  #0x10000000,%d1
+        tst.l   %d0
+        beq     po_erl_16
+        divu.l  %d0,%d1
+        cmpi.l  #16,%d1
+        bcs     po_erl_16
+        cmpi.l  #254,%d1
+        bls     po_erl_out
+        move.l  #254,%d1
+        rts
+po_erl_16:
+        moveq   #16,%d1
+po_erl_out:
         rts
 
 | ---- the samples --------------------------------------------------------------
@@ -1269,6 +1404,8 @@ po_fr_inc1:
         move.l  %d0,V_INCM(%a6)          | modulator increment = ratio * pitch
         mvz.w   V_ERAMP(%a6),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
         beq     po_fr_envk               | the remaining frames -- linear; the decay waits for it
+        move.l  V_INC(%a6),%d0
+        bsr     po_erlen                 | (b68) a fresh ramp's length: max(16, one carrier period)
         move.l  #ENV_ONE,%d0
         sub.l   V_ENV(%a6),%d0
         divs.l  %d1,%d0
@@ -1322,14 +1459,31 @@ po_fr_amp:
         cmp.l   %d0,%d1
         bge     po_fr_cap                | at full (or above it: a voice po_carry brought in, taken warm): no attack
         mvz.w   T_AK(%a5),%d3
+        lea     -12(%sp),%sp
+        movem.l %d0/%a0-%a1,(%sp)        | the onset law (po_alaw) per voice: full = T_GMAX, the voice's carrier
+        movea.l %d0,%a1
+        movea.l V_INC(%a6),%a0
+        move.l  %d3,%d0
+        bsr     po_alaw
+        move.l  %d0,%d3
+        movem.l (%sp),%d0/%a0-%a1
+        lea     12(%sp),%sp
         add.l   %d3,%d1
         cmp.l   %d0,%d1
         ble     po_fr_gain
         move.l  %d0,%d1
         bra     po_fr_gain
 po_fr_cut:
-        move.l  T_GMAX(%a5),%d3          | stolen / chord-memory cut: T_GMAX / 8 a frame (8 frames = 2.9 ms), then freed
-        lsr.l   #CUT_SHIFT,%d3
+        move.l  T_GMAX(%a5),%d0          | stolen / chord-memory cut: T_GMAX / 8 a frame (8 frames = 2.9 ms), then freed --
+        lsr.l   #CUT_SHIFT,%d0           | (b68) no faster than one carrier period, S-shaped (po_alaw, as the attack)
+        lea     -8(%sp),%sp
+        movem.l %a0-%a1,(%sp)
+        movea.l T_GMAX(%a5),%a1
+        movea.l V_INC(%a6),%a0
+        bsr     po_alaw
+        movem.l (%sp),%a0-%a1
+        lea     8(%sp),%sp
+        move.l  %d0,%d3
         bra     po_fr_rel1
 po_fr_rel:
         move.l  T_RK(%a5),%d0            | releasing: gain -= gain * k
@@ -1409,7 +1563,7 @@ po_fade:
 po_fade1:
         tst.b   V_STATE(%a0)
         beq     po_fade2
-        move.b  #3,V_STATE(%a0)          | fading (po_fr_cut: 8 frames), unless the new chord takes it warm first
+        move.b  #3,V_STATE(%a0)          | fading (po_fr_cut: 8 frames, 2.10: at least a period), unless the new chord takes it warm first
 po_fade2:
         lea     V_STRIDE(%a0),%a0
         subq.l  #1,%d0
@@ -1497,13 +1651,15 @@ po_ca_g:
 
 | ---- po_fade_frame: the fading voices' frame under the MONO voice (BUILD 32) ----
 | The mono path's frame (sy_mono_frame, the frame's second call): every active
-| voice of track d2 (state 3 after sy_warm's po_fade; any state is treated so)
-| steps down by T_GMAX / 8 a frame (at least 2048: the T_GMAX of the last
-| paraphonic start, 0 before any) and is freed once po_fill has ramped it to
-| silence, as po_frame's po_fr_rel2 does. a3 = the track record. Clobbers nothing.
+| voice of track d2 (state 3 after sy_warm's po_fade or a crossfade's po_carry;
+| any state is treated so) steps down by T_GMAX / 8 a frame (at least 2048: the
+| T_GMAX of the last paraphonic start, 0 before any) -- 2.10: through po_alaw, no
+| faster than one period of the lower of its pitch and the mono voice's, S-shaped
+| -- and is freed once po_fill has ramped it to silence, as po_frame's po_fr_rel2
+| does. a3 = the track record. Clobbers nothing.
 po_fade_frame:
-        lea     -20(%sp),%sp
-        movem.l %d0/%d1/%d3/%d4/%a0,(%sp)
+        lea     -24(%sp),%sp
+        movem.l %d0/%d1/%d3/%d4/%a0/%a1,(%sp)
         lea     po_voices(%pc),%a0
         move.l  %d2,%d0
         lsl.l   #8,%d0
@@ -1518,8 +1674,25 @@ po_ff_step:
 po_ff_loop:
         tst.b   V_STATE(%a0)
         beq     po_ff_next
-        move.l  V_GAIN(%a0),%d1
-        sub.l   %d3,%d1
+        move.l  %d0,-(%sp)               | (the count)
+        move.l  %a0,%d4                  | (b68) the step no faster than one period of the LOWER of the voice and
+        move.l  V_INC(%a0),%d0           | the mono voice now (a crossfade down lasts the new note's period, up
+        move.l  S_INC(%a3),%d1           | the old one's), S-shaped (po_alaw; full = the mono voice's 32768)
+        beq     po_ff_i
+        cmp.l   %d1,%d0
+        bls     po_ff_i
+        move.l  %d1,%d0
+po_ff_i:
+        movea.l %d0,%a0
+        movea.l %d4,%a1
+        move.l  V_GAIN(%a1),%d1
+        move.l  %d3,%d0
+        movea.l #32768,%a1
+        bsr     po_alaw
+        movea.l %d4,%a0
+        move.l  %d0,%d4                  | the step
+        move.l  (%sp)+,%d0
+        sub.l   %d4,%d1
         bpl     po_ff_1
         moveq   #0,%d1
 po_ff_1:
@@ -1536,8 +1709,8 @@ po_ff_next:
         lea     V_STRIDE(%a0),%a0
         subq.l  #1,%d0
         bne     po_ff_loop
-        movem.l (%sp),%d0/%d1/%d3/%d4/%a0
-        lea     20(%sp),%sp
+        movem.l (%sp),%d0/%d1/%d3/%d4/%a0/%a1
+        lea     24(%sp),%sp
         rts
 
 | ---- po_any: Z clear when any voice of track d2 is active. Clobbers d0, d1, a0. -
@@ -1841,7 +2014,7 @@ po_st_cut:
         tst.l   %d3                      | the excess: that many of the oldest active voices go
         ble     po_st_note
         bsr     po_steal                 | a0 = the oldest active voice (clobbers d0, d1, d4, a6)
-        move.b  #3,V_STATE(%a0)          | it fades over 8 frames (po_fr_cut: T_GMAX / 8 a frame), not a cut
+        move.b  #3,V_STATE(%a0)          | it fades over 8 frames (po_fr_cut: T_GMAX / 8 a frame; 2.10: at least a period, S-shaped), not a cut
         lea     po_seq(%pc),%a6
         addq.l  #1,(%a6)
         move.l  (%a6),V_AGE(%a0)         | stamped newest: po_steal does not pick it again
@@ -1864,7 +2037,7 @@ po_st_note:                              | the voicing's notes (a shape: its n n
         move.l  %d0,V_ENV(%a0)
         bra     po_st_env
 po_st_warm:
-        move.w  #16,V_ERAMP(%a0)         | warm: the index envelope ramps from its level to ENV_ONE over 16 frames (po_frame; BUILD 38)
+        move.w  #255,V_ERAMP(%a0)        | warm: the index envelope ramps from its level to ENV_ONE over 16 frames (po_frame; BUILD 38)
 po_st_env:
         move.l  #SEMI,%d0
         muls.l  %d3,%d0
