@@ -160,10 +160,17 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
-- 2.10 (not tagged yet; 5 Oct 2026): the synth's DEC knob puts HOLD at
-  127, the last position on the right (the index holds); 0 is the shortest
-  decay (prints `0`) and 1..126 are unchanged. A saved DEC 0 (was HOLD)
-  now decays at once; a saved 127 (was 2.0 s) now holds.
+- 2.10 (not tagged yet; 5 - 6 Oct 2026): four synth changes. The DEC knob
+  puts HOLD at 127, the last position on the right (the index holds); 0 is
+  the shortest decay (prints `0`) and 1..126 are unchanged. A saved DEC 0
+  (was HOLD) now decays at once; a saved 127 (was 2.0 s) now holds. The
+  note-start click is gone: every attack lasts at least one carrier period
+  and is S-shaped (attacks below C3 are slower: C1 reaches full level in
+  31 ms), a pitch change on a sounding mono note crossfades, a stolen voice
+  fades over a period. LFO SETUP's destination list on a synth track names
+  the FM SYNTH page's parameters (PTCH RATO INDX FINE FDBK DEC ...) and
+  steps over SPD3 / DEP3 (VOIC / CHRD). A held CHROMATIC key sustains and
+  releases at the key-up; HOLD gates sequencer trigs only.
 - `v2.9` -- Octatrick 2.9 (29 Sep 2026): a ROOT row under SCALE (the scale
   is built on it; battery RAM `0x100b14ee`); the quantizer as a DRAM unit
   (a 192-byte core stays in the OS image); FINE 0c the moment a track
