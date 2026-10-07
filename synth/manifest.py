@@ -401,6 +401,18 @@ PAGE_AT = 0x400d24d0
 PAGE_LEN = 1812
 RESOLVER_HOOK = 0x40031ece
 RESOLVER_STOCK = bytes.fromhex("20300c00" "6002")
+# 2.10 (6 Oct 2026, poly.s "THE LFO DESTINATION LIST"): LFO SETUP's PMTR. The
+# formatter 0x4003bf64 (the LFO descriptor's slot-6 formatter) picks the PLAYBACK
+# names from the machine table and the LFO names from the stock descriptor
+# itself, not through the page resolver; the audio edit 0x400392cc walks all 30
+# destinations. On a synth track the names become the FM SYNTH page's and the
+# VOIC / CHRD clone's, and the edit steps over SPD3 / DEP3 (VOIC / CHRD).
+LFD_NAME_HOOK = 0x4003bff2               # `lea 0x400d5f38,%a0; bras 0x4003c054` (page 0: the machine table)
+LFD_NAME_STOCK = bytes.fromhex("41f9400d5f38" "605a")
+LFD_LFO_HOOK = 0x4003bffa                # `lea 0x400d37f6,%a2; bras 0x4003c058` (page 1: the LFO descriptor)
+LFD_LFO_STOCK = bytes.fromhex("45f9400d37f6" "6056")
+LFD_EDIT_HOOK = 0x400392cc               # `movel %d3,%d0; moveq #6,%d2; remsl %d2,%d7,%d0` (the audio PMTR edit after its branches)
+LFD_EDIT_STOCK = bytes.fromhex("2003" "7406" "4c420807")
 # Ratified bytes: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT (26 Sep 2026: the
 # runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of the stock descriptor is gone,
 # and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
@@ -512,6 +524,15 @@ MODULE = Module(
                kind="jmp", pad_to=8),
         Detour(LFO_PAGE_HOOK, LFO_PAGE_STOCK, "poly", "po_lfopage",
                "page resolver LFO descriptor: a synth track gets the VOIC/CHRD clone",
+               kind="jmp", pad_to=8),
+        Detour(LFD_NAME_HOOK, LFD_NAME_STOCK, "poly", "po_lfdname",
+               "LFO SETUP PMTR formatter, PLAYBACK names: the page resolver's descriptor (the FM SYNTH page on a synth track) instead of the machine table's; the master track and every other machine stock",
+               kind="jmp", pad_to=8),
+        Detour(LFD_LFO_HOOK, LFD_LFO_STOCK, "poly", "po_lfdlfo",
+               "LFO SETUP PMTR formatter, LFO names: the VOIC / CHRD clone on a synth track (a stored SPD3 / DEP3 prints VOIC / CHRD); every other track stock",
+               kind="jmp", pad_to=8),
+        Detour(LFD_EDIT_HOOK, LFD_EDIT_STOCK, "poly", "po_lfdedit",
+               "LFO SETUP PMTR edit (audio tracks): stock's display-order walk, one shown destination a detent, stepping over SPD3 / DEP3 (VOIC / CHRD) on a synth track; the Part byte or the lock as stock stores it",
                kind="jmp", pad_to=8),
         Detour(MIDI_MAP_HOOK, MIDI_MAP_STOCK, "poly", "po_mon",
                "MIDI IN note-on (the STANDARD map's chromatic block): a synth track's PTCH raw is note - 20 (semitones, 84 = 0), stored before the START, and the note is posted to the engine as a key of its own",

@@ -31,6 +31,14 @@ attacks below C3 are slower -- C1 reaches -3 dB in 20 ms and full level in
 was 5.8) -- and every attack is S-shaped (the same total time, within 6 %, for
 every ATK). Details and numbers: "The note-start click (2.10)" below.
 
+**2.10 also (6 Oct 2026): the LFO destination list speaks FM.** On a synth
+track LFO SETUP's PMTR lists the FM SYNTH page's own names -- `PTCH RATO INDX
+FINE FDBK DEC`, then AMP, then `SPD1 SPD2 DEP1 DEP2`, then FX1 and FX2 -- where
+it printed the Flex names (`STRT LEN RATE RTRG RTIM`) and offered `SPD3` /
+`DEP3`, which are VOIC and CHRD on a synth track: the knob steps over those
+two. Every other track's list is unchanged. Details: "The LFO destination list
+(2.10)" below.
+
 **OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
 becomes a synth track.** A track that is made a synth track -- a FLEX track
 given an `FMSYNTH*` / `SYNTH*` slot in the machine window or the sample-list
@@ -980,6 +988,73 @@ follows the state the second loop's always had: per note, both builds give
 P1/tests): mono mean 1,068 -> 1,161, peak 1,312 -> 2,515 (a crossfade: the
 old tone renders as a voice for one period); VOIC 4 mean 3,910 -> 4,028,
 peak 5,348 -> 5,560. The DRAM unit grows 18,472 -> 18,896 B.
+
+## The LFO destination list (2.10, 6 Oct 2026; b68 I2 and P1)
+
+Tim (6 Oct): "get rid of the parameters that don't exist for granular, and put
+the parameters for granular in as destinations. Do that for FM and syncussion
+machine too." On this line: FM.
+
+**Cause** (b68 I2): LFO SETUP's PMTR names a destination as page x 6 + slot
+(0 PLAYBACK, 1 LFO, 2 AMP, 3 FX1, 4 FX2) and prints it with the formatter
+`0x4003bf64` (the LFO descriptor's slot-6 formatter). It takes the PLAYBACK
+names from the machine table `0x400d5f38` itself (at `0x4003bff2`) and the LFO
+names from the stock descriptor (`0x4003bffa`) -- not through the page
+resolver that `page.s` and `po_lfopage` hook -- so a synth track listed the
+Flex names. The audio edit `0x400392cc` walks the 30 entries in display order
+(PLAYBACK AMP LFO FX1 FX2) with no gaps.
+
+**The change** (`poly.s` "THE LFO DESTINATION LIST", three 8-byte detours):
+- `po_lfdname` at `0x4003bff2`: replays the table pick; a FLEX pick becomes the
+  page resolver's PLAYBACK descriptor for the track (the FM SYNTH clone on a
+  synth track, the stock FLEX one on a sample track) unless the resolver
+  answers the master track's descriptor or 0.
+- `po_lfdlfo` at `0x4003bffa`: the LFO page's names from the resolver when it
+  answers our VOIC / CHRD clone (`po_lfodesc`), else stock. So a destination
+  stored before 2.10 (or by a scene or a lock) at SPD3 / DEP3 prints `VOIC` /
+  `CHRD`, what it addresses on a synth track.
+- `po_lfdedit` at `0x400392cc`: stock's walk (the position tables `0x400a72a8`
+  / `0x400a7280`, the encoder `0x4003249c`, the clamp 0..29) with one SHOWN
+  entry a detent in the turn's direction, stepping over the track's hidden
+  mask: `0x900` (values 8 = SPD3 / VOIC and 11 = DEP3 / CHRD) when the
+  resolver gives the track's LFO page as our clone, else none. At an end with
+  nothing shown beyond, it stays; a stored hidden value is left on the first
+  turn for the next shown entry that way; a stored value outside 0..29 starts
+  from the end. PMTR stays the stock Part byte, written by stock's store.
+- `po_lfopage` (the resolver's LFO descriptor, a hook since phase 5): its FLEX
+  test compares the low byte of d5 only (the resolver loads the machine with
+  `moveb`, so a caller whose d5 was negative failed the long compare and got
+  the stock page -- the edit's backward walk then showed SPD3; I2).
+
+**Measured** (b68 P1, the Modwerk exporter's quantizer+synth image with this
+change on the pinned ot_emu, I2's rig: LFO SETUP screenshots per detent, the
+Part byte read from the bank blob; P1/shots):
+- FM track, LFO 1, forward from PTCH: `PTCH RATO INDX FINE FDBK DEC`, `ATK HOLD
+  REL VOL BAL <F>`, `SPD1 SPD2 DEP1 DEP2`, six FILTER, six DELAY, then it stays
+  on the last; backward the same list reversed, staying on PTCH.
+- A stored 8 prints `LFO VOIC` (Part byte 8); forward -> `DEP1` (9), back from
+  there `SPD2` (7) `SPD1` (6) `AMP <F>` (17). A stored 11 prints `LFO CHRD`;
+  forward -> FX1's first (18), back `DEP2` (10) `DEP1` (9) `SPD2` (7). A
+  stored hidden value drives what it always drove (LFO 3's speed / depth,
+  whose depth `po_lfo3` holds at 0 on a synth track): a render with LFO 1 on
+  VOIC at DEP 127 equals the DEP 0 control in level step for step.
+- An LFO on a renamed entry works: LFO 1 on INDX (DEP 127, a C4 note, RATO 1,
+  DEC HOLD) moves the share of energy above 1.5 f0 between 0.04 and 1.0 (mean
+  0.38, its main variation 0.35 Hz); the DEP 0 control stays 0.50..0.51
+  (I2's `analyze_lfo.py`).
+- A trig held (TRACKS mode, no GRID RECORDING): the turn moves the Part byte
+  (1 -> 4), as on c51e304. With GRID RECORDING on and a trig held,
+  the turn stores nothing: neither the Part byte (2 throughout) nor a lock (the
+  step's lock bytes stay 0xff), as on c51e304 -- PMTR takes no lock there.
+- The plain FLEX track (T2), a MIDI track (T1 in MIDI mode: its own NOTE /
+  ARP list) and the master track (T8, MASTER TRACK on): every screenshot of
+  the same walk is pixel-identical to c51e304's image (63, 13 and 17 shots).
+- The stack inside the formatter, measured once (a scratch build painting 1,024
+  B below the hooks' entry SP; 14 formatter calls across the FM walk): at most
+  40 B below the hook's entry SP (the resolver call).
+
+The DRAM unit grows 18,896 -> 19,200 B (the three hooks and the step-over); the
+page cave (`page.s`) is unchanged.
 
 ## FINE defaults to 0c when a track becomes a synth track (28 Sep 2026)
 

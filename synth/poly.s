@@ -142,6 +142,7 @@
         .global po_ampstage, po_ampdraw1, po_ampdraw2, po_ampdraw3, po_ampedit, po_amplane
         .global po_assign, po_machwin, po_machlist, po_loadsel, po_stop, po_kill
         .global po_retrig
+        .global po_lfdname, po_lfdedit, po_lfdlfo | b68: the LFO destination list (LFO SETUP's PMTR)
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
@@ -2759,7 +2760,8 @@ po_l3_back:
 | built from the stock descriptor on first use -- is returned.
 po_lfopage:
         move.l  #LFO_P,%d0               | displaced: the stock descriptor
-        cmpi.l  #1,%d5                   | FLEX?
+        mvz.b   %d5,%d2                  | b68 I2: the resolver loads only d5's LOW byte (`moveb %a0@,%d5`);
+        cmpi.l  #1,%d2                   | FLEX? (the long compare failed for a caller whose d5 was negative)
         bne     po_lp_done
         move.l  #6322,%d2
         muls.l  %d1,%d2                  | part * 6322
@@ -2840,6 +2842,158 @@ po_lp_have:
         move.l  %a1,%d0
 po_lp_done:
         jmp     RESOLVER_RET
+
+| ==== THE LFO DESTINATION LIST (b68, 6 Oct 2026; I2's study, three hooks) ==========
+| LFO SETUP's PMTR names a destination as page * 6 + slot (0 PLAYBACK, 1 LFO, 2 AMP, 3 FX1,
+| 4 FX2: the resolver's page kinds) and prints it through the stock formatter 0x4003bf64
+| (the LFO descriptor's slot-6 formatter), which takes the PLAYBACK names from the machine
+| table 0x400d5f38 itself and the LFO page's from the stock descriptor -- not through the
+| page resolver page.s and po_lfopage hook -- so a synth track listed STRT LEN RATE RTRG
+| RTIM and SPD3 / DEP3. The list now reads PTCH RATO INDX FINE FDBK DEC | ATK HOLD REL VOL
+| BAL | SPD1 SPD2 DEP1 DEP2 | FX1 | FX2 on a synth track: VOIC / CHRD (the bytes of SPD3 /
+| DEP3 there: a voice count and a chord shape, no destinations) are stepped over. The stock edit 0x400392cc walks the 30 entries in display
+| order (PLAYBACK AMP LFO FX1 FX2: stock's tables 0x400a72a8 value -> position, 0x400a7280
+| back) with no gaps. Nothing is stored differently: PMTR stays the stock Part byte.
+        .set    LFD_RESOLVER, 0x40031da4 | the page resolver (track, page kind) -> descriptor
+        .set    LFD_MACHTAB, 0x400d5f38  | the PLAYBACK descriptors by machine
+        .set    LFD_MASTER, 0x400d2e8a   | the resolver's descriptor for the master track
+        .set    LFD_FMT_RET, 0x4003c058  | the formatter after its descriptor pick (a2)
+        .set    LFD_STORE, 0x4003932c    | the PMTR edit's store (d3 = the new value)
+        .set    LFD_ENC, 0x4003249c      | the stock encoder delta (0, arg) -> steps
+        .set    LFD_V2P, 0x400a72a8      | page -> display page
+        .set    LFD_P2V, 0x400a7280      | display page -> page
+        .set    LFD_LAST, 29             | the last stock destination (FX2 slot 6)
+        .set    LFD_HIDE_FM, 0x900       | bits 8 and 11, FM SYNTH: SPD3 (VOIC) and DEP3 (CHRD)
+
+| po_lfdname: 0x4003bff2 (jmp, 8 B), `lea 0x400d5f38,%a0; bras 0x4003c054` (then
+| a2 = tbl[machine]). d0 = the machine byte, d1 = the track, d2 = the slot (kept), a4 =
+| buf. A FLEX pick is replaced by the page resolver's answer -- FM SYNTH's clone on a
+| synth track -- so LFO SETUP prints the PLAYBACK page's own names; the master track
+| and every other machine keep the stock pick.
+po_lfdname:
+        lea     LFD_MACHTAB,%a0
+        movea.l (%a0,%d0.l*4),%a2        | displaced: the stock pick
+        cmpa.l  #FLEX_P,%a2
+        bne     po_ln_out
+        clr.l   -(%sp)                   | page kind 0: PLAYBACK
+        move.l  %d1,-(%sp)               | the track
+        jsr     LFD_RESOLVER             | d0 = its descriptor (d0/d1/a0/a1 clobbered, d2-d5 kept)
+        addq.l  #8,%sp
+        cmpi.l  #LFD_MASTER,%d0
+        beq     po_ln_out
+        tst.l   %d0
+        beq     po_ln_out
+        movea.l %d0,%a2
+po_ln_out:
+        jmp     LFD_FMT_RET
+
+| po_lfdlfo: 0x4003bffa (jmp, 8 B), `lea 0x400d37f6,%a2; bras 0x4003c058`: the LFO page's
+| names (page kind 1). d1 = the track, d2 = the slot (kept), a4 = buf. On a synth track
+| the page resolver hands its LFO page our VOIC / CHRD clone (po_lfopage): a value the
+| edit no longer offers (SPD3 / DEP3, stored before 2.10 or by a lock) prints as VOIC /
+| CHRD, what it drives there. Every other track: the stock descriptor.
+po_lfdlfo:
+        lea     LFO_P,%a2                | displaced: the stock pick
+        moveq   #1,%d0
+        move.l  %d0,-(%sp)               | page kind 1: LFO
+        move.l  %d1,-(%sp)               | the track
+        jsr     LFD_RESOLVER             | d0 = its descriptor (d0/d1/a0/a1 clobbered, d2-d5 kept)
+        addq.l  #8,%sp
+        lea     po_lfodesc(%pc),%a0
+        cmpa.l  %d0,%a0
+        bne     po_lo_out                | not our clone: stock
+        movea.l %a0,%a2
+po_lo_out:
+        jmp     LFD_FMT_RET
+
+| po_lfdedit: 0x400392cc (jmp, 8 B), the audio PMTR edit after its two branches (d3 = the
+| stored value, d5 = the encoder argument; d0-d2, d7, a0, a1 scratch as in the stock code
+| it replaces). Stock's walk -- position, encoder steps, clamp to 0..29, back to a value --
+| with the destinations hidden on this track stepped over in both directions. A hidden
+| value already stored keeps working and prints as VOIC / CHRD (po_lfdlfo); the first turn
+| leaves it for the next shown entry that way. At an end with nothing shown beyond, it stays.
+po_lfdedit:
+        lea     -8(%sp),%sp
+        movem.l %d4/%d6,(%sp)
+        move.l  %d3,%d2                  | the stored value (a signed byte)
+        cmpi.l  #LFD_LAST,%d2
+        bls     po_le_ok                 | unsigned: 0..29
+        moveq   #LFD_LAST,%d2            | anything else: from the end of the list
+po_le_ok:
+        lea     LFD_V2P,%a0
+        bsr     po_le_map
+        move.l  %d0,%d7                  | the position
+        move.l  %d5,-(%sp)
+        clr.l   -(%sp)
+        jsr     LFD_ENC                  | the steps, as stock asks for them
+        addq.l  #8,%sp
+        move.l  %d0,%d3
+        bsr     po_ld_hidden
+        move.l  %d0,%d4                  | the hidden mask
+        moveq   #1,%d1
+        tst.l   %d3
+        bpl     po_le_cnt
+        moveq   #-1,%d1
+        neg.l   %d3
+po_le_cnt:
+        tst.l   %d3
+        beq     po_le_end
+        move.l  %d7,%d2
+po_le_nx:
+        add.l   %d1,%d2
+        bmi     po_le_end                | before the first entry: stay
+        moveq   #LFD_LAST,%d0
+        cmp.l   %d0,%d2
+        bgt     po_le_end                | past the last: stay
+        lea     LFD_P2V,%a0
+        bsr     po_le_map                | d0 = the value shown at position d2
+        btst    %d0,%d4
+        bne     po_le_nx                 | hidden: over it
+        move.l  %d2,%d7
+        subq.l  #1,%d3
+        bra     po_le_cnt
+po_le_end:
+        move.l  %d7,%d2
+        lea     LFD_P2V,%a0
+        bsr     po_le_map
+        move.l  %d0,%d3                  | the new value
+        movem.l (%sp),%d4/%d6
+        lea     8(%sp),%sp
+        jmp     LFD_STORE
+
+| d2 = a value or a position 0..29, a0 = one of stock's page-order tables -> d0 =
+| d2 + 6 * (table[d2 / 6] - d2 / 6). Clobbers d6.
+po_le_map:
+        move.l  %d2,%d0
+        moveq   #6,%d6
+        divs.l  %d6,%d0
+        move.l  (%a0,%d0.l*4),%d6
+        sub.l   %d0,%d6
+        move.l  %d6,%d0
+        add.l   %d0,%d0
+        add.l   %d6,%d0
+        add.l   %d0,%d0
+        add.l   %d2,%d0
+        rts
+
+| po_ld_hidden -> d0 = the destinations hidden on the UI track (bit v = PMTR value v):
+| an FM SYNTH track -- the resolver hands its LFO page our VOIC / CHRD clone -- hides
+| SPD3 and DEP3; every other track hides nothing. Clobbers d1, a0, a1.
+po_ld_hidden:
+        moveq   #1,%d0
+        move.l  %d0,-(%sp)               | page kind 1: LFO
+        mvz.b   UI_TRACK,%d0
+        move.l  %d0,-(%sp)
+        jsr     LFD_RESOLVER
+        addq.l  #8,%sp
+        lea     po_lfodesc(%pc),%a0
+        cmpa.l  %d0,%a0
+        bne     po_lh_none
+        move.l  #LFD_HIDE_FM,%d0
+        rts
+po_lh_none:
+        moveq   #0,%d0
+        rts
 
 | ---- po_fmt_voic: fmt(buf, value) -> "1".."4" (a byte outside 1..4 reads 1, as the engine reads it) --
 po_fmt_voic:
