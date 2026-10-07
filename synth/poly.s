@@ -165,6 +165,7 @@
                                          | of this synth: the safety net resets such a voice (24 Sep 2026; raised
                                          | from 8 kHz on 27 Sep 2026 for PTCH +63 and the octave shapes)
         .set    GLIDE_AT, 0x100b14ed     | the GLIDE byte in battery RAM (modules/quantizer/manifest.py GLIDE_AT; 0 = off)
+        .set    LK_HELD, 0x460d171d      | stock's chromatic key handler: the held key per track (key + 1; 0 = none)
         .set    KEYS_AT, 0x400d2cb0      | modules/quantizer/keys.s: qz_pkey[8] bytes, qz_pmask[8] longs at +8,
         .set    CLOCK_AT, KEYS_AT+40     | qz_clock at +40: where this unit publishes po_clock's address
         .set    SEQ_STEP, 0x800065b2     | the sequencer's step (word) and tick (byte, counting down) ...
@@ -412,6 +413,8 @@ sy_cold:                                 | a synth starts -- THE START RULE (pla
                                          | the released flag) is gone: the DSP no longer restarts or
         cmpi.l  #127,%d1                 | releases anything. The HOLD the live lane holds now (the lock, else the
         beq     sy_cold_nohold           | Part's) arms the mono HOLD timer: 127 = INF (none), else po_hold128 steps
+        bsr     po_livekey               | (2.10) a CHROMATIC key still held: no timer -- the key is the gate
+        bne     sy_cold_nohold           | (its release posts the AMP release: po_rel)
         lea     po_hold128(%pc),%a0      | in 1/128 x frames a step (the DSP's own timer runs from the START at that
         mvz.w   (%a0,%d1.l*2),%d1        | length, stage 1: HOLD 32 = 282 ms at 120 BPM, a key held or not), and its
         lea     po_clock(%pc),%a0        | end starts the release (po_mono_env). (S_HOLD / S_KEYED went with BUILD 38: S_ISTEP has +126.)
@@ -815,6 +818,37 @@ po_al_q:
 po_al_out:
         movem.l (%sp),%d1-%d3
         lea     12(%sp),%sp
+        rts
+
+| ---- po_livekey (2.10): Z clear when this START (track d2) is a CHROMATIC key's that is still
+| held: the identity the quantizer posted (qz_pkey[t], 1..25 = a panel key's index + 1; 0 = the
+| sequencer, 0x80 | note = MIDI) and either that key's bit in the held mask (qz_pmask[t]: the
+| quantizer keeps it for a paraphonic track) or stock's one held key (HELD[t], key + 1: a mono
+| track's, which never enters the mask). A key let go before its START reached the engine, a
+| sequencer trig, a MIDI note: Z set (the HOLD timer as before). Clobbers d0, a0.
+po_livekey:
+        move.l  %d1,-(%sp)
+        lea     KEYS_AT,%a0
+        mvz.b   (%a0,%d2.l),%d0
+        beq     po_lk_out
+        cmpi.l  #0x80,%d0
+        bcc     po_lk_no
+        lea     LK_HELD,%a0
+        cmp.b   (%a0,%d2.l),%d0          | stock's held key is this one (mono)
+        beq     po_lk_yes
+        lea     KEYS_AT,%a0
+        subq.l  #1,%d0
+        move.l  8(%a0,%d2.l*4),%d1       | the held keys (paraphonic)
+        btst    %d0,%d1
+        beq     po_lk_no                 | let go already
+po_lk_yes:
+        moveq   #1,%d0
+        bra     po_lk_out
+po_lk_no:
+        moveq   #0,%d0
+po_lk_out:
+        move.l  (%sp)+,%d1
+        tst.l   %d0
         rts
 
 | ---- po_xfq (b68): Z clear when a warm START is a MONO note (VOIC 1, as sy_warm reads it) at
@@ -2053,10 +2087,15 @@ po_st_env:
         lea     po_clock(%pc),%a6
         move.l  CK_FRAMES(%a6),%d0
         move.l  %d0,V_FRAME(%a0)         | when (the dedupe above)
-        move.l  #CV_STRIDE,%d1           | EVERY note is gated for the lane's HOLD (the lock, else the Part's
-        muls.l  %d2,%d1                  | byte): frames = hold * frames a step -- a sequencer note and a live
-        lea     CURVALS,%a4              | key alike (plan B: the DSP's own timer ran from the START whoever
-        mvz.b   CV_HOLD(%a4,%d1.l),%d1   | started it, stage 1; 127 = INF: until the note-off / the next trig)
+        tst.l   %d7                      | (2.10) a CHROMATIC key's note (1..25) is gated by the key: no
+        beq     po_st_hseq               | HOLD timer, it releases when the key goes (po_frame's mask; a
+        cmpi.l  #0x80,%d7                | key already gone releases at once below)
+        bcs     po_st_hinf
+po_st_hseq:
+        move.l  #CV_STRIDE,%d1           | a sequencer note (and a MIDI note) is gated for the lane's HOLD (the lock,
+        muls.l  %d2,%d1                  | else the Part's byte): frames = hold * frames a step (plan B: the DSP's
+        lea     CURVALS,%a4              | own timer ran from the START, stage 1; 127 = INF: until the note-off /
+        mvz.b   CV_HOLD(%a4,%d1.l),%d1   | the next trig)
         cmpi.l  #127,%d1
         beq     po_st_hinf
         lea     po_hold128(%pc),%a4

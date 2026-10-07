@@ -1,6 +1,11 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
-**Octatrick 2.10 (5 Oct 2026, not tagged yet): DEC puts HOLD at 127.** The
+**Octatrick 2.10 (not tagged yet; 5 - 6 Oct 2026).** Four changes on the
+synth: DEC puts HOLD at 127 (5 Oct); the note-start click is gone (attacks of
+at least one carrier period, S-shaped); the LFO destination list speaks FM;
+a held CHROMATIC key is the gate (HOLD is for sequencer trigs). Each below.
+
+**2.10: DEC puts HOLD at 127 (5 Oct 2026).** The
 PLAYBACK page's DEC knob read `HOLD` at raw 0, then the shortest decay at 1
 up to `2.0s` at 127; HOLD (the index envelope holds: the maximum sustain of
 the decay) is now the LAST position on the right. **127 = `HOLD`** (the
@@ -38,6 +43,14 @@ it printed the Flex names (`STRT LEN RATE RTRG RTIM`) and offered `SPD3` /
 `DEP3`, which are VOIC and CHRD on a synth track: the knob steps over those
 two. Every other track's list is unchanged. Details: "The LFO destination list
 (2.10)" below.
+
+**2.10 also (6 Oct 2026): a held key is the gate.** A CHROMATIC key held on a
+synth track sustains for as long as it is held and starts the release (REL)
+when it goes up; HOLD now gates sequencer trigs only (and MIDI notes, as
+before). Until now a live key's note ended at HOLD even with the key still
+down (HOLD 32 at 120 BPM: 282 ms). LEG MONO / POLY behave as before, STOP
+still ends everything, and the live recorder still records the played length.
+Details: "A held key is the gate (2.10)" below.
 
 **OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
 becomes a synth track.** A track that is made a synth track -- a FLEX track
@@ -187,6 +200,8 @@ tables from `root29p/gen_env_tables.py`, `po_atk` / `po_relk` / `po_hold128`):
   anywhere. The engine arms the same timer at every START, a live key's and a
   sequencer trig's alike (`S_HTIM` for the mono voice, `V_HOLD` for a
   paraphonic one); a key-up inside the hold releases at once (as the DSP).
+  2.10: a held CHROMATIC key's START arms no timer -- the key is the gate
+  ("A held key is the gate (2.10)").
 * REL: EXPONENTIAL, tau = 0.295 ms x 2^(v / 8.53) (40: 7.6 ms, 60: 38.5, 80:
   196, 100: 994, 126: 9 s; 127 = INF), floored at 1 ms: -20 dB in 2.3 ms and
   -40 dB in 4.6 ms at REL 0..15 -- the ~2 ms minimum fade Tim asked for, where
@@ -1055,6 +1070,50 @@ Part byte read from the bank blob; P1/shots):
 
 The DRAM unit grows 18,896 -> 19,200 B (the three hooks and the step-over); the
 page cave (`page.s`) is unchanged.
+
+## A held key is the gate (2.10, 6 Oct 2026; b68 P1)
+
+**The rule.** On a synth track a note started by a CHROMATIC key that is still
+held when its START reaches the engine has no HOLD timer: it sounds while the
+key is held and its release (the lane's REL) starts when the key goes up --
+for the voice or voices that key started, unless LEG handed the note to
+another held key (LEG MONO: the newest key is the held one, so letting go of
+an earlier key changes nothing and letting go of the newest releases the
+note, as since 2 Oct; a paraphonic chord's voices release with their keys).
+A sequencer trig is gated by HOLD as before (the timer from the START; 127 =
+INF), and so is a MIDI note (its note-off releases it earlier, as before). A
+key let go before its START reached the engine is treated as a trig (HOLD).
+STOP ends every voice as before. The live recorder is untouched: the played
+length still becomes the recorded step's HOLD (the quantizer's hold /
+release rule), so the recorded note plays back for the length it was held.
+
+**Where** (`poly.s`): `po_livekey` -- the START's identity (`qz_pkey[t]`,
+1..25 a panel key) is still held when its bit is in the quantizer's held
+mask (`qz_pmask[t]`, kept for a paraphonic track) or it is stock's one held
+key (`0x460d171d + t`, key + 1: a mono track's, which never enters the
+mask). `sy_cold` (the mono voice) skips arming `S_HTIM` for such a START;
+`po_st_env` (a paraphonic voice) arms `V_HOLD` only for a sequencer or MIDI
+note. The release itself is the existing path: stock's voice note-off at the
+key-up (`po_rel`) for the mono voice, the held mask (`po_frame`) for a
+paraphonic voice. The DRAM unit grows 19,200 -> 19,296 B.
+
+**Measured** (b68 P1, the Modwerk exporter's quantizer+synth image on the
+pinned ot_emu `--dsp`, T1 = FM SYNTH, AMP ATK 0 HOLD 32 REL 40, 120 BPM,
+the CHROMATIC trig mode; the level every 10 ms; P1/renders/gate2 vs
+P1/renders/base = c51e304's image, `ana/gate_tl.py`):
+
+| case | c51e304 | 2.10 |
+|---|---|---|
+| key held 2.0 s (VOIC 1) | sounds 0.3 s (HOLD 32), silent while held | sounds 2.0 s, released at the key-up |
+| sequencer trig every bar, HOLD 32 | -- | 0.3 s a note (HOLD), as before |
+| VOIC 4, four keys held 2.0 s then let go one by one | the chord ends at 0.5 s | the chord sounds until the keys go; the last key-up releases it |
+| LEG MONO: key A, key B (legato), B up, A up | ends at HOLD | ends at B's key-up (the 303 rule, unchanged) |
+| LEG MONO: key A, key B (legato), A up, B up | -- | sounds through A's key-up, released at B's |
+| key held across STOP (and HOLD INF on c51e304) | ends 0.7 s after STOP | ends 0.7 s after STOP (the rig's stop timing), key still held |
+| live recording (REC + PLAY), a key held 1.0 s, then two loops of playback | live 0.3 s; played back 1.0 s, 1.0 s | live 1.0 s; played back 1.0 s, 1.0 s (the same recorded length) |
+
+The first note of a session ignoring HOLD (b68 I1, finding 12) is untouched:
+in the sequencer case above the first note lasts until the next trig.
 
 ## FINE defaults to 0c when a track becomes a synth track (28 Sep 2026)
 
