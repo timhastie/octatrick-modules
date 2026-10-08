@@ -244,7 +244,7 @@
         .set    T_POLY, 80               | byte: the note that started last is paraphonic (VOIC 2..4 then)
         .set    S_ERAMP, 81              | byte: frames left of the mono voice's index ramp after a warm START (BUILD 38; 2.10: the index ramps, sy_il_*; 0 = none)
         .set    RT_CALLS, 0              | po_rtlog (po_clock + 32, peekable): passes of the frame builder's DSP command-byte copy (po_retrig)
-        .set    RT_FIXED, 4              | ... START bytes rewritten to the clean form 0x30
+        .set    RT_FIXED, 4              | ... START bytes rewritten to the clean form 0x30 (2.10: and trigless bytes' n cleared)
         .set    RT_HEAD, 8               | ... the ring's head
         .set    RT_RING, 16              | ... 32 entries x 8 B: {CK_FRAMES, track | byte posted << 8 | byte now << 16 | S_ON << 24}
         .set    RT_SIZE, 16 + 32 * 8
@@ -4763,6 +4763,11 @@ po_rel_out:
 | warm: phase-continuous from the level reached). A silent synth track (S_ON 0)
 | and every sample track keep stock's byte. po_rtlog counts the passes and the
 | rewrites and rings the START bytes (the rig peeks it at po_clock + 32).
+| 2.10: a byte with NO START bit on a synth track with a voice on (a trigless
+| trig -- a recorded LEG MONO step, a lock trig -- or a release) keeps its flags
+| and loses its sub-frame position n (po_retrig_nost): the packer split every
+| following frame at n and the stock renderer's unpinned first call walked the
+| marker to its end, which ended the stock voice and cut the note.
 po_retrig:
         movea.l 114(%sp),%a1             | displaced: a1 = the track
         lea     -24(%sp),%sp
@@ -4773,19 +4778,29 @@ po_retrig:
         mvz.b   (%a0,%a1.l),%d1          | the DSP command byte posted this frame
         lea     po_rtlog(%pc),%a2
         addq.l  #1,RT_CALLS(%a2)
-        move.l  %d1,%d2
-        andi.l  #0x30,%d2
-        beq     po_retrig_out            | no START of any form (a release, nothing): stock's byte stands
         move.l  %d4,%d2
         lsl.l   #7,%d2
         lea     sy_state(%pc),%a3
         add.l   %d2,%a3                  | the track's engine record
         move.l  %d1,%d3                  | the byte as posted
+        move.l  %d1,%d2
+        andi.l  #0x30,%d2
+        beq     po_retrig_nost           | no START of any form
         tst.b   S_ON(%a3)
         beq     po_retrig_log            | not a synth track with a voice on: stock's byte stands
         moveq   #0x30,%d1
         move.b  %d1,(%a0,%a1.l)          | the clean form: a CF START at the frame's first sample
         addq.l  #1,RT_FIXED(%a2)
+        bra     po_retrig_log
+po_retrig_nost:                          | (2.10) no START: a release, or a TRIGLESS trig (a recorded legato step,
+        move.l  %d1,%d2                  | a lock trig) with its sub-frame position n in the low nibble. The
+        andi.l  #0x0f,%d2                | packer keeps n and splits EVERY following frame at it until the
+        beq     po_retrig_out            | next event; the first call [0,n) runs the stock renderer on the
+        tst.b   S_ON(%a3)                | voice unpinned (sy_render pins the marker on the frame's second
+        beq     po_retrig_out            | call only), the marker's position walks n samples a frame and the
+        andi.l  #0xf0,%d1                | stock voice ends at its end: the note cut to silence 2..20 ms
+        move.b  %d1,(%a0,%a1.l)          | later. On a synth track with a voice on, n := 0 (nothing starts:
+        addq.l  #1,RT_FIXED(%a2)         | there is nothing to place); sample tracks keep stock's byte
 po_retrig_log:
         move.l  RT_HEAD(%a2),%d2
         addq.l  #1,RT_HEAD(%a2)
