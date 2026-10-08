@@ -98,7 +98,11 @@
 |     (half a semitone or more from the sounding word) crossfades -- the old
 |     tone becomes a fading voice (po_carry; one period of the lower note,
 |     S-shaped) and the new note starts cold from phase 0 with its attack; the
-|     same pitch stays phase-continuous (the index ramp, po_erlen);
+|     same pitch stays phase-continuous (the index ramp, po_erlen). A warm
+|     START's index envelope restarts at 1.0 and decays at DEC's rate as a
+|     cold one's; the ramp moves the index itself (the remaining distance
+|     over the remaining frames, L = po_erlen in all): DEC 0 never collapses
+|     the index within a frame;
 | The stock voice lifecycle is untouched: a new key restarts the DSP voice
 | (the AMP and filter envelopes run over the whole mix as for a sample), a
 | released last key posts the AMP release as stock. Musically: AMP ATK 0,
@@ -238,7 +242,7 @@
         .set    T_W, 72                  | paraphonic: this frame's PTCH word
         .set    T_SCALE, 76              | paraphonic: the scale mask at the last start (0 = OFF)
         .set    T_POLY, 80               | byte: the note that started last is paraphonic (VOIC 2..4 then)
-        .set    S_ERAMP, 81              | byte: frames left of the mono voice's index-envelope ramp after a warm START (BUILD 38: sy_env_ramp; 0 = none)
+        .set    S_ERAMP, 81              | byte: frames left of the mono voice's index ramp after a warm START (BUILD 38; 2.10: the index ramps, sy_il_*; 0 = none)
         .set    RT_CALLS, 0              | po_rtlog (po_clock + 32, peekable): passes of the frame builder's DSP command-byte copy (po_retrig)
         .set    RT_FIXED, 4              | ... START bytes rewritten to the clean form 0x30
         .set    RT_HEAD, 8               | ... the ring's head
@@ -277,7 +281,7 @@
         .set    V_HOLD, 52               | a sequencer note: frames left before it releases (0 = no gate)
         .set    V_FRAME, 56              | the frame (po_clock CK_FRAMES) the voice was allocated at (26 Sep 2026)
         .set    V_GPREV, 60              | word: the gain the last rendered frame ended at (po_fill ramps V_GPREV -> V_GAIN across a frame; 0 = the voice has been silent: a start resets the phases; a long until BUILD 38)
-        .set    V_ERAMP, 62              | word: frames left of the voice's index-envelope ramp to ENV_ONE after a warm START (po_frame; BUILD 38; 0 = none)
+        .set    V_ERAMP, 62              | word: frames left of the voice's index ramp after a warm START (po_frame; BUILD 38; 2.10: the index ramps, po_fr_il_*; 0 = none)
 | ---- the chord record (po_keyrec, 26 Sep 2026; 32 bytes a track since the rolling window) --
         .set    CR_STRIDE, 32
         .set    CR_STEP, 0               | the step the chord's first key was recorded on
@@ -406,7 +410,8 @@ sy_cold:                                 | a synth starts -- THE START RULE (pla
         lea     CURVALS,%a0              | gain the last call ended at): WARM -- the SAME oscillator continues
         mvz.b   CV_HOLD(%a0,%d1.l),%d1   | phase-continuously at its current level, the pitch changes, the attack
                                          | re-runs from that level (an analog mono synth's retrigger), and the index
-                                         | envelope RAMPS from its level to ENV_ONE over 16 frames (BUILD 38). S_GPREV
+                                         | envelope restarts at 1.0 and the INDEX ramps to I * E over the ramp's
+                                         | frames (BUILD 38's ramp; 2.10: sy_il_*, never a one-frame collapse). S_GPREV
                                          | == 0: COLD -- both operators at phase 0, the gain ramps from 0 (the ATK law,
                                          | the 16-frame ramp its floor), the index envelope restarts at once (from
                                          | silence: inaudible). BUILD 27/28's four-condition rule (S_HOLD, S_KEYED,
@@ -445,7 +450,9 @@ sy_cold1:
         move.l  %d1,S_ENV(%a3)
         bra     sy_warm
 sy_warm_env:
-        move.b  #255,S_ERAMP(%a3)        | warm: the index envelope ramps from its level to ENV_ONE over max(16, one period) frames (255 = fresh: po_erlen)
+        move.b  #255,S_ERAMP(%a3)        | warm: the index (I * E) ramps from its level over max(16, one period) frames (255 = fresh: po_erlen)
+        move.l  #ENV_ONE,%d1             | (2.10) and the envelope restarts as a cold note's: it decays from the
+        move.l  %d1,S_ENV(%a3)           | START at DEC's rate, the ramp only limits how fast the index follows it
 sy_warm:                                 | (sy_env_ramp, 5.8 ms), the carrier and the level continuous (BUILD 38)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                   | the retrig count the packer just latched: no stock retrigs
@@ -620,18 +627,7 @@ sy_mono_inc:
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
         move.l  %d1,S_FB(%a3)
-        mvz.b   S_ERAMP(%a3),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
-        beq     sy_env_k                 | the remaining frames -- linear, ENV_ONE exactly at the last; the decay
-        move.l  S_INC(%a3),%d0
-        bsr     po_erlen                 | (b68) a fresh ramp's length: max(16, one carrier period)
-        move.l  #ENV_ONE,%d0             | waits for it
-        sub.l   S_ENV(%a3),%d0
-        divs.l  %d1,%d0
-        add.l   %d0,S_ENV(%a3)
-        subq.l  #1,%d1
-        move.b  %d1,S_ERAMP(%a3)
-        bra     sy_envdone
-sy_env_k:
+sy_env_k:                                | (2.10: a warm START's envelope decays from ENV_ONE as a cold one's; sy_il_* ramps the index)
         mvz.w   10(%a4),%d1              | RTIM -> the index envelope
         lsr.l   #8,%d1
         moveq   #127,%d0                 | RTIM 127 (the last position): the index holds;
@@ -673,6 +669,21 @@ sy_envdone:
         lsr.l   #8,%d1
         lsr.l   #4,%d1                   | I * E: this call's target
         sub.l   S_IEFF(%a3),%d1          | ... minus the running value: sy_loop ramps S_IEFF there across the
+        mvz.b   S_ERAMP(%a3),%d0         | (2.10) a warm START's ramp: the index moves by the remaining distance
+        beq     sy_il_done               | over the remaining frames, L = max(16, one carrier period) frames in
+        move.l  %d1,%d2                  | all (po_erlen) -- linear toward a target that decays from the START,
+        cmpi.l  #255,%d0                 | so the climb to a fresh note's index and, at a short DEC, the fall
+        bne     sy_il_left               | that follows take the whole ramp: never a one-frame collapse (DEC 0:
+        move.l  %d0,%d1                  | the envelope is at the floor from the START, the index stays where
+        move.l  S_INC(%a3),%d0           | it was)
+        bsr     po_erlen                 | d1 = L (clobbers d0)
+        move.l  %d1,%d0                  | fresh: L frames left
+sy_il_left:
+        move.l  %d2,%d1
+        divs.l  %d0,%d1                  | this frame's move: (target - running) / frames left
+        subq.l  #1,%d0
+        move.b  %d0,S_ERAMP(%a3)
+sy_il_done:
         moveq   #16,%d2                  | frame, (target - running) / 16 a sample (BUILD 38: no step at a frame
         divs.l  %d2,%d1                  | edge when the index moves -- the ramp, the decay, a knob)
         move.w  %d1,S_ISTEP(%a3)
@@ -1453,18 +1464,7 @@ po_fr_inc1:
         asr.l   #8,%d0
         muls.l  T_RATIO(%a5),%d0
         move.l  %d0,V_INCM(%a6)          | modulator increment = ratio * pitch
-        mvz.w   V_ERAMP(%a6),%d1         | a warm START's ramp (BUILD 38): the remaining distance to ENV_ONE over
-        beq     po_fr_envk               | the remaining frames -- linear; the decay waits for it
-        move.l  V_INC(%a6),%d0
-        bsr     po_erlen                 | (b68) a fresh ramp's length: max(16, one carrier period)
-        move.l  #ENV_ONE,%d0
-        sub.l   V_ENV(%a6),%d0
-        divs.l  %d1,%d0
-        add.l   %d0,V_ENV(%a6)
-        subq.l  #1,%d1
-        move.w  %d1,V_ERAMP(%a6)
-        bra     po_fr_env
-po_fr_envk:
+po_fr_envk:                              | (2.10: a warm START's envelope decays from ENV_ONE as a cold one's; po_fr_il_* ramps the index)
         move.l  T_DK(%a5),%d0            | the index envelope
         beq     po_fr_envhold
         move.l  V_ENV(%a6),%d1
@@ -1488,6 +1488,21 @@ po_fr_env:
         lsr.l   #8,%d1
         lsr.l   #4,%d1                   | I * E: this frame's target ...
         sub.l   V_IEFF(%a6),%d1          | ... minus the running value: po_fill ramps V_IEFF across the frame,
+        mvz.w   V_ERAMP(%a6),%d0         | (2.10) a warm START's ramp: the remaining distance over the remaining
+        beq     po_fr_il_done            | frames (as sy_il_*)
+        move.l  %d1,-(%sp)
+        cmpi.l  #255,%d0
+        bne     po_fr_il_left
+        move.l  %d0,%d1
+        move.l  V_INC(%a6),%d0
+        bsr     po_erlen                 | d1 = L (clobbers d0)
+        move.l  %d1,%d0                  | fresh: L frames left
+po_fr_il_left:
+        move.l  (%sp)+,%d1
+        divs.l  %d0,%d1                  | this frame's move
+        subq.l  #1,%d0
+        move.w  %d0,V_ERAMP(%a6)
+po_fr_il_done:
         moveq   #16,%d0                  | (target - running) / 16 a sample (BUILD 38)
         divs.l  %d0,%d1
         move.w  %d1,V_ISTEP(%a6)
@@ -2295,7 +2310,9 @@ po_st_cold:
         move.l  %d0,V_ENV(%a0)
         bra     po_st_env
 po_st_warm:
-        move.w  #255,V_ERAMP(%a0)        | warm: the index envelope ramps from its level to ENV_ONE over 16 frames (po_frame; BUILD 38)
+        move.w  #255,V_ERAMP(%a0)        | warm: the index (I * E) ramps from its level over max(16, one period) frames (po_frame)
+        move.l  #ENV_ONE,%d0             | (2.10) and the envelope restarts as a cold note's (decays from the START)
+        move.l  %d0,V_ENV(%a0)
 po_st_env:
         move.l  #SEMI,%d0
         muls.l  %d3,%d0
