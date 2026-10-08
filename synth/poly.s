@@ -204,6 +204,8 @@
         .set    SLOT_COL, 0x8f04a        | Part: the five slot bytes of a track, one a machine (the column the assigners index by machine)
         .set    PART_SHADOW, 0x1001614e  | the bank's mirror in battery RAM: + part * 6322 + the Part offset = the shadow of a Part byte (0x100a5198 = the slot bytes', 0x100a4ef0 = the machine's, 0x100a51c6 = the AMP page-2's)
         .set    CV_RATE, 3               | flat slot 3 = PLAYBACK slot D (RATE; FINE on a synth track)
+        .set    CV_WORDS, 0x80000a50     | + 64 * track: the lane's value words (byte << 8) the frame builder copies on
+        .set    CV_SLEW, 0x80000db4      | + 32 * track: their slew counters, a long per four lane bytes (0 = take the lane's)
         .set    LISTWIN_MACH, 0x460d5c30 | the sample-list window's chosen machine (its apply path 0x4005a826)
         .set    ASSIGN_RET, 0x400795c2   | the slot assigner 0x40079424: after its slot-byte write (po_assign)
         .set    MACHWIN_RET, 0x4007981e  | the machine window's apply path 0x400797cc: its machine-byte write (po_machwin)
@@ -5798,7 +5800,12 @@ po_flex_slot:
 
 | ---- po_fine_reset: RATE := 64 (FINE 0c) for track d2 -- the Part's FLEX PLAYBACK
 | byte (PLAY_SLOTS + 6 + 3), its battery-RAM shadow and the live lane's flat slot
-| 3, as the page's knob writes them. Preserves every register.
+| 3, as the page's knob writes them, and the lane's RATE value word (CV_WORDS + 64 *
+| track + 6, byte << 8) with the slew counter of lane bytes 0..3 cleared, as stock's
+| reload of a track from its Part writes them (0x40001f18). The frame builder hands
+| the DSP and sy_render that word, not the lane byte, and refreshes it from the Part
+| only at a trig from another bank or Part: a track that had played a sample at RATE
+| 127 kept FINE +63c under a page reading 0c (b68 P5). Preserves every register.
 po_fine_reset:
         lea     -16(%sp),%sp
         movem.l %d0-%d1/%a0-%a1,(%sp)
@@ -5820,6 +5827,15 @@ po_fine_reset:
         muls.l  %d2,%d1
         lea     CURVALS,%a0
         move.b  %d0,CV_RATE(%a0,%d1.l)   | the live lane
+        move.l  %d2,%d1
+        lsl.l   #6,%d1
+        lea     CV_WORDS,%a0
+        adda.l  %d1,%a0
+        move.w  #0x4000,2*CV_RATE(%a0)   | its value word
+        move.l  %d2,%d1
+        lsl.l   #5,%d1
+        lea     CV_SLEW,%a0
+        clr.l   (%a0,%d1.l)              | lane bytes 0..3: the next frame takes the lane's values
         movem.l (%sp),%d0-%d1/%a0-%a1
         lea     16(%sp),%sp
         rts

@@ -51,6 +51,9 @@
         .set    SIG_OFF, 0x8edbc         | + 30 * track: the NEIGHBOR PLAYBACK bytes, "FM", 1
         .set    CURVALS, 0x80000810      | the live lanes, 72 B a track: flat slots 0..5 = the PLAYBACK page
         .set    CV_STRIDE, 72
+        .set    CV_SETUP, 32             | + lane: the PLAYBACK page's SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
+        .set    CV_WORDS, 0x80000a50     | + 64 * track: the lane's value words (byte << 8), PLAYBACK first
+        .set    CV_SLEW, 0x80000db4      | + 32 * track: the words' slew counters (0 = take the lane's value)
         .set    SRC_CURSOR, 0x460d5c30   | SRC SETUP's machine row (the sample-list window's)
         .set    NAMES, 0x400a78c8        | the stock machine-name table, five pointers (STATIC .. PICKUP)
         .set    PB_TABLE, 0x400d5f38     | the machine -> PLAYBACK descriptor table (slot 5: a spare)
@@ -78,6 +81,14 @@
 | the FM voice: po_is_synth -- signed, or FLEX with a marker slot -- answered before
 | the machine byte is stored); any other row unchanged, the signature cleared.
 | Preserves every other register.
+| The seed reaches the engine the way stock's reload of a track from its Part does
+| (0x40001f18, and the frame builder's refresh at 0x4000c0b4 when a track's first trig
+| comes from another bank or Part): the live lane's PLAYBACK bytes, its SETUP bytes
+| (lane + 32), the PLAYBACK value words (CV_WORDS + 64 * track, byte << 8: what the
+| copier hands the DSP and sy_render every frame) and the two slew counters of those
+| bytes cleared. The frame builder refreshes them from the Part only at such a trig,
+| so a track that had played a sample in this Part kept that sample's words and SETUP
+| (b68 P5: RATE 127 = FINE +63c, STRT 0 = RATO 0.25, two octaves down: 67.8 Hz for C4).
 fm_choose:
         lea     -32(%sp),%sp
         movem.l %d0/%d3/%a0-%a5,(%sp)
@@ -115,10 +126,29 @@ fm_ch_seed:
         move.b  %d0,(%a4)+               | and the live lane (the page shows it at once)
         clr.b   SETUP_GAP(%a0)           | SETUP k: 0
         clr.b   SETUP_GAP(%a1)
+        clr.b   CV_SETUP-1(%a4)          | ... and the lane's SETUP k
         addq.l  #1,%a0
         addq.l  #1,%a1
         subq.l  #1,%d3
         bne     fm_ch_seed
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        movea.l %d0,%a0
+        adda.l  #CV_WORDS,%a0            | the track's PLAYBACK value words
+        lea     fm_defaults(%pc),%a5
+        moveq   #6,%d3
+fm_ch_word:
+        mvz.b   (%a5)+,%d0
+        lsl.l   #8,%d0
+        move.w  %d0,(%a0)+               | PLAYBACK k: byte << 8
+        subq.l  #1,%d3
+        bne     fm_ch_word
+        move.l  %d2,%d0
+        lsl.l   #5,%d0
+        movea.l %d0,%a0
+        adda.l  #CV_SLEW,%a0             | the track's slew counters (a long per four lane bytes)
+        clr.l   (%a0)+                   | lane bytes 0..3: 0 = the next frame takes the lane's values
+        clr.l   (%a0)                    | lane bytes 4..7
 fm_ch_sign:
         move.b  #'F',(%a2)
         move.b  #'M',1(%a2)
