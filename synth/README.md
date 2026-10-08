@@ -1,9 +1,13 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
-**Octatrick 2.10 (not tagged yet; 5 - 6 Oct 2026).** Four changes on the
+**Octatrick 2.10 (not tagged yet; 5 - 7 Oct 2026).** Four changes on the
 synth: DEC puts HOLD at 127 (5 Oct); the note-start click is gone (attacks of
 at least one carrier period, S-shaped); the LFO destination list speaks FM;
-a held CHROMATIC key is the gate (HOLD is for sequencer trigs). Each below.
+a held CHROMATIC key is the gate (HOLD is for sequencer trigs). And three
+fixes after the author's test of the first 2.10 build on his MKI (7 Oct): a
+note restarted while it still sounds no longer clicks at a short DEC; a fast
+run at VOIC 2..4 no longer loses notes; a live-recorded legato phrase no
+longer goes silent on playback. Each below.
 
 **2.10: DEC puts HOLD at 127 (5 Oct 2026).** The
 PLAYBACK page's DEC knob read `HOLD` at raw 0, then the shortest decay at 1
@@ -55,6 +59,29 @@ before). Until now a live key's note ended at HOLD even with the key still
 down (HOLD 32 at 120 BPM: 282 ms). LEG MONO / POLY behave as before, STOP
 still ends everything, and the live recorder still records the played length.
 Details: "A held key is the gate (2.10)" below.
+
+**2.10 also (7 Oct 2026): three fixes from the author's test of the first
+2.10 build.** Four things were heard on the MKI; the emulator showed three
+causes, and all three are fixed:
+- **A click at the start of a note restarted while it still sounds**
+  (a quick re-press of a CHROMATIC key, the same note again in a fast run, a
+  sequencer trig on its own tail, a recorded legato phrase played back) at
+  DEC 0, louder the higher INDX, gone with DEC turned up a little. Such a
+  START ramped the index back to full and DEC 0 then dropped it to its floor
+  within one 16-sample frame. Now the index envelope restarts as a fresh
+  note's and the index itself ramps over at least one carrier period: at DEC
+  0 a restarted note sounds like a fresh one.
+- **Notes that did not sound** in a fast run at VOIC 2..4 over a long REL: a
+  second key pressed while a voice faded for the first key took that same
+  voice and dropped the first key's note. A voice holding a waiting note is
+  now taken last.
+- **A live-recorded legato phrase went silent on playback** at its first
+  legato step (LEG MONO at VOIC 1, LEG POLY at VOIC 2..4): the recorded
+  trigless step made the stock renderer walk the synth's marker sample to its
+  end, which ended the voice. The step now keeps the voice.
+Not reproduced on the emulator: notes not sounding at REL 0 with the
+sequencer running, and notes jumping up an octave. Details: "The author's
+test of the first 2.10 build (2.10)" below.
 
 **OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
 becomes a synth track.** A track that is made a synth track -- a FLEX track
@@ -485,6 +512,11 @@ the byte at the copy carries bit 4 is not explained. (5) FINE 0c on a new
 project and STOP mid-note were not re-run this pass.
 
 ### The index ramp (29 Sep 2026, OCTATRICK2.9 BUILD 38)
+
+(2.10, 7 Oct 2026: the ramp now moves the index, not the envelope -- a warm
+START restarts the envelope at 1.0 and the decay runs from the START; see
+"The author's test of the first 2.10 build (2.10)". The record below is
+BUILD 38's.)
 
 **The fix.** A warm START no longer restarts the index envelope. `sy_cold`
 (the mono voice) and `po_st_note` (a paraphonic voice) arm a 16-frame ramp
@@ -1155,6 +1187,137 @@ c51e304's image's):
 
 The first note of a session ignoring HOLD (an earlier finding) is untouched:
 in the sequencer case above the first note lasts until the next trig.
+
+## The author's test of the first 2.10 build (2.10, 7 Oct 2026)
+
+The first 2.10 test build (this line at 2db6657) on the author's MKI, with
+PLAYBACK PTCH 0, RATO 2, INDX 127, FINE 0c, FDBK 49, DEC 0; AMP ATK 0, HOLD
+1.000, REL 98; the CHROMATIC trig mode; LEG OFF unless said. Four findings:
+1. a quick press and release: a glitchy pop at the start of notes;
+2. playing fast with the sequencer running, REL 0: many notes do not sound;
+3. fast runs across the keyboard, the sequencer stopped: glitchy pops, and
+   now and then a note an octave up;
+4. a legato phrase recorded live and played back (HOLD 26, REL 112): clicks at
+   the starts of notes -- at DEC 0 with INDX above 0, the more the higher
+   INDX, and none once DEC is turned up a little, even at INDX 127.
+
+Every gesture was played on the emulator with those settings (VOIC 1, 2 and 4,
+REL 0 / 98 / 112, the sequencer running and stopped), with a 1 ms trace of the
+engine's records.
+
+**Cause 1: a warm START at a short DEC** ((1), the pops of (3), (4)). A START
+on a voice that still sounds is warm: the oscillator continues from its level
+(BUILD 38) -- the same pitch again inside its release, a sequencer trig on its
+own tail (a pattern loop restarting on its last note), a lower note onto a
+sounding paraphonic voice, a paraphonic legato note. Its index envelope ramped
+from its level back to 1.0 over max(16 frames, one carrier period) (`po_erlen`)
+and the decay waited for the ramp. At DEC 0 (k = `K_MAX` since 2.10; DEC 1
+reads the same cap) the decay then took the envelope from 1.0 to its floor
+(1/16) within one 16-sample frame: 94 % of the index gone in 0.36 ms, about
+6 ms after the START (0.69 at DEC 2, 0.17 at DEC 4, the ramp's own 0.06 from
+DEC 8 up). A cold START never did this: its envelope decays before its first
+sample. **The change** (`sy_warm_env` / `po_st_warm`, `sy_il_*` /
+`po_fr_il_*`): a warm START restarts the index envelope at 1.0 as a cold one
+does, and the decay runs from the START; the ramp moves to the index itself --
+each of its frames moves I x E by the remaining distance over the remaining
+frames (BUILD 38's formula, `po_erlen` frames in all), so the index never
+moves faster than over one carrier period. At DEC 0 the index stays at its
+floor and a restarted note sounds like a fresh one; a short DEC's pluck is
+spread over the ramp; DEC 127 (HOLD) ramps exactly as before. (A first
+version limited the index to I / L a frame instead; it let a small move
+finish within a few frames, and the click table's same-pitch retriggers at
+C1 / C2 came out 14..21 dB worse: not kept.)
+
+**Cause 2: a second key inside one fade** (the missing notes of (3), VOIC
+2..4). A note moving UP onto a sounding paraphonic voice waits in that
+voice's `po_pend` entry while the voice fades for one period (2.10, second
+pass). `po_alloc` ranked the fading voice (state 3) as good as a free one, so
+a second key pressed inside the wait took the same voice and `po_pclear`
+dropped the first key's note: D4, then D#4 2 ms later with every voice
+releasing -- D4 never sounded. **The change**: `po_alloc` and `po_steal` rank
+a voice whose `po_pend` entry holds a waiting note last (3).
+
+**Cause 3: a trigless step's sub-frame position** (found while measuring (4):
+at VOIC 1 the played-back phrase went silent after its first note). A
+LIVE REC'd LEG MONO phrase is one trig and trigless steps carrying PTCH (and
+the chain's HOLD) locks. A trigless step posts the DSP command byte with no
+START bit and its sub-frame position n in the low nibble; the packer keeps n
+and splits every following frame's render at n until the next event. The
+frame's first call [0, n) runs the stock renderer on the voice without the
+marker pinned (`sy_render` pins it on the frame's second call), so the
+marker's play position walked n samples a frame; 2..20 ms later it reached
+the marker's end, the stock voice ended (the CF voice byte 255 -> 0; not a
+kill) and `sy_check` cut the note to silence until the next loop. The same at
+VOIC 2..4 with LEG POLY (the voices freed). **The change**: `po_retrig`
+clears n in a byte with no START bit when the track's engine voice is on
+(`po_retrig_nost`); sample tracks and silent tracks keep stock's byte.
+
+**Not reproduced.** (2) as silence: at REL 0 with the sequencer running, VOIC
+1 / 2 / 4, with and without sequencer trigs on the track, taps and overlaps
+20..150 ms apart, and taps over a playing live-recorded legato pattern, every
+key got its voice at its pitch within 1..7 ms and sounded for its length.
+Causes 2 and 3 can each silence notes (both fixed); neither showed at REL 0.
+The octave jumps of (3): no voice in any trace sounded off the pressed
+pitches.
+
+**Measured** (the Modwerk exporter's quantizer+synth image on the pinned
+ot_emu `--dsp`, the panel driven as on the unit, the settings above unless
+said; first build = 2db6657's image, 161d781d...; now = this line's,
+b0c440fc...). xs is the click table's onset-splatter measure below (the HF
+above max(250 Hz, 8 f0 x ratio) in the first 10 ms over the note's own 40 ms
+later); hf6 the > 6 kHz band's largest 1 ms window in the first 15 ms over its
+median 30..60 ms after; both in dB, the worst restarted note of the take:
+
+| gesture | first build: xs / hf6 | now: xs / hf6 |
+|---|---|---|
+| C4 re-tapped inside its release, VOIC 1, DEC 0 (the fresh first note: -3.4 / +1.4) | +37.4 / +56.9 | -0.5 / +2.3 |
+| the same, DEC 1 | = DEC 0 | = DEC 0 |
+| the same, DEC 4 (the fresh note: +11.9 / +23.0) | +38.7 / +57.4 | +16.3 / +25.0 |
+| the same, DEC 127 = HOLD | -0.5 / +2.3 | -0.4 / +1.5 |
+| the same, INDX 40 FDBK 49 | +32.7 / +42.2 | +0.1 / +10.2 |
+| the same, INDX 40 FDBK 0 (the fresh note: +1.9 / +3.3) | +35.5 / +41.6 | +8.6 / +14.0 |
+| the same, INDX 40 FDBK 0 DEC 4 | +23.1 / +29.2 | +10.4 / +15.9 |
+| the same, INDX 127 FDBK 0 (the fresh note: +2.0 / +3.3) | +58.0 / +56.1 | +9.0 / +14.1 |
+| fast runs C3 G3 C4 (taps and overlaps 20..150 ms), REL 98: notes with xs >= +10, VOIC 1 / VOIC 4 (of 33) | 2 / 13 | 0 / 0 |
+| fast runs at VOIC 4, every voice releasing, 1..2 ms overlaps: notes dropped / xs >= +10 (of 26) | 2 / 11 | 0 / 0 |
+| a trig every bar on its own tail, HOLD 26 REL 112: DEC 0; DEC 4 | +37.9 / +57.5; +38.6 / +57.4 | +0.3 / +2.3; +16.5 / +25.2 |
+| the live-recorded LEG MONO phrase played back, VOIC 1: the loop's first note | +53.1 / +49.4 | +1.9 / +5.0 |
+| ... its legato steps | silent after the first step (the cut: +66.0 / +88.8) | all sound (-0.2..+12.0: a step DOWN has the old, brighter tone in its window, as live) |
+| the same phrase at VOIC 4, LEG MONO (each note a paraphonic START) | +35.4 / +54.3 | +2.3 / +14.0 |
+| the same phrase at VOIC 4, LEG POLY | silent after the first step | all sound |
+| REL 0, the sequencer running, fast runs, VOIC 1 / 4: notes silent (of 33) | 0 / 0 | 0 / 0 |
+
+**What is left.**
+- At DEC 2..8 a restarted note still has a pluck (DEC 4: +16.3, a fresh
+  note's own +11.9): the decay's shape, not a collapse.
+- At FDBK 0, a darker tone, a re-tapped note at DEC 0 still measures
+  +8..+9 / +14 (INDX 127 or 40; a fresh note +2 / +3). The index does not
+  move there, and the same settings at DEC 127 (a bright tone) measure
+  -0.7 / +2.2: most likely the level's re-attack from the release tail heard
+  against a tone with little HF of its own -- the attack law's, not DEC's.
+- A key tapped and released within the one period it waits for a fading
+  voice (at most 7.6 ms at C3) starts released and is not heard.
+- A recorded legato chain's trigless steps carry the chain's HOLD lock; the
+  engine arms its HOLD timer at the START only, so the played-back phrase
+  starts its release at the first step's HOLD (a stock voice re-lengthens its
+  hold at each step). With REL 112 the later steps sound in the slow release.
+
+**The click table and the gate, again** (the renders of "The note-start
+click (2.10)" and "A held key is the gate (2.10)" on this image): every cold
+row, INDX 0 / 100, FDBK 60, RATO 1, ATK 16, the VOIC 2 steals and the s_ warm
+row equal the first build's to 0.1 dB; the same-pitch retriggers C1>C1 /
+C2>C2 +1.2 / -0.5 -> +1.1 / -1.1, the pitch changes C1>C2 / C2>C1 +6.4 / +28.2
+-> +6.2 / +27.7; VOIC 4 chord memory C1>C1 / C1>C2 / C2>C1 / C2>C2 -2.2 / +7.6
+/ +14.5 / +13.8 -> -1.9 / +6.2 / +15.2 / +11.9 (two rows 0.3 and 0.7 dB worse,
+two better); the VOIC 4 MAJ chord's C2w +16.1 -> +15.6. ATK 0 / 16 / 20 / 32
+sample-identical (11.07 / 14.01 / 24.24 / 51.04 ms). A held key and a
+sequencer trig: sample-identical; LEG MONO: the same end, within 0.6 dB at
+100 ms; the VOIC 4 chord: the same end, within 0.2 dB at 100 ms.
+
+**Cost** (Modwerk's `gate.cpp` harness): mono mean 1,165.0 -> 1,165.9, peak
+2,556 (the same); VOIC 4 mean 4,060.2 -> 4,061.9, peak 6,324 -> 6,390
+(1.010 x). The DRAM unit grows 20,480 -> 20,560 B. No hook, poke or page
+change; `page.s` and the manifest are untouched.
 
 ## FINE defaults to 0c when a track becomes a synth track (28 Sep 2026)
 
