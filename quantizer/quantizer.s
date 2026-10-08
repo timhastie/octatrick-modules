@@ -235,7 +235,8 @@ qz_pt_out:
 qz_pt_ret:
         rts
 
-| qz_is_synth: d0 := 1 (NE) when track d2's machine is FLEX and its assigned
+| qz_is_synth: d0 := 1 (NE) when track d2's machine is FLEX and either the FM
+| SYNTH machine is chosen (the Part's "FM", 1) or its assigned
 | FLEX slot's settings record names a SYNTH* file -- the synth page's own test
 | (modules/synth/page.s pg_resolve): slot = Part + 0x8f04a + track*5 + 1, its
 | record 0x100b14f0 + 0x448*slot, the path at +0 scanned for the basename.
@@ -253,6 +254,20 @@ qz_is_synth:
         mvz.b   (%a1,%d2.l),%d0         | the track's machine
         subq.l  #1,%d0                  | FLEX
         jbne    qz_is_no
+        move.l  %a0,%a1                 | the FM SYNTH machine chosen in the machine list
+        move.l  %d2,%d0                 | (the synth module's machine.s): "FM", 1 in the
+        mulu.w  #30,%d0                 | track's NEIGHBOR column, Part + 0x8edbc + 30*track
+        adda.l  %d0,%a1
+        adda.l  #0x8edbc,%a1
+        mvz.w   (%a1),%d0
+        cmpi.l  #0x464d,%d0
+        jbne    qz_is_unsigned
+        mvz.b   2(%a1),%d0
+        subq.l  #1,%d0
+        jbne    qz_is_unsigned
+        moveq   #1,%d0
+        jbra    qz_is_out
+qz_is_unsigned:
         move.l  %d2,%d0
         lsl.l   #2,%d0
         add.l   %d2,%d0                 | track * 5

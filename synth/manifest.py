@@ -284,13 +284,27 @@ write and, when it went non-marker -> marker, resets FINE on every FLEX
 track whose FLEX slot is that slot. A marker over a marker, a sample over a
 marker, a STATIC slot, a recorder buffer: untouched.
 
+FM SYNTH IN THE MACHINE LIST (2.10, 8 Oct 2026, machine.s; adapted from
+Modwerk's FM Synth module, MIT, Modwerk contributors). FM SYNTH is the sixth
+row of SELECT MACHINE TYPE (the track key twice, then LEFT) and of SRC SETUP
+(FUNC + SRC). Choosing it stores the track as FLEX with "F", "M", 1 in the
+first three bytes of its NEIGHBOR PLAYBACK column (the bank blob + part *
+6322 + 0x8edbc + 30 * track, and the battery-RAM shadow): no marker file, no
+sample. Fourteen detours (the machine window's commit shares MACHWIN_HOOK),
+six pokes (the lists' bound 5 -> 6) and one SymbolRef (the kind table's FLEX
+START callback -> po_fmstart: the voice starts without a sample; the frame
+builder's second supplier call -> po_fmsource: its source is sy_render). The
+page cave gained fm_descriptor (pg_resolve moved to +16) and the signature
+test; the quantizer's qz_is_synth tests the signature too. The marker files
+still select the engine.
+
 Verified in ot_emu through the virtual panel and the pipe (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 """
 
 import os
 
-from remix.schema import CavePatch, Detour, Kind, Linked, Module, SymbolRef
+from remix.schema import CavePatch, Detour, Kind, Linked, Module, Poke, SymbolRef
 
 # This module's own directory, relative to the build's cwd (octabam's repo
 # root): "modules/synth" when the module is checked out directly, and
@@ -379,6 +393,44 @@ LISTWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7910")
 LOADSEL_HOOK = 0x40022686                # `jsr 0x40013a08` (sprintf: record, "%s..", path) in the browser's select 0x40022610
 LOADSEL_STOCK = bytes.fromhex("4eb940013a08")
 
+# 2.10 (8 Oct 2026): FM SYNTH IN THE MACHINE LIST (machine.s; after Modwerk's FM Synth
+# module, MIT, Modwerk contributors -- its dedicated chooser, Part validation and
+# sample-free transport). FM SYNTH is the sixth row of the machine window (FUNC + SRC)
+# and of SRC SETUP; a chosen track is stored as FLEX with "FM", 1 in its NEIGHBOR
+# PLAYBACK bytes (the Part + 0x8edbc + 30 * track, and the battery-RAM shadow), so it
+# needs no marker file and no sample. The marker files still select the engine.
+# The machine window's commit shares MACHWIN_HOOK (fm_main_commit, then po_machwin).
+FM_NAME_HOOK = 0x400334d8                # `movel %d2,%sp@-; movel %sp@(8),%d1` (the machine-name formatter name(row))
+FM_NAME_STOCK = bytes.fromhex("2f02" "222f0008")
+FM_NAMES_HOOK = 0x4003c928               # `lea 0x400a78c8,%a5` (SRC SETUP's name table: five pointers)
+FM_NAMES_STOCK = bytes.fromhex("4bf9400a78c8")
+FM_NAME_A_HOOK = 0x4003d718              # `lea 0x400a78c8,%a0` (a track's machine name, a0 = its machine byte)
+FM_NAME_A_STOCK = bytes.fromhex("41f9400a78c8")
+FM_SETUP_ROW_HOOK = 0x4003c980           # `mvsb %a0@,%d0; lea %sp@(24),%sp` (SRC SETUP's row highlight)
+FM_SETUP_ROW_STOCK = bytes.fromhex("7110" "4fef0018")
+FM_CHOOSER_ROW_HOOK = 0x400786c8         # `mvsb %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (the machine window's row highlight)
+FM_CHOOSER_ROW_STOCK = bytes.fromhex("7110" "b480" "662e")
+FM_SETUP_OPEN_HOOK = 0x400585dc          # `moveb %a0@,%d3; mvsb %d3,%d4; pea 0x400bb704` (SRC SETUP opens on the track's row)
+FM_SETUP_OPEN_STOCK = bytes.fromhex("1610" "7903" "4879400bb704")
+FM_CHOOSER_OPEN_HOOK = 0x40078886        # `mvsb %a0@,%d0; movel %d0,%sp@-; pea 0x460e7386` (the machine window opens on it)
+FM_CHOOSER_OPEN_STOCK = bytes.fromhex("7110" "2f00" "4879460e7386")
+FM_EDIT6_HOOK = 0x4003a52e               # `movel %d2,%d0; lsll #3,%d0; addl %d2,%d2; subl %d2,%d0` (SRC SETUP's editor: row * 6)
+FM_EDIT6_STOCK = bytes.fromhex("2002" "e788" "d482" "9082")
+FM_DRAW6_HOOK = 0x4003cd98               # `movel %d6,%d7; lsll #3,%d7; addl %d6,%d6; subl %d6,%d7` (its drawer: the same)
+FM_DRAW6_STOCK = bytes.fromhex("2e06" "e78f" "dc86" "9e86")
+FM_TICK_HOOK = 0x4005221e                # `jsr %pc@(0x4005213c); jsr 0x4007e940` (the UI tick)
+FM_TICK_STOCK = bytes.fromhex("4ebaff1c" "4eb94007e940")
+FM_SRC_COMMIT_HOOK = 0x4005a616          # `movel 0x460d5c30,%d1` (SRC SETUP's machine-byte write: the chosen row)
+FM_SRC_COMMIT_STOCK = bytes.fromhex("2239460d5c30")
+FM_SRC_COMMIT2_HOOK = 0x4005a850         # the same instruction on its second path (after LISTWIN_HOOK, which returns here)
+FM_SRC_COMMIT2_STOCK = bytes.fromhex("2239460d5c30")
+FM_VALIDATE_HOOK = 0x40002318            # `lea %sp@(-96),%sp; moveml %d2-%d7/%a2-%fp,%sp@` (the Part validator's prologue)
+FM_VALIDATE_STOCK = bytes.fromhex("4fefffa0" "48d77cfc")
+FM_SOURCE_HOOK = 0x4000d514              # `moveal %a4@+,%a0; movel %a0,%a3@+; pea 0x10` (the frame builder's second supplier call)
+FM_SOURCE_STOCK = bytes.fromhex("205c" "26c8" "48780010")
+KIND_TABLE_FLEX_START = 0x400d6458       # the kind table's FLEX START callback (stock 0x4000f450)
+FLEX_START = 0x4000f450
+
 # The FM voice engine is a DRAM unit since 24 Sep 2026 (poly.s, the
 # paraphonic engine): linked into the platform runtime at the base of the
 # arena reserve, depacked by the loader at boot; the kind table's FLEX entry
@@ -398,7 +450,8 @@ LOADSEL_STOCK = bytes.fromhex("4eb940013a08")
 # holds absolute pointers into the cave. One 6-byte poke (`movel
 # %a0@(0,%d0:l:4),%d0; bras` -> `jmp pg_resolve`).
 PAGE_AT = 0x400d24d0
-PAGE_LEN = 1812
+PAGE_LEN = 1868
+PG_RESOLVE_AT = 16                       # pg_resolve's offset in the cave (fm_descriptor, 16 B, is first)
 RESOLVER_HOOK = 0x40031ece
 RESOLVER_STOCK = bytes.fromhex("20300c00" "6002")
 # 2.10 (6 Oct 2026, poly.s "THE LFO DESTINATION LIST"): LFO SETUP's PMTR. The
@@ -418,83 +471,89 @@ LFD_EDIT_STOCK = bytes.fromhex("2003" "7406" "4c420807")
 # and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
 # PTCH and FINE formatters and the range / handler overrides; 30 Sep 2026: 1812 B, the
 # FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare; 5 Oct 2026:
-# still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the compare).
+# still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the compare;
+# 8 Oct 2026: 1868 B, the FM SYNTH machine -- fm_descriptor (16 B) first, so pg_resolve is at
+# +16, and pg_resolve's test of the Part's "FM", 1 ahead of the marker scan; still inside the
+# zero run 0x400d24d0..0x400d2ce0, 2064 B).
 PINNED_PAGE = bytes.fromhex(
-    "20300c000c80400d31ae6600008e243c000018b24c012800d4892803e58cd883"
-    "d4842042d1fc0008f04b75900c820000007f62000066283c000004484c024800"
-    "0684100b14f020442248283c000000ff7b98670000140c850000002f66000004"
-    "224853846600ffea3a3c464dba5166000004548941fa002a78057b987599ba82"
-    "6600001853846600fff22079400d64382068fffc43fa00124e904ef940031ed6"
-    "53594e544800000000090009400d25d8001c001e400d25e100610001400d25ff"
-    "006a0004400d2600009a0004400d260400ca0018400d260800fe0008400d2620"
-    "010a0008400d2628012a0004400d260001360004400d2600018e0004400d2630"
-    "ffff000000000000464d2053594e5448005241544f0000494e4458000046494e"
-    "4500004644424b0000444543000000400000000000000080400d2634400d267a"
-    "4003c178400d26604003c178400d26fc400d2794400d279a400d27a0400d27a6"
-    "55551551202f000804800000004041fa03996e00000841f9400b465d2f002f08"
-    "2f2f000c4eb940013a084fef000c4e75202f000804800000004041fa03716e00"
-    "ffdc41fa036e6000ffd42f02202f000ce48802800000001f41fa036e73f00a00"
-    "2001e0880281000000ff74644c021000e0896700003e0c81000000326700001c"
-    "2f012f00487a030a2f2f00144eb940013a084fef0010600000302f00487a02fa"
-    "2f2f00104eb940013a084fef000c600000182f004879400b465d2f2f00104eb9"
-    "40013a084fef000c241f4e752f02202f000c727fb081647822004c001000203c"
-    "000007d04c010000068000001f80223c00003f014c4100000c80000003e8641a"
-    "2f004879400b465d2f2f00104eb940013a084fef000c60000048223c000003e8"
-    "24004c41200272644c4100002202e789d282d28290812f002f02487a02612f2f"
-    "00144eb940013a084fef001060000012487a02522f2f000c4eb940013a08508f"
-    "241f4e7570006000001470016000000e7002600000087003600000024fefffd4"
-    "48d77cfc2e002f2f00482f2f00482f2f00482f2f00482f2f00482f2f00482f2f"
-    "00484eb9400479b44fef001c202f004008000001660001902c2f003c4a876700"
-    "00125387670000185387670000b2600000c841fa02d0610001786000012641fa"
-    "03906100016c220670034c001000707f4c401001740b94817008720161000174"
-    "2406700a4c002000707f4c40200267000012700672016100015a700a72016100"
-    "015224060482000000146f00002270084c002000706b4c402002670000127004"
-    "72016100012e700c72016100012624060482000000386f0000aa70064c002000"
-    "70474c4020026700009a7002720161000102700e7201610000fa6000008641fa"
-    "0268610000cc4a866700007841fa029e610000ce6000006c41fa02d6610000b2"
-    "70017201740b610000ca2a3c00007fff707fbc8064102a06700d4c005000707f"
-    "4c4050055485780b7e0224075382e98a4c4520020c82000000106f0000047410"
-    "41fa00d475b02800264220072202240461000080280b52870c870000000f6f00"
-    "ffca202f0040080000006700001841fa0150701022100a81fff0000020c15380"
-    "6c00fff2202f00345e802f00202f003452802f002f2f0050487a00ce4eb94001"
-    "28a84fef00104cd77cfc4fef002c4e7543fa010e701022d853806c00fffa4e75"
-    "43fa00fe70102218839953806c00fff84e7541fa00ec41f00c00263c80000000"
-    "e2ab8790e28b5281b4816c00fff64e7525642e253032640025642e350025642e"
-    "25647300484f4c44002b2564002b25646300256463000b090706050403030202"
-    "01010101010101000040008000c0010001030140016a018001c0020002030280"
-    "03000380040004030480050005800600068007000780080009000a000b000c00"
-    "0d000e000f001000000000110000000d00000001400d2a90400d2a4cfff80000"
+    "2079400d64382068fffc43fa00d44ed020300c000c80400d31ae660000b8243c"
+    "000018b24c012800d48920422803c8fc001ed1c4d1fc0008edbc7bd00c850000"
+    "464d660000107ba800020c8500000001670000722803e58cd883d4842042d1fc"
+    "0008f04b75900c820000007f62000066283c000004484c0248000684100b14f0"
+    "20442248283c000000ff7b98670000140c850000002f66000004224853846600"
+    "ffea3a3c464dba5166000004548941fa002a78057b987599ba82660000185384"
+    "6600fff22079400d64382068fffc43fa00104e904ef940031ed653594e544800"
+    "00090009400d2610001c001e400d261900610001400d2637006a0004400d2638"
+    "009a0004400d263c00ca0018400d264000fe0008400d2658010a0008400d2660"
+    "012a0004400d263801360004400d2638018e0004400d2668ffff000000000000"
+    "464d2053594e5448005241544f0000494e4458000046494e4500004644424b00"
+    "00444543000000400000000000000080400d266c400d26b24003c178400d2698"
+    "4003c178400d2734400d27cc400d27d2400d27d8400d27de55551551202f0008"
+    "04800000004041fa03996e00000841f9400b465d2f002f082f2f000c4eb94001"
+    "3a084fef000c4e75202f000804800000004041fa03716e00ffdc41fa036e6000"
+    "ffd42f02202f000ce48802800000001f41fa036e73f00a002001e08802810000"
+    "00ff74644c021000e0896700003e0c81000000326700001c2f012f00487a030a"
+    "2f2f00144eb940013a084fef0010600000302f00487a02fa2f2f00104eb94001"
+    "3a084fef000c600000182f004879400b465d2f2f00104eb940013a084fef000c"
+    "241f4e752f02202f000c727fb081647822004c001000203c000007d04c010000"
+    "068000001f80223c00003f014c4100000c80000003e8641a2f004879400b465d"
+    "2f2f00104eb940013a084fef000c60000048223c000003e824004c4120027264"
+    "4c4100002202e789d282d28290812f002f02487a02612f2f00144eb940013a08"
+    "4fef001060000012487a02522f2f000c4eb940013a08508f241f4e7570006000"
+    "001470016000000e7002600000087003600000024fefffd448d77cfc2e002f2f"
+    "00482f2f00482f2f00482f2f00482f2f00482f2f00482f2f00484eb9400479b4"
+    "4fef001c202f004008000001660001902c2f003c4a8767000012538767000018"
+    "5387670000b2600000c841fa02d0610001786000012641fa03906100016c2206"
+    "70034c001000707f4c401001740b948170087201610001742406700a4c002000"
+    "707f4c40200267000012700672016100015a700a720161000152240604820000"
+    "00146f00002270084c002000706b4c40200267000012700472016100012e700c"
+    "72016100012624060482000000386f0000aa70064c00200070474c4020026700"
+    "009a7002720161000102700e7201610000fa6000008641fa0268610000cc4a86"
+    "6700007841fa029e610000ce6000006c41fa02d6610000b270017201740b6100"
+    "00ca2a3c00007fff707fbc8064102a06700d4c005000707f4c4050055485780b"
+    "7e0224075382e98a4c4520020c82000000106f000004741041fa00d475b02800"
+    "264220072202240461000080280b52870c870000000f6f00ffca202f00400800"
+    "00006700001841fa0150701022100a81fff0000020c153806c00fff2202f0034"
+    "5e802f00202f003452802f002f2f0050487a00ce4eb9400128a84fef00104cd7"
+    "7cfc4fef002c4e7543fa010e701022d853806c00fffa4e7543fa00fe70102218"
+    "839953806c00fff84e7541fa00ec41f00c00263c80000000e2ab8790e28b5281"
+    "b4816c00fff64e7525642e253032640025642e350025642e25647300484f4c44"
+    "002b2564002b25646300256463000b0907060504030302020101010101010100"
+    "0040008000c0010001030140016a018001c00200020302800300038004000403"
+    "0480050005800600068007000780080009000a000b000c000d000e000f001000"
+    "000000110000000d00000001400d2ac8400d2a84fff80000fff80000fff80000"
     "fff80000fff80000fff80000fff80000fff80000fff80000fff80000fff80000"
-    "fff80000fff80000fff80000fff80000fff80000fff80000fff80000fff80000"
+    "fff80000fff80000fff80000fff80000fff80000fff800000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
     "0000000000000000000000000000000000000000000000000000000000000000"
-    "0000000000000000000000003f80000020800000208000003f80000004000000"
-    "04000000150000000e000000040000003f80000020800000208000003f800000"
-    "000000000000000000000000000000000000000000000000000000003f800000"
-    "20800000208000002080000020800000208000003f8000000000000000000000"
-    "000000000000000000000000000000000000000007f000000e10000004100000"
-    "0010000000100000001000000010000000100000001000000010000004100000"
-    "07f0000000000000000000000000000000000000800000008000000080000000"
+    "000000003f80000020800000208000003f800000040000000400000015000000"
+    "0e000000040000003f80000020800000208000003f8000000000000000000000"
+    "00000000000000000000000000000000000000003f8000002080000020800000"
+    "2080000020800000208000003f80000000000000000000000000000000000000"
+    "00000000000000000000000007f000000e100000041000000010000000100000"
+    "00100000001000000010000000100000001000000410000007f0000000000000"
+    "0000000000000000000000008000000080000000800000008000000080000000"
     "8000000080000000800000008000000080000000800000008000000080000000"
-    "8000000080000000800000008000000000000000"
+    "800000008000000000000000"
 )
 assert len(PINNED_PAGE) == PAGE_LEN, len(PINNED_PAGE)
-assert PINNED_PAGE[:4] == bytes.fromhex("20300c00")     # pg_resolve replays the table load
+assert PINNED_PAGE[PG_RESOLVE_AT:PG_RESOLVE_AT + 4] == bytes.fromhex("20300c00")  # pg_resolve replays the table load
+assert PAGE_AT + PAGE_LEN <= 0x400d2ce0                  # the zero run's end
 
 
 def emit_page(addr: int):
     """The source is the only truth for the bytes (b""); the resolver's kind-0
-    table load becomes a jmp to pg_resolve (+0)."""
+    table load becomes a jmp to pg_resolve (+16, after fm_descriptor)."""
     assert addr == PAGE_AT, "the page cave is pinned"
     return b"", ((RESOLVER_HOOK, RESOLVER_STOCK,
-                  bytes.fromhex("4ef9") + addr.to_bytes(4, "big")),)
+                  bytes.fromhex("4ef9") + (addr + PG_RESOLVE_AT).to_bytes(4, "big")),)
 
 
 MODULE = Module(
     name="synth",
     key="SYNTH MACHINE",
     kind=Kind.CF_PATCH,
-    doc="A FLEX track whose sample is named SYNTH* plays a two-operator FM "
+    doc="FM SYNTH in the machine list (FUNC + SRC, or SELECT MACHINE TYPE), or a FLEX track whose sample is named SYNTH*, plays a two-operator FM "
         "voice (STRT/LEN/RTRG/RTIM = ratio/index/feedback/decay); the DSP "
         "shapes and effects it as a sample. Its PLAYBACK page reads RATO/INDX/"
         "FDBK/DEC with icons and the title FM SYNTH; PTCH is semitones (-64..+63) "
@@ -502,6 +561,7 @@ MODULE = Module(
         "A FLEX or STATIC sample track with LEG MONO and GLIDE slides its pitch (2.8).",
     linked=(
         Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True),
+        Linked("fmmachine", os.path.join(_HERE, "machine.s"), cpu="5475", dram=True),
     ),
     # The kind table's FLEX entry is a 4-byte data pointer, not an
     # instruction: upstream octabam's SymbolRef (a stock u32 rewritten to a
@@ -514,6 +574,9 @@ MODULE = Module(
         SymbolRef(KIND_TABLE_STATIC, int.from_bytes(STOCK_RENDERER, "big"), "poly", "sy_render",
                   "kind table STATIC renderer -> sy_render too (2.8: a STATIC sample's PTCH slides "
                   "with LEG MONO + GLIDE; no marker scan, the stock call otherwise)"),
+        SymbolRef(KIND_TABLE_FLEX_START, FLEX_START, "poly", "po_fmstart",
+                  "kind table FLEX START callback -> po_fmstart (2.10): a track whose FM SYNTH is chosen in the "
+                  "machine list starts its voice without a sample; every other FLEX track the stock callback"),
     ),
     detours=(
         Detour(LFO_DEPTH_HOOK, LFO_DEPTH_STOCK, "poly", "po_lfo3",
@@ -590,8 +653,10 @@ MODULE = Module(
                "slot assigner (both windows): a track that becomes a synth track by this slot write -- FLEX with an FMSYNTH*/SYNTH* slot, "
                "not one before -- gets FINE 0c (RATE := 64 in the Part, its shadow and the live lane); a synth track already, or a sample track: untouched",
                kind="jmp", pad_to=8),
-        Detour(MACHWIN_HOOK, MACHWIN_STOCK, "poly", "po_machwin",
-               "machine window, the machine-only write (the slot equal): a track that becomes a synth track by the machine change gets FINE 0c",
+        Detour(MACHWIN_HOOK, MACHWIN_STOCK, "fmmachine", "fm_main_commit",
+               "machine window, the machine-only write (the slot equal): row 5 (FM SYNTH) is stored as FLEX with the Part's \"FM\", 1 (seeded "
+               "unless the track plays the FM voice already), any other row clears it (2.10, machine.s); then po_machwin: a track that "
+               "becomes a synth track by the machine change gets FINE 0c",
                kind="jmp", pad_to=8),
         Detour(LISTWIN_HOOK, LISTWIN_STOCK, "poly", "po_machlist",
                "sample-list window, the machine-only write: the same",
@@ -601,6 +666,66 @@ MODULE = Module(
                "non-marker -> FMSYNTH*/SYNTH* makes every FLEX track holding that slot a synth track: FINE 0c for each (the new-project case: "
                "T1 = FLEX slot 1, the first marker loaded into slot 1, no machine or slot byte changes)",
                kind="jsr"),
+        # ---- FM SYNTH in the machine list (2.10, machine.s; MACHWIN_HOOK above) ----
+        Detour(FM_NAME_HOOK, FM_NAME_STOCK, "fmmachine", "fm_machine_name",
+               "the machine-name formatter: row 5 reads FM SYNTH (the machine window's sixth row)",
+               kind="jmp"),
+        Detour(FM_NAMES_HOOK, FM_NAMES_STOCK, "fmmachine", "fm_src_names",
+               "SRC SETUP's machine-name table: six rows, the stock five (copied at run time) and FM SYNTH",
+               kind="lea"),
+        Detour(FM_NAME_A_HOOK, FM_NAME_A_STOCK, "fmmachine", "fm_name_a",
+               "a track's machine name: FM SYNTH for a chosen track (FLEX with the Part's \"FM\", 1)",
+               kind="jmp"),
+        Detour(FM_SETUP_ROW_HOOK, FM_SETUP_ROW_STOCK, "fmmachine", "fm_setup_row",
+               "SRC SETUP's row highlight: a chosen track's row is FM SYNTH",
+               kind="jmp"),
+        Detour(FM_CHOOSER_ROW_HOOK, FM_CHOOSER_ROW_STOCK, "fmmachine", "fm_chooser_row",
+               "the machine window's row highlight: the same",
+               kind="jmp"),
+        Detour(FM_SETUP_OPEN_HOOK, FM_SETUP_OPEN_STOCK, "fmmachine", "fm_setup_open",
+               "SRC SETUP opens on FM SYNTH for a chosen track (its page: the descriptor table's slot 5, fm_tick)",
+               kind="jmp", pad_to=10),
+        Detour(FM_CHOOSER_OPEN_HOOK, FM_CHOOSER_OPEN_STOCK, "fmmachine", "fm_chooser_open",
+               "the machine window opens on FM SYNTH for a chosen track",
+               kind="jmp", pad_to=10),
+        Detour(FM_EDIT6_HOOK, FM_EDIT6_STOCK, "fmmachine", "fm_setup_edit6",
+               "SRC SETUP's editor addresses row 5's Part bytes as FLEX's",
+               kind="jmp", pad_to=8),
+        Detour(FM_DRAW6_HOOK, FM_DRAW6_STOCK, "fmmachine", "fm_setup_draw6",
+               "SRC SETUP's drawer: the same",
+               kind="jmp", pad_to=8),
+        Detour(FM_TICK_HOOK, FM_TICK_STOCK, "fmmachine", "fm_tick",
+               "the UI tick (its two calls replayed): SRC SETUP's six names refreshed and the PLAYBACK descriptor table's "
+               "spare slot 5 (0x400d5f4c) := the FM SYNTH page (page.s fm_descriptor)",
+               kind="jmp", pad_to=10),
+        Detour(FM_SRC_COMMIT_HOOK, FM_SRC_COMMIT_STOCK, "fmmachine", "fm_src_commit",
+               "SRC SETUP's machine-byte write: row 5 is stored as FLEX with the signature, any other row clears it",
+               kind="jmp"),
+        Detour(FM_SRC_COMMIT2_HOOK, FM_SRC_COMMIT2_STOCK, "fmmachine", "fm_src_commit2",
+               "the same on SRC SETUP's second path (po_machlist's detour returns to this site)",
+               kind="jmp"),
+        Detour(FM_VALIDATE_HOOK, FM_VALIDATE_STOCK, "fmmachine", "fm_validate",
+               "the Part validator: a chosen track's twelve FLEX bytes sit out the stock clamps (FLEX's PTCH 4..124; FM SYNTH's is "
+               "0..127) -- the stock defaults in their place while it runs, the FM bytes back after",
+               kind="jmp", pad_to=8),
+        Detour(FM_SOURCE_HOOK, FM_SOURCE_STOCK, "poly", "po_fmsource",
+               "the frame builder's second supplier call: a chosen track's supplier is sy_render (an empty FLEX voice gets stock's "
+               "silent one)",
+               kind="jmp", pad_to=8),
+    ),
+    pokes=(
+        Poke(0x40079248, expect=bytes.fromhex("48780005"), write=bytes.fromhex("48780006"),
+             note="the machine window has six rows (`pea 5` -> `pea 6`), FM SYNTH the last"),
+        Poke(0x400585fa, expect=bytes.fromhex("48780005"), write=bytes.fromhex("48780006"),
+             note="SRC SETUP's machine selector has six rows"),
+        Poke(0x4003c950, expect=bytes.fromhex("7204"), write=bytes.fromhex("7205"),
+             note="SRC SETUP's name lookup admits row 5 (`moveq #4,%d1` -> 5)"),
+        Poke(0x40078678, expect=bytes.fromhex("7004"), write=bytes.fromhex("7005"),
+             note="the machine window draws row 5"),
+        Poke(0x400786ce, expect=bytes.fromhex("7004"), write=bytes.fromhex("7005"),
+             note="the machine window highlights row 5"),
+        Poke(0x40079904, expect=bytes.fromhex("7604"), write=bytes.fromhex("7605"),
+             note="the machine window keeps its cursor on row 5"),
     ),
     cf_patches=(
         CavePatch(

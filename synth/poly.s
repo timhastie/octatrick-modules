@@ -146,12 +146,16 @@
         .global po_ampstage, po_ampdraw1, po_ampdraw2, po_ampdraw3, po_ampedit, po_amplane
         .global po_assign, po_machwin, po_machlist, po_loadsel, po_stop, po_kill
         .global po_retrig
+        .global po_fmsource, po_fmstart  | the FM SYNTH machine (machine.s): the source supplier and the START callback
+        .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
         .global po_lfdname, po_lfdedit, po_lfdlfo | b68: the LFO destination list (LFO SETUP's PMTR)
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
         .set    NIBBLE, 0x46104d0c
         .set    STOCK_RENDER, 0x40004008
+        .set    FMSRC_RET, 0x4000d51c    | po_fmsource's way back
+        .set    FLEX_START, 0x4000f450   | the stock FLEX START callback (the kind table's second half, 0x400d6458)
         .set    FP_PTR, 0x800062a8       | the packer's per-track DSP parameter record
         .set    RS_PTR, 0x800062a4       | the packer's per-track render state
         .set    SETTINGS_BASE, 0x100b14f0 | the sample settings records, 0x448 each, slots 0..135
@@ -369,6 +373,8 @@ sy_render:
         bsr     sy_machine               | d0 := the track's machine (the Part's byte; clobbers d0, d1, a0)
         subq.l  #1,%d0
         bne     sy_no                    | not FLEX (a STATIC track, kind 0, comes here since 2.8): a sample, no marker scan
+        bsr     po_signed                | FM SYNTH chosen in the machine list (machine.s): a synth, no marker scan
+        bne     sy_cold
         move.l  #VOICE_STRIDE,%d3
         muls.l  %d2,%d3
         lea     VOICE_BASE,%a0
@@ -557,12 +563,39 @@ sy_sample:
         bsr     sy_slew                  | d6 := the word slewed toward it (clobbers d0, d1, d3, d7, a0)
         move.w  %d6,(%a4)                | the stock rate arithmetic reads the slewed word
 sy_call:
+        bsr     po_signed                | FM SYNTH chosen in the machine list: no sample, so no stock call --
+        beq     sy_stock                 | the source header stock would write (count, ring position, rate 1.0,
+        move.l  64(%sp),%d0              | read position) and silent pairs for the engine to overwrite
+        sub.l   60(%sp),%d0              | (Modwerk's sample-free transport, MIT)
+        move.l  %d0,(%a2)                | source count
+        move.l  60(%sp),4(%a2)           | source ring write position
+        move.l  #0x04000000,%d1
+        move.l  %d1,8(%a2)               | source rate 1.0, Q26
+        move.l  60(%sp),%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1
+        lsl.l   #8,%d1
+        lsl.l   #2,%d1                   | (d3 kept for the code after the call)
+        move.l  %d1,12(%a2)              | source read position, Q26
+        lea     16(%a2),%a0
+        add.l   %d0,%d0
+        beq     sy_nat_end
+sy_nat_clr:
+        clr.l   (%a0)+
+        subq.l  #1,%d0
+        bne     sy_nat_clr
+sy_nat_end:
+        move.l  %a0,CURSOR
+        moveq   #0,%d0
+        bra     sy_called
+sy_stock:
         move.l  64(%sp),-(%sp)           | end
         move.l  64(%sp),-(%sp)           | start
         move.l  64(%sp),-(%sp)           | ping
         move.l  64(%sp),-(%sp)           | track
         jsr     STOCK_RENDER
         lea     16(%sp),%sp
+sy_called:
         move.l  %d0,44(%sp)              | the stock return value, handed back
         tst.l   %d4
         beq     sy_check
@@ -935,6 +968,8 @@ sy_check:
         move.l  52(%sp),%d2              | track (the rate block used d2)
         move.l  #VOICE_STRIDE,%d3
         muls.l  %d2,%d3
+        bsr     po_signed                | FM SYNTH chosen: no sample voice to end (po_fmstart / the stock kill own it)
+        bne     sy_alive
         lea     VOICE_BASE,%a0
         tst.b   (%a0,%d3.l)              | the CF voice ended: leave stock's silence ...
         bne     sy_alive
@@ -3057,6 +3092,13 @@ po_lfopage:
         move.l  #6322,%d2
         muls.l  %d1,%d2                  | part * 6322
         add.l   %a1,%d2                  | + the bank blob
+        move.l  %d0,-(%sp)
+        movea.l %d2,%a0
+        move.l  %d3,%d0
+        bsr     po_sig                   | FM SYNTH chosen in the machine list?
+        movem.l (%sp),%d0                | (flags kept)
+        lea     4(%sp),%sp
+        bne     po_lp_clone
         move.l  %d3,%d4
         lsl.l   #2,%d4
         add.l   %d3,%d4                  | track * 5
@@ -3096,6 +3138,7 @@ po_lp_cmp:
         bne     po_lp_done
         subq.l  #1,%d4
         bne     po_lp_cmp
+po_lp_clone:
         lea     po_lfodesc(%pc),%a1
         tst.b   po_lfo_built
         bne     po_lp_have
@@ -4324,10 +4367,13 @@ po_lockw:
 | paraphony, 72..96) and is not changed.
         .set    MACH_OFF, 0x8eda2        | Part: 0x8eda2 + track = the machine (1 = FLEX)
 
-| ---- po_is_synth: d2 = track -> d0 = 1 when a FLEX track whose Part slot holds a
-| SYNTH* / FMSYNTH* sample (the quantizer's qz_is_synth, read here from the Part
-| and the settings table), else 0; tst.l d0 done. Preserves every other register.
+| ---- po_is_synth: d2 = track -> d0 = 1 when a FLEX track whose FM SYNTH machine is
+| chosen in the machine list ("FM", 1 in the Part: po_signed, 2.10) or whose Part slot
+| holds a SYNTH* / FMSYNTH* sample (the quantizer's qz_is_synth, read here from the
+| Part and the settings table), else 0; tst.l d0 done. Preserves every other register.
 po_is_synth:
+        bsr     po_signed                | FM SYNTH chosen in the machine list (machine.s)
+        bne     po_is_rts
         lea     -16(%sp),%sp
         movem.l %d1/%d3/%a0/%a1,(%sp)
         movea.l PART_PTR,%a0
@@ -4354,7 +4400,113 @@ po_is_out:
         movem.l (%sp),%d1/%d3/%a0/%a1
         lea     16(%sp),%sp
         tst.l   %d0
+po_is_rts:
         rts
+
+| ---- THE FM SYNTH MACHINE (the machine list's sixth row, machine.s; after Modwerk's
+| dedicated chooser, MIT, Modwerk contributors). A chosen track is stored as FLEX with
+| "FM", 1 in the first three bytes of its NEIGHBOR PLAYBACK column (Part + 0x8ed80 +
+| 0x3c + 30 * track, unused while the track is FLEX; the battery-RAM shadow the same).
+| po_is_synth answers 1 for it as for a marker track; the marker still works.
+        .set    SIG_OFF, 0x8edbc         | the bank blob + part * 6322 + SIG_OFF + 30 * track: "FM", 1
+| po_sig: a0 = the Part (the bank blob + part * 6322), d0 = track -> d0 = 1 when it is
+| FLEX and signed, else 0; tst.l done. Preserves every other register.
+po_sig:
+        lea     -8(%sp),%sp
+        movem.l %d1/%a1,(%sp)
+        movea.l %a0,%a1
+        adda.l  #MACH_OFF,%a1
+        mvz.b   (%a1,%d0.l),%d1          | the track's machine
+        subq.l  #1,%d1
+        bne     po_sig_no                | not FLEX
+        mulu.w  #30,%d0
+        movea.l %a0,%a1
+        adda.l  %d0,%a1
+        adda.l  #SIG_OFF,%a1
+        mvz.w   (%a1),%d1
+        cmpi.l  #0x464d,%d1              | "FM"
+        bne     po_sig_no
+        mvz.b   2(%a1),%d1
+        subq.l  #1,%d1                   | version 1
+        bne     po_sig_no
+        moveq   #1,%d0
+        bra     po_sig_out
+po_sig_no:
+        moveq   #0,%d0
+po_sig_out:
+        movem.l (%sp),%d1/%a1
+        lea     8(%sp),%sp
+        tst.l   %d0
+        rts
+| po_signed: d2 = track of the current Part -> d0 = 1 when FM SYNTH is chosen; tst.l
+| done. Preserves every other register.
+po_signed:
+        lea     -8(%sp),%sp
+        movem.l %d1/%a0,(%sp)
+        movea.l PART_PTR,%a0
+        mvz.b   PART_IDX,%d0
+        move.l  #6322,%d1
+        muls.l  %d1,%d0
+        adda.l  %d0,%a0                  | the Part
+        move.l  %d2,%d0
+        bsr     po_sig
+        movem.l (%sp),%d1/%a0
+        lea     8(%sp),%sp
+        tst.l   %d0
+        rts
+
+| ---- 0x4000d514 (jmp, 8 B): the frame builder's second supplier call takes the per-track
+| supplier from its list (`moveal %a4@+,%a0`), caches it (`movel %a0,%a3@+`) and pushes
+| the end argument 16 (`pea 16`). An EMPTY FLEX voice gets stock's silent supplier there;
+| a chosen FM SYNTH track gets sy_render, which needs no sample. d3 = track.
+po_fmsource:
+        movea.l (%a4)+,%a0               | displaced: the supplier
+        lea     -8(%sp),%sp
+        movem.l %d0/%d2,(%sp)
+        move.l  %d3,%d2
+        bsr     po_signed
+        beq     po_fs_keep
+        lea     sy_render,%a0
+po_fs_keep:
+        movem.l (%sp),%d0/%d2
+        lea     8(%sp),%sp
+        move.l  %a0,(%a3)+               | displaced: cached for the next first call
+        pea     16.w                     | displaced: the second call's end argument
+        jmp     FMSRC_RET
+
+| ---- the kind table's FLEX START callback 0x400d6458 (stock 0x4000f450, a SymbolRef):
+| po_fmstart(track). A chosen FM SYNTH track starts without consulting a sample: the CF
+| voice is marked active (0xff: the stock transport and kill own it, po_kill sees it end)
+| and its source kind FLEX. The answer is the stock callback's: 0x100 (the DSP's cold
+| start) for a voice that was not running, 0 for one that runs on (stock answers 0 for a
+| START that continues its voice). With 0x100 on every START the DSP restarted its stream
+| under the engine's warm path: +40..57 dB at every retrigger on a sounding note (the
+| note-start click table on a sample-free track; Modwerk's transport returned 0x100
+| always). Any other FLEX track: the stock callback, its ABI untouched.
+po_fmstart:
+        lea     -8(%sp),%sp
+        movem.l %d2/%a0,(%sp)
+        move.l  12(%sp),%d2              | track
+        bsr     po_signed
+        beq     po_fst_stock
+        move.l  #VOICE_STRIDE,%d0
+        muls.l  %d2,%d0
+        lea     VOICE_BASE,%a0
+        add.l   %d0,%a0
+        move.l  #0x100,%d0               | a voice that was not running: the DSP's cold start
+        tst.b   (%a0)
+        beq     po_fst_cold
+        moveq   #0,%d0                   | the voice runs on: 0, as stock answers a START that continues its
+po_fst_cold:                             | voice -- the DSP keeps its stream, the engine's warm path stays seamless
+        move.b  #0xff,(%a0)              | active
+        move.b  #1,20(%a0)               | source kind FLEX
+        movem.l (%sp),%d2/%a0
+        lea     8(%sp),%sp
+        rts
+po_fst_stock:
+        movem.l (%sp),%d2/%a0
+        lea     8(%sp),%sp
+        jmp     FLEX_START
 
 | ---- po_slot_marker: d0 = a FLEX slot (0-based) -> d0 = 1 when the slot's sample
 | is named FMSYNTH* / SYNTH* (the settings record's path, loaded into flex RAM or

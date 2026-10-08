@@ -3,8 +3,9 @@
 | below (pg_over) carries absolute pointers to the formatters and widgets, so
 | the bytes depend on the address.
 |
-| WHAT: when the current track's FLEX slot holds an FMSYNTH*- (or SYNTH*-) named sample, the
-| PLAYBACK page presents the FM voice instead of a sample player -- the slot
+| WHAT: when FM SYNTH is chosen in the track's machine list (2.10: FLEX with the Part's
+| "FM", 1, machine.s) or the current track's FLEX slot holds an FMSYNTH*- (or SYNTH*-)
+| named sample, the PLAYBACK page presents the FM voice instead of a sample player -- the slot
 | names read PTCH RATO INDX FINE FDBK DEC (four characters: the boxes are 19 px), the values format as the voice
 | understands them (RATIO from the ratio table "0.25".."16", INDEX and FDBK
 | 0..127, DECAY as the milliseconds alone / "1.1s" / "HOLD" at 127 -- four characters
@@ -73,6 +74,7 @@
         .set    FLEX_P, 0x400d31ae       | the stock FLEX PLAYBACK descriptor (P form)
         .set    KIND_FLEX, 0x400d6438    | the kind table's FLEX entry: sy_render's address (the manifest's SymbolRef)
         .set    SLOT_OFF, 0x8f04b        | Part: 0x8f04a + track*5 + machine (1 = FLEX)
+        .set    SIG_OFF, 0x8edbc         | Part: 0x8ed80 + 0x3c + track*30: the NEIGHBOR column, "FM", 1 (machine.s)
         .set    SETTINGS_BASE, 0x100b14f0
         .set    SETTINGS_STRIDE, 0x448
         .set    STOCK_WIDGET, 0x400479b4
@@ -81,8 +83,20 @@
         .set    FMT_D, 0x400b465d        | "%d"
         .set    FMT_PLAIN, 0x4003c178    | the stock formatter fmt(buf, value) -> sprintf(buf, "%d", value)
 
+| ---- the FM SYNTH machine's descriptor (machine.s, at the cave's first byte) ---
+| fm_descriptor() -> d0 = the FM SYNTH PLAYBACK descriptor (po_pgdesc with this cave's
+| list; built on first use). machine.s calls it at this fixed address: the UI tick
+| publishes it as the machine table's sixth entry for SRC SETUP's FM SYNTH row (after
+| Modwerk's dedicated chooser, MIT). d0/d1/a0/a1 clobbered (C scratch).
+fm_descriptor:
+        moveal  KIND_FLEX,%a0            | sy_render
+        moveal  %a0@(-4),%a0             | po_pgdesc
+        lea     pg_over(%pc),%a1
+        jmp     %a0@
+
 | ---- the resolver detour ------------------------------------------------------
-| 0x40031ece: `movel %a0@(0,%d0:l:4),%d0; bras 0x40031ed6` -> `jmp pg_resolve`.
+| 0x40031ece: `movel %a0@(0,%d0:l:4),%d0; bras 0x40031ed6` -> `jmp pg_resolve` (the
+| cave's +16 since 2.10: fm_descriptor is first; the manifest's PG_RESOLVE_AT).
 | d0 = machine type, a0 = the table 0x400d5f38, d3 = track, d1 = part index,
 | a1 = the bank blob; d2-d5 are restored by the resolver's epilogue, d1/a0/a1
 | are C scratch, d6/d7/a2-a6 are left alone.
@@ -93,6 +107,18 @@ pg_resolve:
         movel   #6322,%d2
         mulsl   %d1,%d2                  | part * 6322
         addl    %a1,%d2                  | + the bank blob
+        moveal  %d2,%a0                  | FM SYNTH chosen in the machine list (machine.s): FLEX
+        movel   %d3,%d4                  | (the descriptor said so) with "FM", 1 in the track's
+        muluw   #30,%d4                  | NEIGHBOR column
+        addal   %d4,%a0
+        addal   #SIG_OFF,%a0
+        mvzw    %a0@,%d5
+        cmpil   #0x464d,%d5
+        bne     pg_unsigned
+        mvzb    %a0@(2),%d5
+        cmpil   #1,%d5
+        beq     pg_synth
+pg_unsigned:
         movel   %d3,%d4
         lsll    #2,%d4
         addl    %d3,%d4                  | track * 5
@@ -137,6 +163,7 @@ pg_cmp:
         bne     pg_r_done
         subql   #1,%d4
         bne     pg_cmp
+pg_synth:
         moveal  KIND_FLEX,%a0            | the kind table's FLEX entry: poly.s's sy_render
         moveal  %a0@(-4),%a0             | the long before it: po_pgdesc
         lea     pg_over(%pc),%a1         | this cave's fields
