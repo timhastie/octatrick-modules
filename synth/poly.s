@@ -2780,32 +2780,41 @@ po_sn_ret:
 
 | ---- po_alloc: a0 := the voice of track d2 to take for a new note ---------------
 | A free voice (state 0) first, else the oldest releasing one, else the oldest
-| sounding one: the least (rank << 28 | age) with rank 0 / 1 / 2. Clobbers d0,
-| d1, d4, a6; saves d3, d6 and a1 for po_start.
+| sounding one: the least (rank << 28 | age) with rank 0 / 1 / 2; a voice whose
+| po_pend entry holds a waiting note ranks 3 in both searches (2.10: a second key
+| inside one wait took it again and dropped the first key's note). Clobbers d0,
+| d1, d4, a6; saves d3, d6, a1 and a2 for po_start.
 | po_steal (the VOIC cap): the same search with a free voice ranked last (3),
 | so a0 := the oldest releasing voice, else the oldest sounding one -- the
 | one to cut when the track is over its cap (po_start calls it only while an
 | active voice exists).
 po_steal:
-        lea     -12(%sp),%sp
-        movem.l %d3/%d6/%a1,(%sp)
+        lea     -16(%sp),%sp
+        movem.l %d3/%d6/%a1/%a2,(%sp)
         lea     po_rank_act(%pc),%a1
         bra     po_al_go
 po_alloc:
-        lea     -12(%sp),%sp
-        movem.l %d3/%d6/%a1,(%sp)
+        lea     -16(%sp),%sp
+        movem.l %d3/%d6/%a1/%a2,(%sp)
         lea     po_rank(%pc),%a1
 po_al_go:
         lea     po_voices(%pc),%a6
         move.l  %d2,%d0
         lsl.l   #8,%d0
         add.l   %d0,%a6
+        lea     po_pend(%pc),%a2         | (2.10) the voices' waiting notes beside a6
+        lsr.l   #2,%d0
+        add.l   %d0,%a2
         move.l  %a6,%a0
         moveq   #-1,%d4                  | the best key so far (unsigned)
         moveq   #4,%d6
 po_al_loop:
         mvz.b   V_STATE(%a6),%d0
         mvz.b   (%a1,%d0.l),%d0
+        tst.b   (%a2)                    | (2.10) a voice a waiting note holds is spoken for: last (a
+        beq     po_al_rk                 | second key inside one wait took it again and po_pclear dropped
+        moveq   #3,%d0                   | the first key's note)
+po_al_rk:
         lsl.l   #8,%d0
         lsl.l   #8,%d0
         lsl.l   #8,%d0
@@ -2819,10 +2828,11 @@ po_al_loop:
         move.l  %a6,%a0
 po_al_next:
         lea     V_STRIDE(%a6),%a6
+        lea     16(%a2),%a2
         subq.l  #1,%d6
         bne     po_al_loop
-        movem.l (%sp),%d3/%d6/%a1
-        lea     12(%sp),%sp
+        movem.l (%sp),%d3/%d6/%a1/%a2
+        lea     16(%sp),%sp
         rts
 po_rank:
         .byte   0, 2, 1, 0
