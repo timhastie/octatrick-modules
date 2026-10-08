@@ -265,7 +265,7 @@ attribution lines, carried in this repository's [LICENSE](../LICENSE):
 and, for the Analog BD chooser it derives from, `Copyright (c) 2026 Sam Banks`
 (MIT, the same octamax sentence).
 
-`synth/machine.s` (a DRAM unit, 908 B) holds the chooser: Modwerk's
+`synth/machine.s` (a DRAM unit, 956 B) holds the chooser: Modwerk's
 `machine.s` and its `registration.c` helpers written out in assembly. The
 lists grow from five rows to six (six pokes: `pea 5 -> 6` at `0x40079248` and
 `0x400585fa`, `moveq #4 -> #5` at `0x4003c950`, `0x40078678`, `0x400786ce`,
@@ -280,7 +280,17 @@ machine window's machine-byte write shares the FINE-0c detour at
 `0x40079816` (`fm_main_commit`, then `po_machwin`); SRC SETUP's two writes
 `0x4005a616` / `0x4005a850` (the second follows `po_machlist`'s detour, which
 returns to it). Row 5 is stored as FLEX plus the mark; any other row clears
-the mark. The Part validator (`0x40002318`) clamps FLEX's PTCH into 4..124,
+the mark. The first choice's seed is written where stock's reload of a track
+from its Part (`0x40001f18`) writes: the Part and its shadow, the live lane's
+six PLAYBACK bytes and its SETUP bytes (lane + 32), the six PLAYBACK value
+words the frame builder hands the DSP and the engine (`0x80000a50 + 64 *
+track`, byte << 8), and the slew counters of those bytes cleared
+(`0x80000db4 + 32 * track`). The frame builder refreshes the words from the
+Part only at a trig from another bank or Part (`0x4000c0b4`), so without them
+a track that had already played in this Part kept its sample's words: FM
+SYNTH chosen after a sample at RATE 127, STRT 0 played C4 as 67.8 Hz (FINE
++63c, RATO 0.25) under a page reading FINE 0c, RATO 1 (fixed 8 Oct 2026, see
+Measured). The Part validator (`0x40002318`) clamps FLEX's PTCH into 4..124,
 where FM SYNTH's PTCH is 0..127 (-64..+63 semitones): for a chosen track the
 twelve FLEX bytes sit the validation out (the stock defaults in their place,
 read from the descriptor, the FM bytes back afterwards). A marker track keeps
@@ -318,8 +328,6 @@ marker track keeps its patch when FM SYNTH is chosen over it; the START
 callback answers 0 for a voice that runs on (above); the six-row name table is
 copied from the stock one at run time instead of carrying its five addresses.
 
-### Measured (8 Oct 2026, ot_emu, the quantizer + synth image built from this commit)
-
 ### Measured (8 Oct 2026, ot_emu, the quantizer + synth image built from this change through the panel; T1 on the 2.10 click and gate cards)
 
 - **Selection.** SRC SETUP and SELECT MACHINE TYPE list FM SYNTH as the sixth
@@ -329,10 +337,25 @@ copied from the stock one at run time instead of carrying its five addresses.
   footer FM SYNTH>FM SYNTH; the pattern's trigs sound at C4 (spectral peak
   262.5 Hz, 2.5 Hz bins) with no sample anywhere in the slot. Both lists then
   open on FM SYNTH; FLEX chosen again clears the mark and the page reads FLEX.
-- **A sample track.** T1 = FLEX with a sine in its slot: the sample, then FM
-  SYNTH (the FM voice at C4), then FLEX again: the last render is sample for
-  sample the first, and the first is sample for sample the build without this
-  change.
+- **A sample track** (fixed 8 Oct 2026). T1 = FLEX with a sine in its slot,
+  PB 64 0 127 127 0 79 and the stock SETUP (LOOP ON, TSTR AUTO): the sample
+  plays, then FM SYNTH is chosen in SRC SETUP: every note is C4, 261.7 Hz
+  (autocorrelation; 261.9 Hz spectral peak), sample for sample the render of
+  FM SYNTH chosen on a track that never played. The click table's note-start
+  measure on its C4 notes (cold and warm) equals a marker track with the same
+  patch to 0.0 dB. Before the fix every note was 67.8 Hz: the seed reached
+  the Part and the page but not the value words the voice reads, so the
+  sample's STRT 0 (RATO 0.25) and RATE 127 (FINE +63c) played on (the first
+  build's own render of this route peaked at 271.2 Hz, not C4; its sample had
+  LEN 0, INDX 0). FLEX chosen again: the sample plays with what the Part and
+  the page then hold (STRT 12, LEN 32, RATE 64, SETUP 0), sample for sample
+  (to 1 LSB) a project loaded with that Part -- before the fix it played the
+  stale values until the next reload. The FLEX + STATIC render before FM
+  SYNTH is sample for sample the build without this change.
+- **A marker assigned after a sample** (the FINE rule below): T1 as above,
+  the sample plays, then QUICK ASSIGN slot 1 (`SYNTH.WAV`): C4 at RATO 0.25,
+  FINE 0c = 65.4 Hz (before the fix 67.8 Hz: FINE +63c under a page reading
+  0c).
 - **A marker track** (FLEX slot 1 = `SYNTH.WAV`, PB 64 20 50 64 30 80): FM
   SYNTH chosen over it keeps the PB and SETUP bytes and adds the mark; the
   render before and after is the same to 0.00 dB (10 ms RMS envelopes).
@@ -349,7 +372,11 @@ copied from the stock one at run time instead of carrying its five addresses.
   every row within 0.1 dB of the 2.10 build before this change. **The same
   Parts on a machine-list track with an empty slot: every row within 0.2 dB of
   the marker track** (before the START answer was fixed: +40..+57 dB on every
-  warm row, cold rows equal).
+  warm row, cold rows equal). Re-run on the image with the 8 Oct seed fix:
+  chooser rows within 0.1 dB of the build before it and within 0.2 dB of the
+  marker track; 23 of the 31 click and gate renders sample-identical to the
+  build before it, the rest equal to 1 LSB or up to the panel-timed key
+  events of the held-key renders.
 - **The key gate** (a held CHROMATIC key, a sequencer trig, LEG MONO, a VOIC 4
   chord) and the attack table, marker vs machine-list track: the held key
   sample-identical up to its release (the release lands up to 2 ms apart, the
@@ -362,11 +389,14 @@ copied from the stock one at run time instead of carrying its five addresses.
   gate and LFO regression suites): pass, PCM and state identical to the build
   before; cost per frame mono 1,165.9 -> 1,234.4 instructions (mean; peak 2,556
   -> 2,658), VOIC 4 4,061.9 -> 4,130.4 (peak 6,390 -> 6,492): the mark tests.
-  poly.s 20,560 -> 20,944 B, machine.s 908 B; every source assembles at
-  -mcpu=5475 and 54455. `tools/stock_scan.py`: no stock bytes beyond the
-  displaced instructions (two new 16-byte matches in machine.s are the Part
-  address idiom `movea.l 0x46c82456; mvz.b 0x100b14cf; move.l #6322; muls.l`,
-  the same as poly.s's).
+  poly.s 20,560 -> 20,976 B (32 of them the FINE word, below), machine.s
+  956 B; every source assembles at -mcpu=5475 and 54455.
+  `tools/stock_scan.py`: no stock bytes beyond the displaced instructions and
+  the idioms the tool allows -- 35 runs against 32 before; the three new
+  ones are the Part-address idiom `movea.l 0x46c82456; mvz.b 0x100b14cf;
+  move.l #6322; muls.l` twice in machine.s (16 B each, the second with other
+  registers; the same idiom as poly.s's own run) and an 18-byte save/restore
+  idiom in poly.s (the same stock list as five of the runs before).
 
 Not tested: hardware; MIDI notes, the live recorder and scenes on a
 machine-list track (they read the same `po_is_synth` / `qz_is_synth`);
@@ -1531,6 +1561,19 @@ of the same or another marker slot to a track that is a synth already (its
 FINE is the user's), or on any sample track (a non-marker slot is no synth
 track, so the byte is never written). RATE p-locks live in the pattern and
 are not read.
+
+**8 Oct 2026: the reset reaches the voice at once.** The lane byte is what
+the page shows; the DSP and the engine read the lane's value WORD
+(`0x80000a50 + 64 * track + 6`, byte << 8), which the frame builder takes
+from the lane only through its slew counters (`0x80000db4 + 32 * track`,
+the converter at `0x4000d63c`) or rewrites from the Part at a trig from another bank or
+Part. So a marker assigned to a track that had played a sample at RATE 127
+in this Part read FINE 0c and played +63c until the next Part change or
+reload (measured: C4 at RATO 0.25 as 67.8 Hz instead of 65.4).
+`po_fine_reset` now also writes the word (0x4000) and clears the slew counter
+of the lane's bytes 0..3, as stock's reload of a track from its Part does
+(`0x40001f18`); the FM SYNTH chooser's seed does the same for all six bytes
+and the SETUP bytes ("Selecting FM SYNTH from the machine list").
 
 **The sites** (three `jmp` detours of 8 bytes each into the DRAM unit,
 `po_assign` / `po_machwin` / `po_machlist`; `manifest.py` ASSIGN_HOOK,
