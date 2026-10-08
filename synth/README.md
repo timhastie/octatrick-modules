@@ -1,6 +1,10 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
-**Octatrick 2.10 (not tagged yet; 5 - 7 Oct 2026).** Four changes on the
+**Octatrick 2.10 (not tagged yet; 5 - 8 Oct 2026).** **FM SYNTH is in the
+machine list** (8 Oct): the sixth row of SRC SETUP (FUNC + SRC) and of SELECT
+MACHINE TYPE on every track, playing with no sample and no marker file -- see
+"Selecting FM SYNTH from the machine list (2.10)" below (adapted from
+Modwerk's FM Synth module, MIT, Modwerk contributors). Four changes on the
 synth: DEC puts HOLD at 127 (5 Oct); the note-start click is gone (attacks of
 at least one carrier period, S-shaped); the LFO destination list speaks FM;
 a held CHROMATIC key is the gate (HOLD is for sequencer trigs). And three
@@ -187,6 +191,186 @@ whose parameters are the FLEX PLAYBACK page's other slots -- **"Phase 2: the
 FM voice"** below has the design, the parameter map and the numbers. Phase
 1's text follows it as written (its record-layout guess is corrected in the
 phase-2 section and marked in place).
+
+---
+
+## Selecting FM SYNTH from the machine list (2.10, 8 Oct 2026)
+
+FM SYNTH is a machine of its own now: the sixth row of the track's machine
+lists, under STATIC FLEX THRU NEIGHBOR PICKUP. **No marker file and no sample
+are needed.** The `FMSYNTH*.wav` / `SYNTH*.wav` marker files still work exactly
+as before; the machine list is simply the easier way in.
+
+**To select it** (any track, T1..T8):
+
+- **SRC SETUP:** hold FUNC and press SRC (the PLAYBACK page key). The machine
+  list is on the left; go DOWN to `FM SYNTH` (the last row) and press YES. The
+  right-hand side then shows the FLEX setup values the track keeps (LOOP, SLIC,
+  LEN, RATE, TSTR, TSNS -- all OFF on a fresh FM SYNTH track).
+- **SELECT MACHINE TYPE:** press the track key twice quickly (the QUICK ASSIGN
+  slot list), press LEFT on `<< MACHINE`, go DOWN to `FM SYNTH`, press YES.
+
+The PLAYBACK page then reads `PTCH RATO INDX FINE FDBK DEC`, the footer
+`FM SYNTH>FM SYNTH`, and both lists open on the `FM SYNTH` row for that
+track. A track that was not playing the FM voice before starts from PTCH 0,
+RATO 1, INDX 32, FINE 0c, FDBK 0, DEC 40 (199 ms). Choosing FM SYNTH again
+keeps your patch, and so does choosing it over a track that already plays FM
+through a marker file (its patch and its setup values are kept; only the
+machine-list mark is added).
+
+**To go back** choose FLEX or STATIC (or any other machine) in either list.
+The mark is removed and the track is the plain machine again. The FLEX page
+keeps the FM values (STRT 12, LEN 32, RATE 64 ...), as a marker track's FLEX
+page does when its marker is replaced by a sample: set them for the sample.
+If the FLEX slot holds a marker file, the track still plays FM through it.
+
+**What is stored.** The machine byte is FLEX (1), so every stock FLEX path --
+the PLAYBACK lanes, locks, LFOs, scenes, the DSP voice -- stays valid; the
+mark is the three bytes `F`, `M`, 1 at the start of the track's NEIGHBOR
+PLAYBACK column (the Part + 0x3c + 30 * track; the bank blob + part * 6322 +
+0x8edbc + 30 * track), written into the Part and its battery-RAM shadow. A
+FLEX track never uses those bytes and the stock Part validator's NEIGHBOR
+range is 0..127, so the mark survives SAVE, RELOAD, Part COPY / PASTE and a
+project load like any other Part byte. Part CLEAR clears it with the rest.
+The quantizer (`quantizer/`, the same tag) knows the mark too: CHROMATIC keys,
+the tuning system, LEG and the live recorder treat a chosen track as a synth
+track. Build both modules from this tag together; an older quantizer treats a
+chosen track as a sample track.
+
+**On a stock OS, or a build without this change,** such a track is a plain
+FLEX track: with an empty slot it is silent; with a sample in its slot it
+plays that sample with the FM values as STRT / LEN / RATE / RTRG / RTIM (RATE
+64 is half speed); the mark is ignored. **Before downgrading, choose FLEX (or
+STATIC) on every FM SYNTH track and SAVE**, or keep a marker file in the slot
+if you want those tracks to stay FM on an older Octatrick build.
+
+### How it works
+
+The chooser is adapted from Modwerk's FM Synth module ([repeat98/modwerk](https://github.com/repeat98/modwerk),
+`sdk/octabam/modules/synth`, commit 1c1d938; MIT, Modwerk contributors), whose
+chooser is derived from Modwerk's Analog BD chooser hooks. That module's
+LICENSE states its own terms, separate from the repository root's licence; its
+attribution lines, carried in this repository's [LICENSE](../LICENSE):
+
+> Dedicated chooser, Part validation, sample-free transport and original presentation:
+>
+> MIT License
+>
+> Copyright (c) 2026 Modwerk contributors
+>
+> Portions of the firmware analysis tooling originate from the octamax project
+> (https://github.com/mxldyn/octamax), Copyright (c) 2025-2026 Maxolydian,
+> also under the MIT License.
+
+and, for the Analog BD chooser it derives from, `Copyright (c) 2026 Sam Banks`
+(MIT, the same octamax sentence).
+
+`synth/machine.s` (a DRAM unit, 908 B) holds the chooser: Modwerk's
+`machine.s` and its `registration.c` helpers written out in assembly. The
+lists grow from five rows to six (six pokes: `pea 5 -> 6` at `0x40079248` and
+`0x400585fa`, `moveq #4 -> #5` at `0x4003c950`, `0x40078678`, `0x400786ce`,
+`0x40079904`); row 5 prints `FM SYNTH` (`0x400334d8`; SRC SETUP's name table,
+`0x4003c928`, copied from the stock one at run time); a chosen track's row is
+highlighted and the lists open on it (`0x4003c980`, `0x400786c8`,
+`0x400585dc`, `0x40078886`); SRC SETUP's editor and drawer address row 5 as
+FLEX (`0x4003a52e`, `0x4003cd98`); a track's machine name reads FM SYNTH
+(`0x4003d718`); the UI tick (`0x4005221e`) puts the FM SYNTH page into the
+PLAYBACK descriptor table's spare slot 5 for SRC SETUP. The commits: the
+machine window's machine-byte write shares the FINE-0c detour at
+`0x40079816` (`fm_main_commit`, then `po_machwin`); SRC SETUP's two writes
+`0x4005a616` / `0x4005a850` (the second follows `po_machlist`'s detour, which
+returns to it). Row 5 is stored as FLEX plus the mark; any other row clears
+the mark. The Part validator (`0x40002318`) clamps FLEX's PTCH into 4..124,
+where FM SYNTH's PTCH is 0..127 (-64..+63 semitones): for a chosen track the
+twelve FLEX bytes sit the validation out (the stock defaults in their place,
+read from the descriptor, the FM bytes back afterwards). A marker track keeps
+the stock clamp, as before.
+
+Playing without a sample (in `poly.s`): the kind table's FLEX START callback
+(`0x400d6458`, a SymbolRef) is `po_fmstart`, which starts a chosen track's
+voice without consulting a sample (the CF voice marked active, so the stock
+STOP and kill end it; 0x100, a cold start, for the DSP) and calls the stock
+callback for every other FLEX track; the frame builder's second supplier call
+(`0x4000d514`, `po_fmsource`) gives a chosen track `sy_render` where an empty
+FLEX voice would get stock's silent supplier; and `sy_call` writes the source
+header stock would have written (count, ring position, rate 1.0, read
+position) with silent pairs for the engine to fill, instead of calling the
+stock renderer. `po_fmstart` answers as the stock callback does: 0x100 (a cold
+start) for a voice that was not running, 0 for one that runs on. Modwerk's
+transport answered 0x100 to every START; on this engine that restarted the
+DSP's stream under every warm note (a retrigger or a new key on a sounding
+note: +40..57 dB of onset splatter in the note-start click table, where a
+marker track measures -2..+28 dB), so the port answers 0 there, as stock does
+for a START that continues its voice. `po_is_synth`, the page's `pg_resolve`, the VOIC/CHRD page
+(`po_lfopage`) and the voice start test the mark ahead of the marker scan.
+The page cave gained `fm_descriptor` (16 B, first; `pg_resolve` moved to +16)
+and the mark test: 1,868 B (was 1,812), `PINNED_PAGE` re-ratified, inside the
+same zero run (`0x400d24d0..0x400d2ce0`).
+
+Changed from Modwerk's module: one detour at `0x40079816` does both the FINE
+rule and the commit (Modwerk dropped the FINE-0c detour); `pg_resolve` is the
+only PLAYBACK route (their second resolver detour at `0x40031e74` is not
+needed); their name hook at `0x4004c36a` is left out (`a0` is not a machine
+byte there, so it never changed a name); no refusal path; the voice start
+tests the mark only and keeps this engine's own scan of the starting voice's
+sample (a sample lock to a real file on a marker track stays a sample); a
+marker track keeps its patch when FM SYNTH is chosen over it; the START
+callback answers 0 for a voice that runs on (above); the six-row name table is
+copied from the stock one at run time instead of carrying its five addresses.
+
+### Measured (8 Oct 2026, ot_emu, the quantizer + synth image built from this commit)
+
+### Measured (8 Oct 2026, ot_emu, the quantizer + synth image built from this change through the panel; T1 on the 2.10 click and gate cards)
+
+- **Selection.** SRC SETUP and SELECT MACHINE TYPE list FM SYNTH as the sixth
+  row on T1..T8. Chosen on T1 with an empty FLEX slot: the Part's machine byte
+  01, the mark `46 4d 01` in the Part, the FLEX PLAYBACK bytes `40 0c 20 40 00
+  28`, the SETUP bytes 0; the page reads PTCH RATO INDX FINE FDBK DEC and the
+  footer FM SYNTH>FM SYNTH; the pattern's trigs sound at C4 (spectral peak
+  262.5 Hz, 2.5 Hz bins) with no sample anywhere in the slot. Both lists then
+  open on FM SYNTH; FLEX chosen again clears the mark and the page reads FLEX.
+- **A sample track.** T1 = FLEX with a sine in its slot: the sample, then FM
+  SYNTH (the FM voice at C4), then FLEX again: the last render is sample for
+  sample the first, and the first is sample for sample the build without this
+  change.
+- **A marker track** (FLEX slot 1 = `SYNTH.WAV`, PB 64 20 50 64 30 80): FM
+  SYNTH chosen over it keeps the PB and SETUP bytes and adds the mark; the
+  render before and after is the same to 0.00 dB (10 ms RMS envelopes).
+- **SAVE and reload.** FM SYNTH chosen, INDX 32 -> 42, PROJ > SAVE > YES >
+  YES; a cold boot of that card: machine FLEX, the mark, INDX 42, the page
+  FM SYNTH, both lists on FM SYNTH, the voice at C4.
+- **Part COPY / PASTE / CLEAR.** Part ONE with FM SYNTH on T1, copied
+  (FUNC + REC in the PART chooser) and pasted into THREE (FUNC + STOP): THREE's
+  T1 is FM SYNTH (mark, patch, sound); CLEAR (FUNC + PLAY) of THREE: T1
+  STATIC, no mark, the stock defaults.
+- **The note-start click table** (the 2.10 referee: onset splatter per note
+  over 16-step patterns, cold and warm, retriggers and voice steals,
+  RATO 0.25 / 1, INDX 0 / 40 / 100, FDBK 0 / 60, ATK 16) on a marker track:
+  every row within 0.1 dB of the 2.10 build before this change. **The same
+  Parts on a machine-list track with an empty slot: every row within 0.2 dB of
+  the marker track** (before the START answer was fixed: +40..+57 dB on every
+  warm row, cold rows equal).
+- **The key gate** (a held CHROMATIC key, a sequencer trig, LEG MONO, a VOIC 4
+  chord) and the attack table, marker vs machine-list track: the held key
+  sample-identical up to its release (the release lands up to 2 ms apart, the
+  panel's timing), the sequencer trig and the C4 pattern sample-identical, LEG
+  MONO within 0.4 dB (100 ms envelopes), the VOIC 4 chord within 0.16 dB (100 ms;
+  the voices' phases beat up to 3.8 dB in 10 ms windows, as between any two
+  runs), ATK 0 / 16 / 20 / 32 = 11.07 / 14.01 / 24.24 / 51.04 ms on both.
+- **Unchanged elsewhere.** The LFO destination list and the rest of the 2.10 menu
+  walk: 171 of 171 screenshots pixel-identical to the build before. The engine harnesses (the
+  gate and LFO regression suites): pass, PCM and state identical to the build
+  before; cost per frame mono 1,165.9 -> 1,234.4 instructions (mean; peak 2,556
+  -> 2,658), VOIC 4 4,061.9 -> 4,130.4 (peak 6,390 -> 6,492): the mark tests.
+  poly.s 20,560 -> 20,944 B, machine.s 908 B; every source assembles at
+  -mcpu=5475 and 54455. `tools/stock_scan.py`: no stock bytes beyond the
+  displaced instructions (two new 16-byte matches in machine.s are the Part
+  address idiom `movea.l 0x46c82456; mvz.b 0x100b14cf; move.l #6322; muls.l`,
+  the same as poly.s's).
+
+Not tested: hardware; MIDI notes, the live recorder and scenes on a
+machine-list track (they read the same `po_is_synth` / `qz_is_synth`);
+eight machine-list tracks playing at once.
 
 ---
 

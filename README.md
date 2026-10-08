@@ -14,8 +14,12 @@ to watch.
 
 ## The modules
 
-- **`synth/`** (key `SYNTH MACHINE`) -- a two-operator FM synth machine: any
-  FLEX track whose sample is named FMSYNTH*.wav becomes a synth (a silent
+- **`synth/`** (key `SYNTH MACHINE`) -- a two-operator FM synth machine:
+  **FM SYNTH is a machine of its own in the track's machine list** (since
+  2.10: FUNC + SRC, or SELECT MACHINE TYPE -- no sample or marker file
+  needed; see "Selecting FM SYNTH from the machine list" in
+  [synth/README.md](synth/README.md)), and any
+  FLEX track whose sample is named FMSYNTH*.wav still becomes a synth (a silent
   4 s marker file will do; SYNTH*.wav is still accepted; the marker never
   ends the note -- the AMP envelope or a key release does), with its own PLAYBACK page (PTCH RATO INDX FINE
   FDBK DEC: PTCH in semitones, -64..+63, FINE in cents -- 0c the moment a
@@ -142,7 +146,8 @@ wrappers over the same submodule); at 2.9 ROOT, the quantizer as a DRAM
 unit, FINE 0c, the engine-owned AMP envelope and the limiter's removal ran
 there, the held-chord crackle and the live-key pops gone, by ear; the tuner
 (UP + TEMPO) works there too (29 Sep 2026). The last two 2.9 fixes (a sequencer trig on a sounding note, the index ramp) are
-emulator-verified and not yet flashed. Every feature was verified in an
+emulator-verified and not yet flashed; so is FM SYNTH in the machine list
+(2.10, 8 Oct 2026). Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
 real-time build of octabam's emulator and a virtual front panel). Read
@@ -160,8 +165,13 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
-- 2.10 (not tagged yet; 5 - 7 Oct 2026): four synth changes and three
-  fixes. The DEC knob puts HOLD at 127, the last position on the right (the index holds); 0 is
+- 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
+  four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
+  (FUNC + SRC) and of SELECT MACHINE TYPE on every track: it plays with no
+  sample and no marker file (the chooser adapted from Modwerk's FM Synth
+  module, MIT); the marker files still work. A stock or older build reads such
+  a track as a plain FLEX track: choose FLEX or STATIC before downgrading. The
+  quantizer of the same tag is needed for CHROMATIC keys on such a track. The DEC knob puts HOLD at 127, the last position on the right (the index holds); 0 is
   the shortest decay (prints `0`) and 1..126 are unchanged. A saved DEC 0
   (was HOLD) now decays at once; a saved 127 (was 2.0 s) now holds. The
   note-start click is gone: every attack lasts at least one carrier period
@@ -212,6 +222,12 @@ builds on the author's unit and were never tagged.
   TOOLING.md`), which the synth's EMAC rate arithmetic was written against.
 - [markandrus](https://github.com/markandrus/octemu) -- USB MIDI and USB
   AUDIO, carried in the `octatrick-usb` remix.
+- Modwerk contributors ([repeat98/modwerk](https://github.com/repeat98/modwerk),
+  MIT) -- the FM SYNTH machine chooser: the sixth machine row in SRC SETUP and
+  SELECT MACHINE TYPE, the `FM`, 1 Part signature, the Part-validator guard
+  and the sample-free START / source path, adapted from Modwerk's FM Synth
+  module (derived from its Analog BD chooser hooks, Sam Banks' MIT notice) and
+  ported to this repository's manifests. Their notices are in [LICENSE](LICENSE).
 
 ## Unofficial
 
@@ -223,5 +239,8 @@ licence terms and warranty. Back up your projects before flashing.
 ## License
 
 [MIT](LICENSE), Tim Hastie 2026, for this repository's own code and
-documentation. It does not extend to Elektron's firmware, nor to octabam,
+documentation. The FM SYNTH machine chooser (`synth/machine.s` and its parts of
+`synth/poly.s`, `synth/page.s` and `quantizer/quantizer.s`) is adapted from
+Modwerk's FM Synth module under its MIT notices (Copyright (c) 2026 Modwerk
+contributors; Copyright (c) 2026 Sam Banks), reproduced in [LICENSE](LICENSE). It does not extend to Elektron's firmware, nor to octabam,
 which is Sam Banks's under its own MIT licence.
