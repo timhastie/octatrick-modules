@@ -148,7 +148,7 @@
         .global po_retrig
         .global po_fmsource, po_fmstart  | the FM SYNTH machine (machine.s): the source supplier and the START callback
         .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
-        .global po_lfdname, po_lfdedit, po_lfdlfo | b68: the LFO destination list (LFO SETUP's PMTR)
+        .global po_lfdname, po_lfdedit, po_lfdlfo | 2.10: the LFO destination list (LFO SETUP's PMTR)
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
@@ -442,7 +442,7 @@ sy_cold_hold:
         move.l  %d1,S_HTIM(%a3)
         tst.w   S_GPREV(%a3)
         beq     sy_cold1                 | silent: cold
-        bsr     po_xfq                   | (b68) sounding: a mono note at ANOTHER pitch crossfades -- the old tone
+        bsr     po_xfq                   | (2.10) sounding: a mono note at ANOTHER pitch crossfades -- the old tone
         beq     sy_warm_env              | fades as a voice (po_carry, state 3: one period, S-shaped, po_fade_frame)
         bsr     po_carry                 | and the new note starts cold from phase 0 with its attack; the same
                                          | pitch (within half a semitone) or a paraphonic note: continuous
@@ -804,13 +804,13 @@ po_me_store:
         move.l  %d1,S_GAIN(%a3)
         rts
 
-| ---- po_alaw: the attack's step this frame (b68 I1, the low-note onset click) ----
+| ---- po_alaw: the attack's step this frame (2.10, 6 Oct 2026: the low-note onset click) ----
 | d0 = the ATK law's linear step (Q15 of full, a frame), d1 = the level now, a0 = the
 | voice's carrier increment, a1 = full (32768 mono, T_GMAX paraphonic) -> d0 = the step.
 | (1) no faster than ONE CARRIER PERIOD: the 16-frame floor (5.8 ms) is a fraction of a
 | cycle below ~C3, and the ramp's splatter (100 Hz .. 1 kHz) is louder than a dark low
 | tone's own content (RATO 0.25: Tim's click); one period's step is inc >> 13 (Q15 a
-| frame for 32768), scaled to full. (b68 P2) A period of 16..32 frames (~F2..F3) gets
+| frame for 32768), scaled to full. (7 Oct 2026) A period of 16..32 frames (~F2..F3) gets
 | 2p - 16 frames (at most 32): C3 26 instead of 21; nothing changes from F3 up or below F2.
 | (2) S-SHAPED: step' * (1/4 + 4 r (1 - r)), r = level / full, step' = 1.28 step (the same total time) -- the linear ramp's corner at full (a
 | slope step at an arbitrary phase) shrinks to a quarter. Preserves all but d0.
@@ -822,12 +822,12 @@ po_alaw:
         lsr.l   %d3,%d2                  | one carrier period's step for full 32768
         cmpi.l  #128,%d2
         bcc     po_al_p
-        move.l  #128,%d2                 | (b68) at most 256 frames (93 ms; a carrier under ~11 Hz, or none)
+        move.l  #128,%d2                 | (2.10) at most 256 frames (93 ms; a carrier under ~11 Hz, or none)
 po_al_p:
         cmpi.l  #4096,%d2
         bcc     po_al_s                  | the 8-frame fade / 16-frame attack floor is the slower: no change
         cmpi.l  #2048,%d2
-        bcc     po_al_sc                 | (2.10, b68 P2) a period of 16 frames or less: one period
+        bcc     po_al_sc                 | (2.10, 7 Oct) a period of 16 frames or less: one period
         move.l  #32768,%d3
         divu.l  %d2,%d3                  | p, frames
         cmpi.l  #32,%d3
@@ -852,7 +852,7 @@ po_al_sc:
 po_al_s:
         moveq   #32,%d2
         cmp.l   %d2,%d0
-        bcs     po_al_out                | (P1) a step under 32 (a slow ATK, past ~370 ms): linear -- the S-curve's
+        bcs     po_al_out                | (2.10) a step under 32 (a slow ATK, past ~370 ms): linear -- the S-curve's
         move.l  %d0,%d2                  | truncations there stretched ATK 64 by 11 %, 87 by 2.1x; its corner is inaudible
         lsr.l   #2,%d2
         add.l   %d2,%d0                  | step * 1.25
@@ -913,7 +913,7 @@ po_lk_out:
         tst.l   %d0
         rts
 
-| ---- po_xfq (b68): Z clear when a warm START is a MONO note (VOIC 1, as sy_warm reads it) at
+| ---- po_xfq (2.10): Z clear when a warm START is a MONO note (VOIC 1, as sy_warm reads it) at
 | another pitch than the sounding one: the word now (sy_word) at least half a semitone from
 | S_CUR's. a3 = the track record, a4 = fp, d2 = track. Clobbers d0, d1, d6, a0.
 po_xfq:
@@ -941,7 +941,7 @@ po_xq_yes:
         moveq   #1,%d0
         rts
 
-| ---- po_erlen (b68 I1): d1 = a warm START's index-ramp frames left; 255 = fresh (sy_cold / po_st_note) ->
+| ---- po_erlen (2.10, the low-note onset click): d1 = a warm START's index-ramp frames left; 255 = fresh (sy_cold / po_st_note) ->
 | max(16, one carrier period of the increment d0: 2^28 / inc frames), at most 254. A 16-frame index jump on a
 | low note is the same onset splatter as the 16-frame attack (RATO 0.25, C1: +37 dB over the tone's own HF in
 | the model). Clobbers d0.
@@ -1578,7 +1578,7 @@ po_fr_amp:
         bra     po_fr_gain
 po_fr_cut:
         move.l  T_GMAX(%a5),%d0          | stolen / chord-memory cut: T_GMAX / 8 a frame (8 frames = 2.9 ms), then freed --
-        lsr.l   #CUT_SHIFT,%d0           | (b68) no faster than one carrier period, S-shaped (po_alaw, as the attack)
+        lsr.l   #CUT_SHIFT,%d0           | (2.10) no faster than one carrier period, S-shaped (po_alaw, as the attack)
         lea     -8(%sp),%sp
         movem.l %a0-%a1,(%sp)
         movea.l T_GMAX(%a5),%a1
@@ -1797,7 +1797,7 @@ po_ff_loop:
         tst.b   V_STATE(%a0)
         beq     po_ff_next
         move.l  %d0,-(%sp)               | (the count)
-        move.l  %a0,%d4                  | (b68) the step no faster than one period of the LOWER of the voice and
+        move.l  %a0,%d4                  | (2.10) the step no faster than one period of the LOWER of the voice and
         move.l  V_INC(%a0),%d0           | the mono voice now (a crossfade down lasts the new note's period, up
         move.l  S_INC(%a3),%d1           | the old one's), S-shaped (po_alaw; full = the mono voice's 32768)
         beq     po_ff_i
@@ -3088,7 +3088,7 @@ po_l3_back:
 | built from the stock descriptor on first use -- is returned.
 po_lfopage:
         move.l  #LFO_P,%d0               | displaced: the stock descriptor
-        mvz.b   %d5,%d2                  | b68 I2: the resolver loads only d5's LOW byte (`moveb %a0@,%d5`);
+        mvz.b   %d5,%d2                  | 2.10: the resolver loads only d5's LOW byte (`moveb %a0@,%d5`);
         cmpi.l  #1,%d2                   | FLEX? (the long compare failed for a caller whose d5 was negative)
         bne     po_lp_done
         move.l  #6322,%d2
@@ -3179,7 +3179,7 @@ po_lp_have:
 po_lp_done:
         jmp     RESOLVER_RET
 
-| ==== THE LFO DESTINATION LIST (b68, 6 Oct 2026; I2's study, three hooks) ==========
+| ==== THE LFO DESTINATION LIST (2.10, 6 Oct 2026; three hooks) ======================
 | LFO SETUP's PMTR names a destination as page * 6 + slot (0 PLAYBACK, 1 LFO, 2 AMP, 3 FX1,
 | 4 FX2: the resolver's page kinds) and prints it through the stock formatter 0x4003bf64
 | (the LFO descriptor's slot-6 formatter), which takes the PLAYBACK names from the machine
@@ -4898,7 +4898,7 @@ po_rel_out:
 | a0 = 0x46104d15) -- the frame builder's per-track copy of the DSP command byte
 | 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t] (0x4000c642), the one
 | funnel every START form passes on its way to the DSP and the packer. THE CAUSE
-| (BUILD 37, 29 Sep 2026; po_rtlog's ring, root29w/run_f37a.log): a sequencer trig
+| (BUILD 37, 29 Sep 2026; read back from po_rtlog's ring): a sequencer trig
 | on a track whose voice still sounds is posted by the builder's own sequencer
 | path (0x4000b906: the trig record's byte +62, then the OR-0x10 of 0x4000b9aa /
 | 0x4000bd74 / 0x4000bdc0) as 0x10 | n -- the CF START bit 4 with the trig's
@@ -5805,7 +5805,7 @@ po_flex_slot:
 | reload of a track from its Part writes them (0x40001f18). The frame builder hands
 | the DSP and sy_render that word, not the lane byte, and refreshes it from the Part
 | only at a trig from another bank or Part: a track that had played a sample at RATE
-| 127 kept FINE +63c under a page reading 0c (b68 P5). Preserves every register.
+| 127 kept FINE +63c under a page reading 0c (8 Oct 2026). Preserves every register.
 po_fine_reset:
         lea     -16(%sp),%sp
         movem.l %d0-%d1/%a0-%a1,(%sp)
@@ -6014,11 +6014,11 @@ po_gmax:
         .long   32768, 32768, 23170, 18919, 16384
 
 | ---- po_atk: AMP ATK raw -> the attack step a frame, Q15 (full = 32768) ----------
-| The DSP's attack as measured (stage 1, root29o/ana_env.txt): a LINEAR ramp to
+| The DSP's attack as measured (stage 1, stock renders): a LINEAR ramp to
 | full in t = 3.85 ms x 2^(ATK / 8.53) (8: 7.5 ms, 16: 15, 32: 50, 64: 700, 96:
 | 9.45 s); step = 32768 / max(16, t / 0.3628 ms) a frame -- the 16-frame ramp
 | (5.8 ms, ATK 0..8) is the floor, and the Q15 step's floor of 1 makes ATK >= 91
-| an 11.9 s ramp (the DSP's 96 is 9.5 s, its 127 anomalous). root29p/gen_env_tables.py.
+| an 11.9 s ramp (the DSP's 96 is 9.5 s, its 127 anomalous). Table generated from that law.
 po_atk:
         .short  2048, 2048, 2048, 2048, 2048, 2048, 1896, 1748
         .short  1612, 1486, 1370, 1263, 1165, 1074, 990, 913
@@ -6043,7 +6043,7 @@ po_atk:
 | 126: 9 s), 127 = INF (k = 0); tau is floored at 1 ms (REL 0..15) -- the DSP's
 | REL 0 is a one-sample dead cut (Tim's click), the engine's is -20 dB in 2.3 ms,
 | -40 dB in 4.6 ms. (Until plan B: tau = 5 ms x 1000^(rel / 126), 134 ms at REL
-| 60 where the DSP takes 38.) root29p/gen_env_tables.py.
+| 60 where the DSP takes 38.) Table generated from that law.
 po_relk:
         .short  19941, 19941, 19941, 19941, 19941, 19941, 19941, 19941
         .short  19941, 19941, 19941, 19941, 19941, 19941, 19941, 19941

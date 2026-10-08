@@ -88,7 +88,7 @@
 | copier hands the DSP and sy_render every frame) and the two slew counters of those
 | bytes cleared. The frame builder refreshes them from the Part only at such a trig,
 | so a track that had played a sample in this Part kept that sample's words and SETUP
-| (b68 P5: RATE 127 = FINE +63c, STRT 0 = RATO 0.25, two octaves down: 67.8 Hz for C4).
+| (found 8 Oct 2026: RATE 127 = FINE +63c, STRT 0 = RATO 0.25, two octaves down: 67.8 Hz for C4).
 fm_choose:
         lea     -32(%sp),%sp
         movem.l %d0/%d3/%a0-%a5,(%sp)

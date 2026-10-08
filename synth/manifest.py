@@ -152,7 +152,7 @@ the engine's one continuous stream (the warm START rule) the sum is a +5.6 dB /
 1.13). The panel key's START reaches the DSP as 0x30 (bits 4 and 5, nibble 0)
 and is clean. po_retrig, a detour at the copy (0x4000c634), rewrites every START
 byte on a synth track whose engine voice is on (S_ON) to that clean form; the
-trig lands a frame boundary early (at most 0.34 ms). Measured (root29w/run_f37a.log,
+trig lands a frame boundary early (at most 0.34 ms). Measured (BUILD 37's log,
 a trig on every step at 120 BPM, VOIC 1 C4, ATK 0 HOLD INF REL 60 INDX 0): max
 |step| / the tone's slope x1.01, max |d2| 9, per-frame amplitude 1.00 on every
 frame of every trig, the fix fired on every trig (po_rtlog: 39 rewrites, the
@@ -172,12 +172,12 @@ per-sample multiplier I * E is interpolated across every frame: S_IEFF / V_IEFF
 are the running value, sy_loop / po_fi_loop step them by S_ISTEP (+126, the
 word S_HOLD / S_KEYED held) / V_ISTEP (+38), (target - running) / 16, once a
 frame -- no frame-edge step for the ramp, the decay or a knob. V_GPREV is a word
-at +60. Measured (root29x/run_v38b.log, take b: HOLD INF REL 60 INDX 40 DEC 40,
+at +60. Measured (BUILD 38's log, take b: HOLD INF REL 60 INDX 40 DEC 40,
 a trig every step): max |step| / the tone's slope x1.07, max |d2| 88 against
 the take's own 99.9th pct 108, the centroid moving over ~8 ms.
 
 BUILD 33 (round 3): STOP ENDS THE ENGINE'S VOICES AT THE STOCK VOICE KILL. Round 2
-measured (root29q-verify/run_stop.log) that po_stop's site 0x4000b2c8 never runs
+measured (an independent rerun's STOP log) that po_stop's site 0x4000b2c8 never runs
 on the rig for any STOP form -- the global word's writers (0x4009bbb8 / 0x4009c3a0
 / 0x400a4d8c) sit behind [0x80000060] and the pattern-state bytes 0x80006511/12,
 and the frame builder's consumer behind two more gates -- so a REL INF tone kept

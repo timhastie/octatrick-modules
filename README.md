@@ -171,9 +171,10 @@ builds on the author's unit and were never tagged.
   sample and no marker file (the chooser adapted from Modwerk's FM Synth
   module, MIT); the marker files still work. A stock or older build reads such
   a track as a plain FLEX track: choose FLEX or STATIC before downgrading. The
-  quantizer of the same tag is needed for CHROMATIC keys on such a track. The DEC knob puts HOLD at 127, the last position on the right (the index holds); 0 is
-  the shortest decay (prints `0`) and 1..126 are unchanged. A saved DEC 0
-  (was HOLD) now decays at once; a saved 127 (was 2.0 s) now holds. The
+  quantizer of the same tag is needed for CHROMATIC keys on such a track.
+  The DEC knob puts HOLD at 127, the last position on the right (the index
+  holds); 0 is the shortest decay (prints `0`) and 1..126 are unchanged. A
+  saved DEC 0 (was HOLD) now decays at once; a saved 127 (was 2.0 s) now holds. The
   note-start click is gone: every attack lasts at least one carrier period
   and is S-shaped (attacks below C3 are slower: C1 reaches full level in
   31 ms, C3 in 9.4 ms), a pitch change on a sounding mono note crossfades, a
@@ -242,5 +243,6 @@ licence terms and warranty. Back up your projects before flashing.
 documentation. The FM SYNTH machine chooser (`synth/machine.s` and its parts of
 `synth/poly.s`, `synth/page.s` and `quantizer/quantizer.s`) is adapted from
 Modwerk's FM Synth module under its MIT notices (Copyright (c) 2026 Modwerk
-contributors; Copyright (c) 2026 Sam Banks), reproduced in [LICENSE](LICENSE). It does not extend to Elektron's firmware, nor to octabam,
-which is Sam Banks's under its own MIT licence.
+contributors; Copyright (c) 2026 Sam Banks), reproduced in [LICENSE](LICENSE).
+It does not extend to Elektron's firmware, nor to octabam, which is Sam
+Banks's under its own MIT licence.
