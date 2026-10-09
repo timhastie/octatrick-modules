@@ -321,8 +321,11 @@ fm_type:
         adda.l  %d2,%a0
         adda.l  #SIG_OFF,%a0             | the track's signature place (FLEX: the caller's byte)
         bsr     ml_sigrow
-        bmi     fm_ty_out                | unsigned: FLEX
+        bmi     fm_ty_flex               | unsigned: FLEX
         addq.l  #FM_ROW,%d0              | its row
+        bra     fm_ty_out
+fm_ty_flex:
+        moveq   #FLEX,%d0
 fm_ty_out:
         movem.l (%sp),%d1-%d2/%a0-%a1
         lea     16(%sp),%sp
