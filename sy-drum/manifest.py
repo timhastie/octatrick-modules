@@ -3,14 +3,18 @@ analog two-voice drum synthesizer (the SY-1 circuit; README.md), running on SYNT
 MACHINE's engine: chosen in the machine list (SELECT MACHINE TYPE or SRC SETUP: the
 row after FM SYNTH), it plays PTCH MODE WDTH SWEP SPED DEC on its PLAYBACK page (stock
 p-locks, LFOs and scenes reach them) with a dedicated LFO / S&H on its PLAYBACK SETUP
-page (LSPD LDEP WAVE S&H, Part settings). Requires SYNTH MACHINE (synth/): the machine
+page (LSPD LDEP WAVE S&H: the Part's defaults, each lockable per step -- the development
+line's dedicated step locks, kept in sylockNN files beside the project's banks). Requires
+SYNTH MACHINE (synth/): the machine
 list, the sample-free voice transport, the engine-owned AMP envelope, the keys and MIDI
 are that module's; SYNTH MACHINE assembles its calls into this unit when SY DRUM is in
 the remix (synth/manifest.py remix_include: HAVE_SYDRUM).
 
-One DRAM unit (sydrum.s, with engine.inc.s and synth/engine_abi.inc through its
-remix.inc) and one detour of its own: the page resolver's epilogue (0x40031ed6), where
-a SY DRUM track gets its PLAYBACK page. Verified in ot_emu (README.md).
+One DRAM unit (sydrum.s, with engine.inc.s, the step locks' sources and
+synth/engine_abi.inc through its remix.inc), a 2 MiB DramRegion (the lock table) and 52
+detours of its own: the page resolver's epilogue (0x40031ed6), where a SY DRUM track gets
+its PLAYBACK page, the setup editor (0x4003a524), and the step locks' 50 (sequencer, UI,
+clipboard, card I/O; LOCK_HOOKS). Verified in ot_emu (README.md).
 """
 
 import os
@@ -174,7 +178,8 @@ MODULE = Module(
                "renders sample-identical to the dev line's on-board engine, save / reload; not yet on hardware",
     doc="SY DRUM in the machine list (after FM SYNTH): a two-voice analog-style drum machine on FLEX "
         "tracks -- PTCH MODE (A..F) WDTH SWEP SPED DEC with stock p-locks, LFOs and scenes, and a "
-        "dedicated LFO / S&H (LSPD LDEP WAVE S&H) on its PLAYBACK SETUP page. Needs SYNTH MACHINE.",
+        "dedicated LFO / S&H (LSPD LDEP WAVE S&H) on its PLAYBACK SETUP page, lockable per step "
+        "(sylockNN files beside the banks). Needs SYNTH MACHINE.",
     linked=(
         Linked("sydrum", os.path.join(_HERE, "sydrum.s"), cpu="5475", dram=True, include=remix_include),
     ),
@@ -192,4 +197,8 @@ MODULE = Module(
                      pad_to=len(stock) // 2)
               for address, stock, symbol, what in LOCK_HOOKS),
     dram_regions=(DramRegion("sl_work_table", LOCK_TABLE_BYTES),),
+    conflicts=(("KITS", "both hook the project load / save / reload / clear jobs and the pattern clipboard "
+                        "(SY DRUM's step-lock files and clipboard)"),
+               ("PLOCKS P2", "both hook the sequencer's lock queue and clear paths and the held-trig encoder "
+                             "(SY DRUM's step locks)"),),
 )
