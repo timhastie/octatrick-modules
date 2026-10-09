@@ -144,11 +144,22 @@ def blobs_hexruns(text: str):
     return out
 
 
+def sydrum_locks(directory: pathlib.Path):
+    """2.11: the step locks' sources sy-drum's remix.inc appends after the engine, in the
+    manifest's order (its LOCKS tuple, read without importing octabam's schema)."""
+    tree = ast.parse((directory / "manifest.py").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "LOCKS" for t in node.targets):
+            return ast.literal_eval(node.value)
+    return ()
+
+
 def remix_variants(path: pathlib.Path):
     """2.11: a unit that includes "remix.inc" (octabam writes it per remix from the
     manifest's Linked.include) is assembled once per flag setting, with the file this
     repository's manifests build: HAVE_SYDRUM 0 and 1 (the SY DRUM call-outs) and
-    synth/engine_abi.inc; sy-drum's unit (two passes) also gets its engine. Without it
+    synth/engine_abi.inc; sy-drum's unit (two passes) also gets its engine and its step
+    locks (the .inc.s files are only ever assembled inside that unit). Without it
     the assembly would fail and the stronger check be skipped. [None] when the unit
     includes nothing."""
     text = path.read_text(errors="replace")
@@ -157,8 +168,9 @@ def remix_variants(path: pathlib.Path):
     abi = (REPO / "synth" / "engine_abi.inc").read_text()
     if path.parent.name == "sy-drum":
         engine = (path.parent / "engine.inc.s").read_text()
+        locks = [(path.parent / f"{n}.inc.s").read_text() for n in sydrum_locks(path.parent)]
         return ["\n".join((".ifndef SD_PASS1", ".set SD_PASS1, 1", ".set HAVE_SYDRUM, 1", abi,
-                           ".else", engine, ".endif"))]
+                           ".else", engine, *locks, ".endif"))]
     return [f".set HAVE_SYDRUM, {f}\n" + abi for f in (0, 1)]
 
 
