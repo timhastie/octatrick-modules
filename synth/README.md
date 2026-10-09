@@ -778,7 +778,7 @@ SYNTH VOIC 1, C4 sine, 120 BPM; `m46.py` = m44 + the po_rtlog counters
 
 | take | BUILD 33 | BUILD 37 |
 |---|---|---|
-| **a** ATK 0 HOLD INF REL 60 INDX 0, a trig on every step (the decisive take) | x24.76, \|d2\| 4534, per-frame 1.85 1.58 1.32 1.13 (root29v) | **max \|step\| / slope x1.01, max \|d2\| 9 (the whole take's 99.9th pct 9), per-frame amplitude 1.00 on all 13 frames of all 8 trigs, level -16.5 dBFS before and after**; po_rtlog: 39 rewrites, every T2 START byte `0x14 0x1c 0x15 0x1d ... -> 0x30` |
+| **a** ATK 0 HOLD INF REL 60 INDX 0, a trig on every step (the decisive take) | x24.76, \|d2\| 4534, per-frame 1.85 1.58 1.32 1.13 (the verifier's run of BUILD 33, 28 Sep 2026) | **max \|step\| / slope x1.01, max \|d2\| 9 (the whole take's 99.9th pct 9), per-frame amplitude 1.00 on all 13 frames of all 8 trigs, level -16.5 dBFS before and after**; po_rtlog: 39 rewrites, every T2 START byte `0x14 0x1c 0x15 0x1d ... -> 0x30` |
 | **b** HOLD INF REL 60 INDX 40 DEC 40 | x6.66, \|d2\| 4632, 1 ms env jump 12.3 dB (the verifier's run_b33x; the round's own run_b33 read x1.10 / \|d2\| 105 -- its trigs were frame-aligned) | x7.45, \|d2\| 4961, 1 ms env jump 11.3 dB: a hard step at each trig (2008 -> 4786 in one sample); the spectral centroid 322 Hz before, 498 Hz 1-11 ms after, 298 Hz at 50-60 ms = the index envelope now restarts at the trig (on BUILD 33 it did not: 515 -> 431 -> 308). See open issues. |
 | **c** HOLD 64 REL 20 INDX 40 | as b | as b (x7.45, \|d2\| 4961) |
 | **d** HOLD 6 REL 20 INDX 40 (cold each) | before -34..-24 dBFS, \|d2\| 3 (the grid missed the onsets: 0-5 ms after -37.5) | before -21.8..-15.2 dBFS; the onsets are normal 16-frame ramps (1 ms env -65 -35 -26 -21 -19 -17 -15.5 dBFS, rise 3 ms, \|d2\| 61 at trig 2); the SUMMARY's x2778 / \|d2\| 3047 is trig 1 under the same index step as b |
@@ -1686,14 +1686,14 @@ reset. `po_is_synth` now shares the marker scan (`po_slot_marker`). The
 unit grew by 262 B (the ROM footprint and the cave are unchanged: 3,236 B
 of cave left in the octatrick-tuner remix, BUILD 21).
 
-### Measured (28 Sep 2026, the octatrick-tuner BUILD 21 bus on ot_emu `--dsp-rt` through the panel, a copy of the 2.9 card: T1 = FLEX slot 3 `third-0.wav` (a 438.645 Hz sine) with RATE 127, T2 = FM SYNTH slot 5 `SYNTH.wav`; `m31.py`, shots `out21/`; the Part byte read from the bank blob, the shadow from `0x1001614e + 0x8edb3`, the lane from `0x80000813`; T1's slot-byte shadow `0x100a5198..+5` watched with ot_emu's `OT_WATCHMEM` for the writers' PCs)
+### Measured (28 Sep 2026, the octatrick-tuner BUILD 21 bus on ot_emu `--dsp-rt` through the panel, a copy of the 2.9 card: T1 = FLEX slot 3 `third-0.wav` (a 438.645 Hz sine) with RATE 127, T2 = FM SYNTH slot 5 `SYNTH.wav`; `m31.py` and its shots; the Part byte read from the bank blob, the shadow from `0x1001614e + 0x8edb3`, the lane from `0x80000813`; T1's slot-byte shadow `0x100a5198..+5` watched with ot_emu's `OT_WATCHMEM` for the writers' PCs)
 
 - The assignment (the machine window, slot 5 = the FMSYNTH marker, YES) on
   T1 = FLEX slot 3 with RATE 127: the FLEX PLAYBACK bytes go
   `[64,0,127,127,0,79]` -> `[64,0,127,64,0,79]`; the Part byte, the
   battery-RAM shadow (`0x1001614e + 0x8edb3`) and the live lane
   (`0x80000813`) all read 64; the page redraws as FM SYNTH > FLEX with
-  FINE 0c at once (`out21/assign_page.png`).
+  FINE 0c at once (`assign_page.png`).
 - FINE +20c (raw 84), SCALE MAJOR / ROOT A / GLIDE 12, PROJECT > SAVE,
   eject, a cold boot loading the project: RATE 84 in the Part, the shadow
   and the lane -- a tuned synth track keeps its FINE.
@@ -3475,7 +3475,7 @@ index-1 form), this cave at 0x400d6d00, the page cave at 0x400d24d0
 byte at 0x400d2cdc (the second run: 112 B left between the page cave and it;
 the byte moved to battery RAM 0x100b14ed on 26 Sep 2026).
 
-### Measurements (24 Sep 2026, the panel on 8593, `--sound on`, T2 = SYNTH slot 5 of a copy of the OTLIVE card; the author's workspace (not in the repo): `glide_audio2/3.py`, `glide_seq2.py`)
+### Measurements (24 Sep 2026, the panel on 8593, `--sound on`, T2 = SYNTH slot 5 of a copy of the OTLIVE card; the author's audio and sequencer scripts, not in the repo)
 
 The legato and glide numbers are in `modules/quantizer/README.md` ("GLIDE
 and legato", measurements 2-3): CHROMATIC [TRIG 13] held, [TRIG 16]
@@ -3779,7 +3779,7 @@ frame); the icons change as designed (INDX 0 → one bar, 32 → three, 64
 a 4-column drop, 48 → 7, 127 → the full width, 0 → flat). Names: the first
 build carried `RATIO INDEX DECAY` — five characters are 19 px at the 3×5
 font's 4-px pitch, exactly the box interior, so `RATIO` and `INDEX` touched
-across the dotted separator (`remix_v1/`, `remix_v1.log`); the
+across the dotted separator (the first build's screens, `remix_v1.log`); the
 four-character forms have the stock's 2-px margins.
 
 **2. Everything else is stock.** The same key script on the stock image
@@ -4065,7 +4065,7 @@ phase 1's −69.7 for a bare 261 Hz). FUNC + [T8] at 2.0 s of a panel take
 DSP's voice-start burst at the 3.0 s trig (below), which the mute does not
 stop either. `panel_mute_at_2s.wav`.
 
-**7. Cost** (`base/hits.txt`, `p12/hits.txt`; `cost2.py hits
+**7. Cost** (the PTCH 0 and PTCH +12 runs' `hits.txt`; `cost2.py hits
 400d6b80 400d6e86` — the cave's entry and its `rts` at +0x306 — plus the
 stock pair `0x40004008/0x40004266`; T8 = SYNTH, the frame's event nibble
 is 4 on this card so the calls are [0,4) and [4,16)):

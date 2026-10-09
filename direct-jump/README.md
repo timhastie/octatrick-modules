@@ -113,7 +113,7 @@ USE PRJ SET. on the pattern being left first.
 All addresses are the stock 1.40C main OS at `0x40000400`
 (`m68k-elf-objdump -D -b binary -m m68k:cfv4e --adjust-vma=0x40000400
 out/raw/section_3_MAIN_OS.bin`; the listing used is
-`out/_agents/direct-jump/mainos.dis`).
+that command's output).
 
 ### The sequencer's pattern-change queue (stock)
 
@@ -178,7 +178,7 @@ Pokes (asserted against the stock bytes before every write; all in
 linked at `0x400d7000` and `0x400d7300`, identical, 358 bytes); the build
 links the source at the address it lands on and refuses on any difference.
 
-## Measurements (all `out/_agents/direct-jump/`)
+## Measurements (the logs, scripts and screens are in the author's workspace, not in this repository)
 
 Image: `REMIX=direct-jump make bus` → `out/mainos_bus.bin`, 1,112,560
 bytes, **429 bytes changed** vs `out/raw/section_3_MAIN_OS.bin`, cave at
@@ -201,11 +201,11 @@ image-cf` packs it). The `tim` image (this module + SCALE QUANTIZER, 1,657
 bytes) booted under the panel shows the stock chooser — NONE, FILTER, EQ,
 DJ EQ, PHASER, FLANGER, CHORUS, SPATIALIZER, COMB, COMPRESSOR, LOFI, DELAY,
 PLATE, SPRING, DARK — and CHAIN AFTER still turns to DIRECT
-(`out/_agents/cfbuild/`). Panel: `tools/panel/panel_server.py --image
+(the cf build's own run). Panel: `tools/panel/panel_server.py --image
 <remix> --project out/_projects/otlive/OTLIVE/PROJECT --set OTLIVE --name
 PROJECT --sound off` on ports 8593–8595, driven through `/key`, `/tap`,
-`/knob`, `/peek`, `/screen.png` (`seqwatch.py`, `panelctl.py` in the
-scratch dir; logs `*_run*.log`, screens `shots/`). 120 BPM, 16-step
+`/knob`, `/peek`, `/screen.png` (`seqwatch.py`, `panelctl.py`;
+logs `*_run*.log` and screens). 120 BPM, 16-step
 patterns, one step = 6 ticks ≈ 125 ms emulated (paced 1.0× real time).
 Columns: `b2` = step counter `0x800065b2`, `b5` = the step byte the LEDs
 follow (`0x800065b5`), pattern bytes as named above.
@@ -225,9 +225,9 @@ is written by the sys notice case, not by the selection.
 
 **2. Option on.** CHAIN AFTER turned to DIRECT with the LEVEL knob
 (`0x8000004e`: 0 → 2 → 3 … → 16 → **17**, a further detent stays 17;
-screens `shots/m5_sequencer_window.png` PAT.LEN, `m7` 256/16, **`m8`
+screens `m5_sequencer_window.png` PAT.LEN, `m7` 256/16, **`m8`
 DIRECT**), USE PRJ SET. checked on the playing pattern A04
-(`shots/p5_use_prj_checked.png`, `pattern+0x8e56` 00 → ff). PLAY on A04,
+(`p5_use_prj_checked.png`, `pattern+0x8e56` 00 → ff). PLAY on A04,
 [PATTERN] + [TRIG 1] during step 11 (`remix_on_run3.log`):
 
 ```
@@ -246,14 +246,14 @@ BEHAVIOR is PLEN (`remix_on_run2.log`, A03 → A04 before USE PRJ SET. was
 checked) switched at the pattern end — the precedence rule, unchanged.
 
 **3. Persistence.** SAVE PROJECT on the unit (PROJECT > SAVE, YES, YES;
-`shots/s15_save_confirm.png`) on the persistent card
-(`--card out/_agents/direct-jump/card.img`): 22,752 sectors written, the
+`s15_save_confirm.png`) on the persistent card
+(`--card <a copy of the OTLIVE card>`): 22,752 sectors written, the
 card's project file reads `PATTERN_CHANGE_CHAIN_BEHAVIOR=17`. The server
 was killed and the card cold-booted on port 8595 with `--card` alone:
 the reloaded project reads `0x8000004e = 0x11` (17 = DIRECT, mirror
 `0x100b14ae = 0x11`), pattern A04's byte `ff`, `CUR_PATTERN 00` (the saved
 A01); the SEQUENCER window shows **CHAIN AFTER DIRECT**
-(`shots/r2_sequencer_after_reboot.png`); and the jump repeats on the
+(`r2_sequencer_after_reboot.png`); and the jump repeats on the
 reloaded state (`remix_on_after_reboot.log`: A04 selected while stopped,
 PLAY, [PATTERN] + [TRIG 1] during step 11 at t=1.354 → switched at t=1.407,
 `b5` 10 → 11 → 12 …, `0x8000662c`/`0x80006630` 12 then cleared).
@@ -261,7 +261,7 @@ PLAY, [PATTERN] + [TRIG 1] during step 11 at t=1.354 → switched at t=1.407,
 **4. Boot A/B.** `tools/emu/ot_emu/oracle/drive.py --emu out/emu/ot_emu
 --image <stock | remix>` (the oracle's `inter` battery: boot on the OTLIVE
 card, YES, MIXER, NO, T1 double tap, DOWN, RIGHT, NO, NO, PLAY, 20 × 100 ms,
-STOP, 5 × 100 ms; `ab/stock`, `ab/remix`): `ready.txt`, `steps.txt`
+STOP, 5 × 100 ms; a stock run and a remix run): `ready.txt`, `steps.txt`
 (170 replies), `stamps.txt`, **`tx.bin` (18,297 UART bytes)**, `txlen.txt`
 and `peeks.txt` (STEP/TICK/TRANSPORT, clock record, UI window, popup,
 current track, page kind, PART_PTR, CUR_PATTERN, gain table after every
@@ -290,9 +290,8 @@ declares mode_views" (the Makefile's SKIP).
 `REMIX=tim make cf` → `out/mainos_cf.bin`, **4,301 bytes changed** vs
 stock (this module: the 358-byte cave at `0x400d6b80`, the two hooks, the
 four pokes), the panel on 8593 with a copy of the OTLIVE card and
-`--sound on`; scripts, logs and screens in the session scratchpad
-(`glide_menu.py` → `gm/`, `dj_test5/6.py` → `dj5/`, `dj6/`,
-`persist_test3.py` → `pt3/`, `bc/`). One step = 6 ticks = 125 ms at
+`--sound on`; the scripts, logs and screens are in the author's workspace
+(a menu script, two jump scripts, a persistence script). One step = 6 ticks = 125 ms at
 120 BPM; `b2` = the step counter `0x800065b2`, `b5` = the LED step byte
 `0x800065b5`, `cur` = `CUR_PATTERN 0x80000004`.
 
@@ -301,10 +300,10 @@ PAT.LEN → **DIRECT** (`0x8000004e` 00 → 01, mirror `0x100b14ae` 01), +1 →
 2/16, −1 → DIRECT, −1 → PAT.LEN, −1 → PAT.LEN (clamped), +20 → 256/16
 (0x10, clamped), −16 → PAT.LEN; [YES] from DIRECT → 2/16 → 3/16 → 4/16
 (the wrap path steps by one, index 1 included). The window reads
-`CHAIN AFTER DIRECT` (`gm/m2_direct.png` is the clamped 256/16 frame,
-`pt3/m_chain_1_and_glide33.png` DIRECT).
+`CHAIN AFTER DIRECT` (`m2_direct.png` is the clamped 256/16 frame,
+`m_chain_1_and_glide33.png` DIRECT).
 
-**2. The jump** (`dj6/`). PATTERN SETTINGS ([FUNC]+[BANK], [RIGHT] into
+**2. The jump**. PATTERN SETTINGS ([FUNC]+[BANK], [RIGHT] into
 the rows, [DOWN] ×3, [YES]: `USE PRJ SET.` ☒, pattern A01's `+0x8e56` 00 →
 ff), CHAIN AFTER = DIRECT, PLAY on A01, [PATTERN] + [TRIG 2] during step
 ~11: the next sample after the chord already reads `playing = 00/01`,
@@ -314,13 +313,13 @@ new pattern took over at the next step at the old pattern's count and
 did not restart; it then wrapped at its own length 16 (`b2 = 0`, `6628 =
 0`) as stock. A second selection late in the bar switched at the wrap
 (`b2 = 1, 2, 3`, LEDs 1-2, 3-4, 5-6 on A02). The same script with
-CHAIN AFTER = PAT.LEN (`dj5/dj_patlen_trig2.log`): queued `00/01` at the
+CHAIN AFTER = PAT.LEN (`dj_patlen_trig2.log`): queued `00/01` at the
 selection, the switch at the pattern end (`b2 = 0`, `cur = 01` at
 t = 1.88 s, LEDs restarting at 1), stock. With 6/16 and 3/16 the switch
 came at the next multiple (both had switched by the first sample after
 the chord), stock values unchanged.
 
-**3. Persistence and migration** (`pt3/`, `bc/`). SYNC TO CARD with
+**3. Persistence and migration**. SYNC TO CARD with
 DIRECT: the card's `project.work` reads `PATTERN_CHANGE_CHAIN_BEHAVIOR=1`;
 `/card/insert` (a power cycle) reloads `0x8000004e = 01`. Editing the
 mounted card and re-inserting: `=17` (a project saved by the 13 Sep
