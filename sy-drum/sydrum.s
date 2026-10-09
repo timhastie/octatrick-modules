@@ -8,28 +8,33 @@
 | voice: PTCH (semitones, -64..+63), MODE A..F, WDTH, SWEP (semitones, -64..+63), SPED,
 | DEC on the PLAYBACK page -- the FLEX PLAYBACK bytes, so stock p-locks, LFOs and scenes
 | reach them -- and the dedicated LFO / S&H on the PLAYBACK SETUP page: LSPD (0.40 ..
-| 200 Hz), LDEP, WAVE (OFF TRI SQR RND), S&H (OFF ON) -- the FLEX SETUP bytes, Part
-| settings (saved with the Part; v1 has no per-step locks, scenes or LFO destinations for
-| them). The DSP shapes and effects the voice as a sample (filter, FX, level, pan); the
-| engine owns the AMP envelope (ATK / HOLD / REL from the AMP page, as FM SYNTH's).
+| 200 Hz), LDEP, WAVE (OFF TRI SQR RND), S&H (OFF ON) -- the FLEX SETUP bytes, the Part's
+| defaults, each lockable per step (the dedicated step locks: locks_*.inc.s, kept in
+| companion files beside the project's banks; no scenes or LFO destinations for them).
+| The DSP shapes and effects the voice as a sample (filter, FX, level, pan); the engine
+| owns the AMP envelope (ATK / HOLD / REL from the AMP page, as FM SYNTH's).
 |
 | WHERE IT IS. The engine (engine.inc.s: the model, its tables, sy1_*) and this file's glue
 | are one unit. SYNTH MACHINE's poly.s calls it at its dispatch sites when the remix
 | carries SY DRUM (HAVE_SYDRUM): the START (sd_trigger), the frame (sy1_mono_key_frame,
 | sy1_mono_frame), the render (sy1_mono_render), po_tick (sd_tick); sy1_kind[t] is the
 | engine a track's last START chose (0 FM, 1 SY DRUM). Its machine-list row is sd_row
-| (machine.s's ml_rows). Its own hook: the page resolver's epilogue (sd_page), which
-| hands a SY DRUM track its PLAYBACK page.
+| (machine.s's ml_rows). Its own hooks: the page resolver's epilogue (sd_page), which
+| hands a SY DRUM track its PLAYBACK page; the setup editor (sd_setup_edit); and the
+| step locks' stock hooks (lock_hooks.json, the development line's: sequencer, UI,
+| clipboard, card I/O).
 |
 | From the dev line (Octatrick 3.0, 8 Oct 2026): the engine, sy1_pgdesc and its
 | formatters, widgets and knob handler, the SETUP page's formatters, the LEG MONO
-| recharge, the SETUP shield, the LFO's phase-only frames. Not here (v1): the dev line's
-| per-step SETUP locks (card companion files), SETUP scenes, the SETUP controls as LFO
-| destinations, the marker files. No stock firmware bytes are embedded: OS addresses only.
+| recharge, the SETUP shield, the LFO's phase-only frames, the per-step SETUP locks and
+| their card files (locks_*.inc.s, setup_stage.inc.s). Not here: the dev line's SETUP
+| scenes, the SETUP controls as LFO destinations, the marker files. No stock firmware
+| bytes are embedded: OS addresses only.
         .text
         .include "remix.inc"             | pass 1: the remix's flags and synth/engine_abi.inc (manifest.py)
         .global sy1_kind, sy1_leg_pending, sy1_mono_trigger, sy1_mono_frame, sy1_mono_key_frame
         .global sy1_mono_render, sd_trigger, sd_tick, sd_row, sd_page, sy1_pgdesc
+        .global sd_sig, sd_kind, sd_setup_edit
         .set    FLEX, 1
         .set    PLAY_SETUP, 0x8ef60      | Part + 30 * track: the FLEX SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
         .set    LANE_SETUP, 0x80000830   | + 72 * track: the live lane's six SETUP bytes
@@ -40,9 +45,9 @@
 | builder's LFO pass, before the render loop). Every register kept. The dev line's order:
 |   1. the four SETUP controls of every track, from the Part (sy1_setup_tick: Part +
 |      PLAY_SETUP + 30 t, clamped to LSPD 127 LDEP 127 WAVE 3 S&H 1) into sy1_mod_params;
-|   2. a SY DRUM track's from its live lane (the stage's commit: the lane is what the SETUP
-|      page edits and the Part loader fills; the dev line's lock / scene / LFO stages have
-|      nothing to add in v1), the same clamp;
+|   2. a SY DRUM track's effective values (sl_seq_tick -> the setup stage, setup_stage.inc.s):
+|      its live lane (what the SETUP page edits and the Part loader fills), the playing
+|      step's lock laid over it, the same clamp;
 |   3. the shield: a SY DRUM track's CF record SETUP bytes (the bank the frame builder just
 |      copied) read LOOP SLIC LEN RATE 0, TSTR 0, TSNS 64 -- its LSPD .. S&H never reach a
 |      stock reader as sample settings;
@@ -53,6 +58,7 @@ sd_tick:
         lea     -36(%sp),%sp
         movem.l %d0-%d4/%a0-%a3,(%sp)
         bsr     sy1_setup_tick           | 1.
+        jsr     sl_seq_tick:l            | 2. (locks_seq.inc.s; every register kept)
         movea.l PART_PTR,%a0
         cmpa.l  #0x40000000,%a0          | (a boot pointer that is no Part yet: nothing to read)
         bcs     sd_tk_lfo
@@ -69,35 +75,14 @@ sd_tick:
         andi.l  #1,%d0
         mulu.w  #384,%d0
         adda.l  %d0,%a3                  | the bank the frame builder copied this frame
-        lea     LANE_SETUP,%a1
-        lea     sy1_mod_params(%pc),%a2
         moveq   #0,%d2
 sd_tk_track:
         move.l  %d2,%d0
         bsr     sd_sig                   | (a0 = the Part, d0 = track) SY DRUM chosen?
         beq     sd_tk_next
-        moveq   #3,%d3                   | 2. the lane's LSPD LDEP WAVE S&H, clamped
-sd_tk_byte:
-        mvz.b   (%a1,%d3.l),%d0
-        lea     sy1_setup_max(%pc),%a0
-        mvz.b   (%a0,%d3.l),%d1
-        cmp.l   %d1,%d0
-        bls     sd_tk_store
-        move.l  %d1,%d0
-sd_tk_store:
-        move.b  %d0,(%a2,%d3.l)
-        subq.l  #1,%d3
-        bpl     sd_tk_byte
-        movea.l PART_PTR,%a0             | (the Part again: sd_sig's a0)
-        mvz.b   PART_IDX,%d0
-        move.l  #6322,%d1
-        mulu.l  %d1,%d0
-        adda.l  %d0,%a0
         clr.l   (%a3)                    | 3. the shield: LOOP SLIC LEN RATE 0, TSTR 0, TSNS 64
         move.w  #64,4(%a3)
 sd_tk_next:
-        lea     72(%a1),%a1
-        addq.l  #4,%a2
         lea     48(%a3),%a3
         addq.l  #1,%d2
         cmpi.l  #8,%d2
@@ -151,6 +136,38 @@ sd_sg_out:
         movem.l (%sp),%d1/%a1
         lea     8(%sp),%sp
         tst.l   %d0
+        rts
+
+| sd_kind: d2 = track -> d0 = 2 when the current Part plays SY DRUM on it (sd_sig), else 0
+| (the development line's setup kind 2); tst.l done. Every other register kept. An invalid
+| boot pointer (no Part yet) answers 0.
+sd_kind:
+        move.l  %a0,-(%sp)
+        movea.l PART_PTR,%a0
+        cmpa.l  #0x40000000,%a0
+        bcs     sd_kd_no
+        cmpa.l  #0x48000000,%a0
+        bcc     sd_kd_no
+        move.l  %d1,-(%sp)
+        mvz.b   PART_IDX,%d0
+        cmpi.l  #3,%d0
+        bhi     sd_kd_no1
+        move.l  #6322,%d1
+        mulu.l  %d1,%d0
+        adda.l  %d0,%a0                  | the Part
+        move.l  %d2,%d0
+        bsr     sd_sig
+        beq     sd_kd_no1
+        moveq   #2,%d0
+        move.l  (%sp)+,%d1
+        movea.l (%sp)+,%a0
+        tst.l   %d0
+        rts
+sd_kd_no1:
+        move.l  (%sp)+,%d1
+sd_kd_no:
+        movea.l (%sp)+,%a0
+        moveq   #0,%d0
         rts
 
 | The dev line's sy1_setup_tick: every track's four SETUP controls from the Part, clamped,
@@ -456,8 +473,8 @@ sy1_ms_out:
         move.l  (%sp)+,%d2
 
 | ---- sd_setup_patch: a0 = a descriptor -> its page 2 (the PLAYBACK SETUP page) is SY DRUM's:
-| LSPD LDEP WAVE S&H in slots 6..9, 10 and 11 hidden (the dev line's po_setup_patch for its
-| SY kind, without the lock highlighting). Every register kept.
+| LSPD LDEP WAVE S&H in slots 6..9, 10 and 11 hidden, the four widgets the locks' (the dev
+| line's po_setup_patch for its SY kind). Every register kept.
 sd_setup_patch:
         lea     -20(%sp),%sp
         movem.l %d0-%d1/%a0-%a2,(%sp)
@@ -517,9 +534,42 @@ sd_sp_names:
         move.l  %a0,0xfa+32(%a2)
         move.l  #0x40046f10,%d1          | the stock switch widget
         move.l  %d1,0xfa+36(%a2)
+        movea.l %a2,%a0
+        jsr     sl_ui_patch:l            | the four widgets lock-aware: a held step's lock inverted (locks_ui)
         movem.l (%sp),%d0-%d1/%a0-%a2
         lea     20(%sp),%sp
         rts
+
+| ---- sd_setup_edit: 0x4003a524 (jmp, 10 B), the PLAYBACK SETUP editor's descriptor load
+| `lea 0x400d5f38,%a0; moveal %a0@(0,%d2:l:4),%a5` (d2 = the window's machine row, a3 =
+| the control, d4 = the track; then 0x4003a52e stores the edit in the Part, its shadow and
+| the live lane). On SY DRUM's page (the development line's po_setup_edit for its SY
+| page): E / F store nothing (hidden); with trigs held the turn edits their locks
+| (sl_ui_edit) and stores no default; otherwise the default edit releases the playing
+| step's lock of that control (sl_seq_release_control), so the new value is heard at once.
+| Every other page: stock.
+sd_setup_edit:
+        lea     0x400d5f38,%a0
+        movea.l (%a0,%d2.l*4),%a5        | displaced
+        lea     sy1_pgdesc_buf(%pc),%a0
+        cmpa.l  %a0,%a5
+        bne     sd_se_stock
+        cmpa.l  #4,%a3
+        bcc     sd_se_hidden
+        jsr     sl_ui_edit:l
+        tst.l   %d0
+        bne     sd_se_hidden
+        lea     -8(%sp),%sp
+        movem.l %d2/%d4,(%sp)
+        move.l  %d4,%d2
+        move.l  %a3,%d4
+        jsr     sl_seq_release_control:l | a manual default edit releases this effective override
+        movem.l (%sp),%d2/%d4
+        addq.l  #8,%sp
+sd_se_stock:
+        jmp     0x4003a52e
+sd_se_hidden:
+        jmp     0x4003a624               | no Part / shadow / live store
 
 | ---- sy1_knob: the PLAYBACK page's knob handler (slot, detents, value) -> d0 = the new raw
 | value (the stock knob routine clamps it): one unit a detent, seven with the encoder
