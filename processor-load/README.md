@@ -199,11 +199,14 @@ hardware times.
   image byte for byte. The ledger refuses PROCESSOR LOAD with CF METER and
   with TEMPO BUS, by name, with the declared reasons. octabam's remix
   self-test passes every module check.
-- **Cold boot, no idle hook.** Booted with the logo and no card, the meter
-  arms by itself: at 3.10 s emulated, the first moment the emulator's
-  panel can be driven, it has already counted 290 blocks and shows `--%` (its first window), at
-  3.30 s `35%`, steady from then on. With a card and a project loading,
-  it reads from the first moment the panel can be driven.
+- **Cold boot, no idle hook.** Booted with the logo and no card, every
+  write to the stock startup flag and to the meter's "armed" word logged:
+  the stock OS sets the flag at 2,995.2 ms emulated, and the meter arms in
+  the very next audio block (1.7 samples later, from the frame interrupt's
+  entry). At 3.00 s it has counted 15 blocks and shows `--%` (its first
+  window); from 3.30 s it reads `35%`, steady from then on. With a card and
+  a project loading, it reads from the first moment the panel can be
+  driven.
 - **The TEMPO popup.** Stopped and playing, in both images (the numbers
   above and the screenshots): the reading follows the transport (`36%`
   stopped, `42%` playing, `38%` just after stop in the remix) and holds
