@@ -1,4 +1,4 @@
-| SY DRUM: original fixed-point implementation of DESIGN.md / sy1_model.py (the dev
+| SY DRUM: original fixed-point implementation of the design study / tools/sy1_model.py (the dev
 | line's engine (8 Oct 2026), without its CHECK-build shadow block; its
 | three references to SYNTH MACHINE's poly.s state -- po_clock, sy_state, po_voices --
 | absolute, the unit being a separate one now). Not assembled on its own: sy-drum's

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""sy1_model.py -- float reference model of the SY DRUM machine, DESIGN.md
+"""sy1_model.py -- float reference model of the SY DRUM machine, the design
 implemented literally (numpy only). It is the oracle the emulator measurements
-are compared against, so every constant below is the one DESIGN.md names.
+are compared against, so every constant below is the one the design study names (its
+numbered facts, D = documented, I = inferred, are kept in the author's development tree).
 
     render(page, seconds, sr=44100) -> np.ndarray, float, +-1.0 = the engine's
     Q14 full scale (0x4000: -6 dBFS at the DSP), one hit at t = 0 unless
@@ -26,7 +27,7 @@ import numpy as np
 FRAME = 16
 C4 = 261.6256
 F_MAX_CYC = 0x73000000 / 2 ** 32      # D: the engine's INC_MAX, 0.449 cycle/sample (19.8 kHz)
-# ---- the model's constants (D = documented, I = inferred; DESIGN.md facts #) ----
+# ---- the model's constants (D = documented, I = inferred; the design study's facts #) ----
 OFF2_OCT = np.log2(450.0 / 440.0)    # I (#12): VCO2 sits 39 cents above VCO1 (MSW calibration)
 C_OFF2_OCT = 1.0                     # I (#6/#7): VCO2 "set to a higher frequency" in C, D, E
 E_VCF_OCT = 1.0                      # I (#8): the VCF "set to a higher cutoff" in E

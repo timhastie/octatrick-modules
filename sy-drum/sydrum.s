@@ -675,7 +675,7 @@ sy1_pg_names:
 sy1_f_seconds:
         .asciz  "%d.%ds"
         .align  2
-| Display-only milliseconds, rounded from DESIGN.md's time constants.
+| Display-only milliseconds, rounded from the engine's time constants (U2, U6 in engine.inc.s).
 sy1_sped_ms:
         .short  20, 21, 21, 22, 23, 23, 24, 25
         .short  26, 27, 27, 28, 29, 30, 31, 32
