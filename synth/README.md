@@ -1347,7 +1347,7 @@ of two pattern loops; c = cold, w = warm. c51e304 = the renders of
 that image; 1.-4. = 18dd40d; 1.-6. = this image, 161d781d...,
 every case rendered again (the results file is in the author's workspace, not
 in the repo); targets in
-brackets (SPEC 13.5):
+brackets (the click fix's targets, 6 Oct 2026):
 
 | case | c51e304 | 1.-4. | 1.-6. |
 |---|---|---|---|
@@ -1370,7 +1370,7 @@ render sample-identical to 1.-4.'s. C4 defaults (PTCH 64, RATO 1, INDX 40):
 against c51e304 they differ only in the first ~28 ms of each cold onset (as
 1.-4.); against 1.-4. the render is sample-identical.
 
-**The two pitch changes downward miss SPEC 13.5's "10 dB better", and why** (each part
+**The two pitch changes downward miss the target "10 dB better" (6 Oct 2026), and why** (each part
 rendered on its own, and an integer model of the mono and chord cases; the
 scripts are in the author's workspace, not in the repo). Rendered apart, the mono
 C2>C1 crossfade's OLD TAIL ALONE (the new note muted) scores +29.4 -- the
@@ -1388,7 +1388,7 @@ fading a VOIC 4 C2 chord before a C1 chord scored +40.2 on the emulator (model
 +51), so a voice moving DOWN is taken warm (6.) and `po_pmatch` keeps the
 common tone (C2) in its voice: +21.8 -> +14.5, 7.3 dB.
 
-**DEVIATIONS** (from SPEC 13.5 / the first proposal):
+**DEVIATIONS** (from the targets of 6 Oct 2026 / the first proposal):
 - A step under 32 stays linear (above); the first law stretched slow attacks.
 - 5. adds frames to F2..F3's attacks (C3 21 -> 26) to bring C3 at INDX 40 into
   the window; the first law was one period.

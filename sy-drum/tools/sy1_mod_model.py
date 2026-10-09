@@ -7,15 +7,15 @@ gain, independent of DEPTH. Its switch retains held voltage until the next
 OFF trigger samples ground. SQ is negative while TRI rises and positive while
 it falls, following the relaxation oscillator's comparator polarity.
 
-B43 extends the original circuit: RND without SH is a uniform stepped random
-wave, changing once per LFO cycle. RND with SH draws a fresh independent value
+An extension of the original circuit (30 Sep 2026): RND without SH is a uniform
+stepped random wave, changing once per LFO cycle. RND with SH draws a fresh independent value
 at every trigger and suppresses continuous random modulation; SPEED therefore
 cannot change its held pitch between triggers. Switching SH off resumes the
 rate-clocked random contribution; the prior held offset clears on the next
 trigger. All other modes add continuous and held contributions as before.
 
-U12: B46 extended the .4..50 Hz clone-inspired range to 100 Hz; B58 extends it
-to 200 Hz. Raw 0..64 retains its original rates, and 65..127 rises exponentially
+U12: the .4..50 Hz clone-inspired range was extended to 100 Hz (1 Oct 2026) and
+then to 200 Hz (3 Oct 2026). Raw 0..64 retains its original rates, and 65..127 rises exponentially
 from that knee (4.56 Hz) to 200 Hz.
 Original Pearl endpoints and voltage gains are unmeasured. Nominal TRI/SQ/SH full scale is independently +/-2 octaves. DEPTH
 is normalized linear pending measurement of the original 100kA pot taper.
