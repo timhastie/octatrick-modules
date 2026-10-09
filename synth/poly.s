@@ -406,7 +406,7 @@ sy_cmp:
         bne     sy_cmp
         .if     HAVE_SYDRUM
 | ---- (2.11) the engine of this START: sy1_kind[track] (sy-drum/sydrum.s) 0 FM, 1 SY DRUM --
-| the dev line's sy_kind_found. A track whose engine changes starts cold (the other engine's
+| the development line's sy_kind_found. A track whose engine changes starts cold (the other engine's
 | level, its voices freed); a SY DRUM START runs that engine's trigger (sd_trigger: its LFO's
 | outputs brought up to this frame, both envelopes recharged, warm keeps phase and filter).
         moveq   #1,%d0                   | an FM marker: FM
@@ -458,7 +458,7 @@ sy_cold_hold:
         beq     sy_cold1                 | silent: cold
         .if     HAVE_SYDRUM
         lea     sy1_kind:l,%a0           | (2.11) SY DRUM: no crossfade -- its START recharged the envelopes
-        tst.b   (%a0,%d2.l)              | of the same voice (sd_trigger), sounding or not, as on the dev line
+        tst.b   (%a0,%d2.l)              | of the same voice (sd_trigger), sounding or not, as on the development line
         bne     sy_warm_env
         .endif
         bsr     po_xfq                   | (2.10) sounding: a mono note at ANOTHER pitch crossfades -- the old tone
@@ -815,7 +815,7 @@ po_me_atk:
         mvz.w   (%a0,%d0.l*2),%d0
         .if     HAVE_SYDRUM
         lea     sy1_kind:l,%a0           | (2.11) the onset law is the FM voice's: a SY DRUM track keeps the
-        tst.b   (%a0,%d2.l)              | linear law (S_INC is not its pitch), as on the dev line
+        tst.b   (%a0,%d2.l)              | linear law (S_INC is not its pitch), as on the development line
         bne     po_me_add
         .endif
         movea.l S_INC(%a3),%a0           | the onset law (po_alaw): no faster than one carrier period, S-shaped
@@ -1256,7 +1256,7 @@ sy_word:
         add.l   %d0,%d6                  | (ptch - 0x4000) * 5
         .if     HAVE_SYDRUM
         move.l  %a0,-(%sp)
-        lea     sy1_kind:l,%a0           | (2.11) SY DRUM: its RATE byte is SWEP, not FINE (the dev line's
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM: its RATE byte is SWEP, not FINE (the development line's
         tst.b   (%a0,%d2.l)              | sy_word_base)
         movea.l (%sp)+,%a0
         bne     sy_word_base
@@ -2579,7 +2579,7 @@ po_cp_out:
 po_legkey:
         .if     HAVE_SYDRUM
 | (2.11) the quantizer also calls this for a legato key on a SY DRUM track (qz_g2_mono): a mono
-| legato key there recharges the drum's envelopes once its trigless pitch lock lands (the dev
+| legato key there recharges the drum's envelopes once its trigless pitch lock lands (the development
 | line's po_legkey: sy1_leg_pending, consumed by sy1_mono_key_frame); paraphonic tracks as before.
         lea     -12(%sp),%sp
         movem.l %d0-%d1/%a0,(%sp)
@@ -4637,7 +4637,7 @@ po_id_rts:
         rts
 | po_is_fm (2.11): d2 -> d0 = 1 when the track plays FM (po_ident 1), else 0; tst.l done --
 | what owns VOIC / CHRD, chords and the paraphonic LEG modes: SY DRUM is a mono drum voice
-| (the dev line's po_is_fm). Preserves every other register.
+| (the development line's po_is_fm). Preserves every other register.
 po_is_fm:
         bsr     po_ident
         subq.l  #1,%d0

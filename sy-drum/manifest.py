@@ -175,7 +175,7 @@ MODULE = Module(
     author_url="https://github.com/timhastie/octatrick-modules",
     proof=Proof.PORT,
     proof_note="ot_emu (MKII panel, DSP lockstep) with SYNTH MACHINE 2.11: the machine-list walk, "
-               "renders sample-identical to the dev line's on-board engine, save / reload; not yet on hardware",
+               "renders sample-identical to the development builds' on-board engine, save / reload; not yet on hardware",
     doc="SY DRUM in the machine list (after FM SYNTH): a two-voice analog-style drum machine on FLEX "
         "tracks -- PTCH MODE (A..F) WDTH SWEP SPED DEC with stock p-locks, LFOs and scenes, and a "
         "dedicated LFO / S&H (LSPD LDEP WAVE S&H) on its PLAYBACK SETUP page, lockable per step "

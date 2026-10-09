@@ -40,11 +40,11 @@ SWEEP_SEMI = 1.0                     # design: one SWEP unit = one semitone of s
 SPEED_MIN, SPEED_MAX = 0.020, 1.1    # I (#14): EG1 time constant, SPED 0 .. 127
 DEC_MIN, DEC_MAX = 0.006, 2.5        # D (#16): EG2 time constant at C4, DEC 0 .. 127
 DECAY_TUNE_EXP = 0.5                 # I (#17): tau2 *= (f_bus / C4) ** -0.5: an octave up = 0.71 x
-F1_0 = 400.0                         # I (#19): pole-1 C4 base before b46 WIDTH closing offset
+F1_0 = 400.0                         # I (#19): pole-1 C4 base before the WIDTH closing offset (1 Oct 2026)
 POLE_RATIO = 4.0                     # D (#19): pole 2 / pole 1 at rest
 CV_RATIO = 2.13                      # D (#19): pole 2 moves 2.13 x the octaves of pole 1
 WIDTH_OCT = 6.0                      # I (#20): WDTH 127 lifts pole 1 by 6 octaves at EG2 = 1
-CLOSE_OCT = 3.0                      # b46 extension: WDTH 0 lowers both poles 3 octaves; 127 unchanged
+CLOSE_OCT = 3.0                      # extension of 1 Oct 2026: WDTH 0 lowers both poles 3 octaves; 127 unchanged
 MODES = "ABCDEF"
 
 

@@ -24,10 +24,10 @@
 | step locks' stock hooks (lock_hooks.json, the development line's: sequencer, UI,
 | clipboard, card I/O).
 |
-| From the dev line (Octatrick 3.0, 8 Oct 2026): the engine, sy1_pgdesc and its
+| From the development line (Octatrick 3.0, 8 Oct 2026): the engine, sy1_pgdesc and its
 | formatters, widgets and knob handler, the SETUP page's formatters, the LEG MONO
 | recharge, the SETUP shield, the LFO's phase-only frames, the per-step SETUP locks and
-| their card files (locks_*.inc.s, setup_stage.inc.s). Not here: the dev line's SETUP
+| their card files (locks_*.inc.s, setup_stage.inc.s). Not here: the development line's SETUP
 | scenes, the SETUP controls as LFO destinations, the marker files. No stock firmware
 | bytes are embedded: OS addresses only.
         .text
@@ -42,7 +42,7 @@
         .set    RESOLVER_TAIL, 0x40031ede | the page resolver's `rts` after its epilogue (sd_page)
 
 | ==== sd_tick: po_tick's SY DRUM part, once an audio frame (from po_lfo3b, the frame
-| builder's LFO pass, before the render loop). Every register kept. The dev line's order:
+| builder's LFO pass, before the render loop). Every register kept. The development line's order:
 |   1. the four SETUP controls of every track, from the Part (sy1_setup_tick: Part +
 |      PLAY_SETUP + 30 t, clamped to LSPD 127 LDEP 127 WAVE 3 S&H 1) into sy1_mod_params;
 |   2. a SY DRUM track's effective values (sl_seq_tick -> the setup stage, setup_stage.inc.s):
@@ -53,7 +53,7 @@
 |      stock reader as sample settings;
 |   4. the LFOs: with a SY DRUM voice on any track (sy1_kind 1) the full sy1_mod_tick, else
 |      its phase part alone (sy1_mod_phase_tick; sd_trigger catches the outputs up at the
-|      START that makes a track SY DRUM -- the dev line's b69 cut, the same values).
+|      START that makes a track SY DRUM -- the development line's load cut of 8 Oct 2026, the same values).
 sd_tick:
         lea     -36(%sp),%sp
         movem.l %d0-%d4/%a0-%a3,(%sp)
@@ -170,7 +170,7 @@ sd_kd_no:
         moveq   #0,%d0
         rts
 
-| The dev line's sy1_setup_tick: every track's four SETUP controls from the Part, clamped,
+| The development line's sy1_setup_tick: every track's four SETUP controls from the Part, clamped,
 | into sy1_mod_params (a SY DRUM track's are then the lane's, sd_tick 2.). Invalid boot
 | pointers leave them. Every register kept.
 sy1_setup_tick:
@@ -235,7 +235,7 @@ sd_tr_go:
         lea     8(%sp),%sp
         rts
 
-| ==== the LEG MONO recharge (the dev line's): a legato key on a SY DRUM track (poly.s
+| ==== the LEG MONO recharge (the development line's): a legato key on a SY DRUM track (poly.s
 | po_legkey, from the quantizer's qz_g2_mono) marks the track; the frame whose NIBBLE bit 3
 | (stock's posted trigless event, mailbox 0x119) carries the key's PTCH lock recharges the
 | envelopes warm -- phase, filter, AMP level and glide stay. A UI key flag alone may come
@@ -283,7 +283,7 @@ sd_pg_out:
         lea     16(%sp),%sp              | displaced
         jmp     RESOLVER_TAIL
 
-| ==== THE PLAYBACK PAGE (the dev line's sy1_pgdesc): a runtime clone of the FM SYNTH
+| ==== THE PLAYBACK PAGE (the development line's sy1_pgdesc): a runtime clone of the FM SYNTH
 | page's (itself a clone of the stock FLEX record: no stock bytes in the source) with
 | SY DRUM's title, names, ranges, formatters, widgets and knob handler; its SETUP half is
 | LSPD LDEP WAVE S&H (sd_setup_patch). Built on first use; d0 = the clone. Clobbers
@@ -473,7 +473,7 @@ sy1_ms_out:
         move.l  (%sp)+,%d2
 
 | ---- sd_setup_patch: a0 = a descriptor -> its page 2 (the PLAYBACK SETUP page) is SY DRUM's:
-| LSPD LDEP WAVE S&H in slots 6..9, 10 and 11 hidden, the four widgets the locks' (the dev
+| LSPD LDEP WAVE S&H in slots 6..9, 10 and 11 hidden, the four widgets the locks' (the development
 | line's po_setup_patch for its SY kind). Every register kept.
 sd_setup_patch:
         lea     -20(%sp),%sp
@@ -574,7 +574,7 @@ sd_se_hidden:
 | ---- sy1_knob: the PLAYBACK page's knob handler (slot, detents, value) -> d0 = the new raw
 | value (the stock knob routine clamps it): one unit a detent, seven with the encoder
 | pressed, FUNC held: PTCH 12 (an octave), MODE 1, WDTH 16, SWEP 12, SPED 16, DEC 16. The
-| dev line's sy1_knob with FM SYNTH's po_knob paths written out (another unit's labels).
+| development line's sy1_knob with FM SYNTH's po_knob paths written out (another unit's labels).
 sy1_knob:
         lea     -12(%sp),%sp
         movem.l %d2-%d4,(%sp)
@@ -685,7 +685,7 @@ sy1_ss_byte:
 | ==== SY DRUM's row in the machine list (machine.s ml_rows; its layout there) ==========
 | The seeds a track gets when SY DRUM is chosen on it (and it was not SY DRUM): PTCH 0,
 | MODE A, WDTH 64, SWEP 0, SPED 64, DEC 64; LSPD 64 (4.56 Hz), LDEP 0, WAVE OFF, S&H OFF,
-| and 0 in FLEX's TSTR / TSNS bytes (the dev line's sy1_defaults). Leaving the row puts
+| and 0 in FLEX's TSTR / TSNS bytes (the development line's sy1_defaults). Leaving the row puts
 | the stock FLEX SETUP bytes back (flags bit 0: LSPD .. S&H are no sample settings).
         .balign 4
 sd_row:

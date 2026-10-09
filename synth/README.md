@@ -445,7 +445,7 @@ its own row without a site of its own, and the two modules never write the same 
   remix (octabam's `Linked.include`; `manifest.py` `remix_include`): `HAVE_SYDRUM` (1 when SY DRUM is in the remix)
   and `engine_abi.inc`, the equates SYNTH MACHINE shares with SY DRUM (one copy). With `HAVE_SYDRUM` 0 the engine
   (`poly.s`) assembles byte for byte as 2.10's and the quantizer as 2.10's.
-- **The engine's SY DRUM call-outs** (`.if HAVE_SYDRUM`, read from the dev line's engine and re-placed in this
+- **The engine's SY DRUM call-outs** (`.if HAVE_SYDRUM`, read from the development line's engine and re-placed in this
   one): a START stores the engine in `sy1_kind[t]` (0 FM, 1 SY DRUM; a change starts cold, its voices freed) and a
   SY DRUM START runs that engine's trigger and takes no crossfade; its frame, its render, its LEG MONO recharge and
   its SETUP / LFO tick are SY DRUM's routines; FM's onset law, FINE, VOIC / chords, fingered-chord recording, the

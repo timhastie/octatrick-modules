@@ -1,4 +1,4 @@
-| SY DRUM: original fixed-point implementation of the design study / tools/sy1_model.py (the dev
+| SY DRUM: original fixed-point implementation of the design study / tools/sy1_model.py (the development
 | line's engine (8 Oct 2026), without its CHECK-build shadow block; its
 | three references to SYNTH MACHINE's poly.s state -- po_clock, sy_state, po_voices --
 | absolute, the unit being a separate one now). Not assembled on its own: sy-drum's
@@ -64,7 +64,7 @@
 | .4..50 Hz follows the clone QSG; original Pearl endpoints remain unmeasured.
 | The circuit takes S&H from TRI before WAVE/DEPTH, through its own CV resistor.
         .set SY1_U12_RATE_MIN_MHZ, 400
-        .set SY1_U12_RATE_MAX_MHZ, 200000 | b58 upper extension (b46: 100000); lower half unchanged
+        .set SY1_U12_RATE_MAX_MHZ, 200000 | upper extension of 3 Oct 2026 (1 Oct 2026: 100000); lower half unchanged
         .set SY1_U12_RATE_LEGACY_MAX_MHZ, 50000
         .set SY1_U12_RATE_KNEE_RAW, 64
         .set SY1_U12_TRI_RANGE_SEMI, 24
@@ -242,12 +242,14 @@ sy1_mod_lfo_store:
         lea     60(%sp),%sp
         rts
 
-| b69 F17 (Y, from L1): sy1_mod_phase_tick -- sy1_mod_tick's phase part alone (M_PHASE, M_FRAME,
+| sy1_mod_phase_tick (the development line's load cut of 8 Oct 2026, its exact form) --
+| sy1_mod_tick's phase part alone (M_PHASE, M_FRAME,
 | MR_CONT: the same instructions), for a frame with no SY DRUM track (sy1_kind 1):
 | the outputs (M_TRI / M_LFO / M_RANDOM / M_OFFSET) have no reader then (sy1_mono_frame,
 | sy1_voice_frame, sy1_mod_capture run for kind-1 tracks alone). The state that integrates
-| over time stays exactly b68's, so the frame a track becomes kind 1 (sy_kind_store) recomputes
-| the outputs with sy1_mod_tick (delta 0: no second advance) and every reader sees b68's values.
+| over time stays exactly as the full tick leaves it, so the frame a track becomes kind 1
+| (sd_trigger) recomputes the outputs with sy1_mod_tick (delta 0: no second advance) and every
+| reader sees the values the full tick would have given.
 sy1_mod_phase_tick:
         lea     -60(%sp),%sp
         movem.l %d0-%d7/%a0-%a6,(%sp)
