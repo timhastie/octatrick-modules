@@ -42,7 +42,20 @@
         .set    RESOLVER_TAIL, 0x40031ede | the page resolver's `rts` after its epilogue (sd_page)
 
 | ==== sd_tick: po_tick's SY DRUM part, once an audio frame (from po_lfo3b, the frame
-| builder's LFO pass, before the render loop). Every register kept. The development line's order:
+| builder's LFO pass, before the render loop). Every register kept.
+|   0. THE GATE: with no SY DRUM voice (every sy1_kind 0) and no track of the current Part
+|      SY DRUM (no FLEX track with "SY", 1), nothing below has work: the setup stage and the
+|      shield are for SY DRUM tracks alone, no reader of the LFOs' outputs runs, and the
+|      lock rows reach a track only through a SY DRUM track's stage (or a lock-only trig,
+|      which the sequencer grants a SY DRUM track alone). The frame then keeps only what the
+|      steps below would leave for tracks that are not SY DRUM -- ss_kind 0, a track's
+|      active / pending rows cleared after a trig (sl_seq_cleanm) -- and marks the frame
+|      skipped (sy1_mod_skipf, as 4.). The free-running LFOs are not advanced: the first
+|      frame with a SY DRUM track advances them over the skipped frames at once, at the
+|      LSPD then in force (sy1_mod_advance: the engine's elapsed-frame law; the development
+|      line advances them every frame, so a phase after an idle stretch whose LSPD changed
+|      can differ from that line's). Measured on ot_emu: README.md "Measured".
+| Then, in the development line's order:
 |   1. the four SETUP controls of every track, from the Part (sy1_setup_tick: Part +
 |      PLAY_SETUP + 30 t, clamped to LSPD 127 LDEP 127 WAVE 3 S&H 1) into sy1_mod_params;
 |   2. a SY DRUM track's effective values (sl_seq_tick -> the setup stage, setup_stage.inc.s):
@@ -53,10 +66,58 @@
 |      stock reader as sample settings;
 |   4. the LFOs: with a SY DRUM voice on any track (sy1_kind 1) the full sy1_mod_tick, else
 |      its phase part alone (sy1_mod_phase_tick; sd_trigger catches the outputs up at the
-|      START that makes a track SY DRUM -- the development line's load cut of 8 Oct 2026, the same values).
+|      START that makes a track SY DRUM -- the development line's load cut of 8 Oct 2026, the
+|      same values).
 sd_tick:
         lea     -36(%sp),%sp
         movem.l %d0-%d4/%a0-%a3,(%sp)
+        lea     sy1_kind(%pc),%a0        | 0. the gate: a SY DRUM voice on any track?
+        move.l  (%a0),%d0
+        or.l    4(%a0),%d0
+        bne     sd_tk_work
+        movea.l PART_PTR,%a0
+        cmpa.l  #0x40000000,%a0          | (no Part yet: no SY DRUM track)
+        bcs     sd_tk_idle
+        cmpa.l  #0x48000000,%a0
+        bcc     sd_tk_idle
+        mvz.b   PART_IDX,%d0
+        cmpi.l  #3,%d0
+        bhi     sd_tk_idle
+        mulu.w  #6322,%d0
+        adda.l  %d0,%a0                  | the Part
+        movea.l %a0,%a1
+        adda.l  #MACH_OFF,%a1            | the eight machine bytes
+        movea.l %a0,%a2
+        adda.l  #SIG_OFF,%a2             | + 30 t: the signature (sd_sig's test, inline)
+        moveq   #7,%d1
+        move.l  #7*30,%d3
+        moveq   #30,%d4
+sd_tk_scan:
+        mvz.b   (%a1,%d1.l),%d0
+        subq.l  #FLEX,%d0
+        bne     sd_tk_scan1
+        mvz.w   (%a2,%d3.l),%d0
+        cmpi.l  #0x5359,%d0              | "SY"
+        bne     sd_tk_scan1
+        mvz.b   2(%a2,%d3.l),%d0
+        subq.l  #1,%d0                   | version 1
+        beq     sd_tk_work               | a SY DRUM track
+sd_tk_scan1:
+        sub.l   %d4,%d3
+        subq.l  #1,%d1
+        bpl     sd_tk_scan
+sd_tk_idle:
+        clr.l   ss_kind:l                | every track "not SY DRUM", as 2. leaves them
+        clr.l   ss_kind+4:l
+        move.l  sl_seq_cleanm:l,%d0
+        cmpi.l  #0xff,%d0
+        beq     sd_tk_idle1
+        jsr     sl_seq_tick:l            | a row to clear (2. for tracks that are not SY DRUM)
+sd_tk_idle1:
+        move.l  po_clock+CK_FRAMES,%d1
+        move.l  %d1,sy1_mod_skipf        | as 4.: this frame's outputs are not computed
+        bra     sd_tk_out
+sd_tk_work:
         bsr     sy1_setup_tick           | 1.
         jsr     sl_seq_tick:l            | 2. (locks_seq.inc.s; every register kept)
         movea.l PART_PTR,%a0
