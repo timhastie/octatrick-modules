@@ -141,7 +141,7 @@ USB, the same project reads `36%` and `42%`.
   the exit (19 when the block is the longest of the window so far), against
   an interrupt body of about 22,000 to 38,000 instructions in the same
   emulator runs (22,225 to 24,861 with the module alone; 24,392 to
-  37,933 in the full remix while playing). In the UI task, counted from the
+  37,933 in the full remix, stopped and playing). In the UI task, counted from the
   module's tick routine to its return, 23 instructions on each of the about 60
   ticks a second that only check the clock, and 607 (the stock drawing
   calls for the overlay included) on the about four a second that take a
