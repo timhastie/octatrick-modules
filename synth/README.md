@@ -219,7 +219,7 @@ as before; the machine list is simply the easier way in.
 **To select it** (any track, T1..T8):
 
 - **SRC SETUP:** hold FUNC and press SRC (the PLAYBACK page key). The machine
-  list is on the left; go DOWN to `FM SYNTH` (the last row) and press YES. The
+  list is on the left; go DOWN to `FM SYNTH` (the row after PICKUP) and press YES. The
   right-hand side then shows the FLEX setup values the track keeps (LOOP, SLIC,
   LEN, RATE, TSTR, TSNS -- all OFF on a fresh FM SYNTH track).
 - **SELECT MACHINE TYPE:** press the track key twice quickly (the QUICK ASSIGN
@@ -418,6 +418,41 @@ machine-list track (they read the same `po_is_synth` / `qz_is_synth`);
 eight machine-list tracks playing at once.
 
 ---
+
+## The machine list for more than one machine, and SY DRUM's hooks (2.11, 8 Oct 2026)
+
+2.10 added one row, FM SYNTH, by poking the stock list code's constants from five rows to six. 2.11 makes the
+rows after PICKUP a table so that another machine module running on this engine -- SY DRUM (`sy-drum/`) -- gets
+its own row without a site of its own, and the two modules never write the same stock bytes.
+
+- **The row table** (`machine.s`, `ml_rows`): one row descriptor a machine -- its signature (two letters and a
+  version: `F`,`M`,1 / `S`,`Y`,1, in the first three bytes of the track's NEIGHBOR PLAYBACK column, as 2.10), the
+  engine kind the engine's `po_signed` answers for it (1 FM, 2 SY DRUM), its name, its twelve seed bytes, the routine
+  that returns its page (SRC SETUP's right half; written into the PLAYBACK descriptor table's spare slots 5 and 6
+  by the UI tick) and a flag for machines whose SETUP bytes are their own (leaving the row restores FLEX's). The
+  table is assembled per remix: FM SYNTH always, SY DRUM's descriptor (`sd_row`, its own unit) when the remix
+  carries SY DRUM. Choosing, highlighting, naming, opening on, editing and validating a row all read the table.
+- **The row count is the remix's.** The six constants 2.10 poked (the two lists' row counts, SRC SETUP's name
+  lookup, the machine window's drawer, highlight and cursor bounds) are six detours now, assembled with
+  `5 + ML_COUNT` and `4 + ML_COUNT`: 6 rows with FM SYNTH alone, 7 with SY DRUM.
+- **SELECT MACHINE TYPE scrolls.** Its window shows six rows; its row drawer drew `name(row)` for the visible rows
+  with no scroll offset, so a seventh row was never drawn, and five copies of a row clamp (`0..5`) after each list
+  move put the cursor back on the sixth row (the b70 study S3 found the drawer, the dev line's b70 build the clamps).
+  The drawer draws `name(row + top)` now (one 12-byte detour at `0x40078678`), the highlight compares `row + top`,
+  and the five clamps keep `0 .. the last row` (five 8-byte detours, `ml_clamp1..5`). With six rows the top stays
+  0 and the clamps keep 0..5: stock's behaviour.
+- **One include, two flags.** `poly.s`, `machine.s` and the quantizer include a `remix.inc` the build writes per
+  remix (octabam's `Linked.include`; `manifest.py` `remix_include`): `HAVE_SYDRUM` (1 when SY DRUM is in the remix)
+  and `engine_abi.inc`, the equates SYNTH MACHINE shares with SY DRUM (one copy). With `HAVE_SYDRUM` 0 the engine
+  (`poly.s`) assembles byte for byte as 2.10's and the quantizer as 2.10's.
+- **The engine's SY DRUM call-outs** (`.if HAVE_SYDRUM`, read from the dev line's engine and re-placed in this
+  one): a START stores the engine in `sy1_kind[t]` (0 FM, 1 SY DRUM; a change starts cold, its voices freed) and a
+  SY DRUM START runs that engine's trigger and takes no crossfade; its frame, its render, its LEG MONO recharge and
+  its SETUP / LFO tick are SY DRUM's routines; FM's onset law, FINE, VOIC / chords, fingered-chord recording, the
+  paraphonic LEG modes and LFO 3's muting stay FM's (`po_is_fm`). `po_is_synth` is true for both machines (the keys,
+  MIDI IN, the tuning system).
+- **ANALOG BD** (octabam's `modules/analog-bassdrum`) owns the same chooser sites; the manifest declares the
+  conflict so octabam names the reason.
 
 ## 6 dB of headroom (2.10, 8 Oct 2026)
 
