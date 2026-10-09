@@ -1,6 +1,6 @@
 # octatrick-modules
 
-Four firmware modules for the Elektron Octatrack (OS 1.40C, MKI and MKII),
+Firmware modules for the Elektron Octatrack (OS 1.40C, MKI and MKII),
 written for [sambanks/octabam](https://github.com/sambanks/octabam)'s build
 system. **This repository is the source of truth for the modules**: octabam
 consumes it as a git submodule (`modules/<name>/upstream`, pinned to a tag),
@@ -65,7 +65,17 @@ to watch.
   a step without a lock starts from the Part's PTCH), the page showing the
   new value; with no trig held FUNC + UP / DOWN is still the trig-mode
   selector, as it is on every sample track.
-  `synth/README.md`.
+  Since 2.11 the rows after PICKUP are a table the remix fills (FM SYNTH
+  always, SY DRUM when the remix has it) and SELECT MACHINE TYPE scrolls
+  when there are more than six rows. `synth/README.md`.
+- **`sy-drum/`** (key `SY DRUM`, since 2.11; requires `SYNTH MACHINE`) -- a
+  drum machine in the machine list, the row after FM SYNTH: a two-oscillator
+  percussion voice with a sweep, a filter opened by the decay, six modes
+  (PTCH MODE WDTH SWEP SPED DEC, stock p-locks, LFOs and scenes) and a
+  dedicated LFO / S&H on its PLAYBACK SETUP page (LSPD LDEP WAVE S&H, Part
+  settings). One voice a track, any number of tracks; no sample or marker
+  file. It runs on SYNTH MACHINE's engine (one DRAM unit beside it, one hook
+  of its own). `sy-drum/README.md`.
 - **`quantizer/`** (key `SCALE QUANTIZER`) -- a SCALE row in PROJECT >
   CONTROL > SEQUENCER (24 scales): the PTCH knob, parameter locks and
   CHROMATIC trig keys snap to the scale; a GLIDE row, the synth's slide
@@ -165,6 +175,17 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
+- 2.11 (not tagged yet; 8 Oct 2026): SY DRUM (`sy-drum/`, a new module,
+  requires SYNTH MACHINE) and the machine list for more than one machine: the
+  rows after PICKUP are a table filled per remix (FM SYNTH, then SY DRUM), the
+  six row-count / row-bound pokes became detours that read the row count, and
+  SELECT MACHINE TYPE scrolls (its six visible rows show the seventh). With FM
+  SYNTH alone every list behaves as 2.10's and the engine (`synth/poly.s`) is
+  byte for byte 2.10's; SYNTH MACHINE declares the conflict with ANALOG
+  BD (the same chooser sites). The quantizer treats a SY DRUM track as a synth
+  track (semitone PTCH, the keys), mono. Projects saved by 2.10 load unchanged
+  (the FM SYNTH mark is the same three bytes). SY DRUM is emulator-verified,
+  not yet on hardware.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
   four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
   (FUNC + SRC) and of SELECT MACHINE TYPE on every track: it plays with no
