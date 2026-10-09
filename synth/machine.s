@@ -497,7 +497,7 @@ ml_nb_out:
 | 0x40078678 (jmp, 12 B): the machine window's row drawer, `moveq #4,%d0; cmpl %d2,%d0;
 | blts 0x400786a2; movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@` (d2 = the visible row, d3 =
 | the name formatter). It drew name(d2) for d2 = 0 .. 5 with no scroll offset: a seventh
-| row was never drawn and the cursor box left its name (found by the b70 study S3). 2.11:
+| row was never drawn and the cursor box left its name (found by a study of the list code, 8 Oct 2026). 2.11:
 | name(d2 + the list's top), up to the last row -- the window scrolls as SRC SETUP's does,
 | six rows visible. With six rows or fewer the top stays 0: stock's drawing.
 ml_draw_bound:
@@ -523,8 +523,8 @@ ml_hb_out:
 | The machine window's row clamp after a list move (five sites, 8 B each: `moveq #5,%d1;
 | cmpl %d0,%d1; bges +2; moveq #5,%d0` -- the absolute row 0x460e738e kept to 0..5, the
 | six rows the window shows, then handed to the list's row setter 0x4007edb0): a row past
-| the sixth was put back on the sixth, so it could not be selected or committed (b70 F20
-| located them). 2.11: kept to 0 .. the last row.
+| the sixth was put back on the sixth, so it could not be selected or committed (located by the
+| development line's machine-list build, 8 Oct 2026). 2.11: kept to 0 .. the last row.
         .macro  ML_CLAMP n, back
 ml_clamp\n:
         moveq   #ML_LAST,%d1

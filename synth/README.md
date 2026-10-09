@@ -437,7 +437,7 @@ its own row without a site of its own, and the two modules never write the same 
   `5 + ML_COUNT` and `4 + ML_COUNT`: 6 rows with FM SYNTH alone, 7 with SY DRUM.
 - **SELECT MACHINE TYPE scrolls.** Its window shows six rows; its row drawer drew `name(row)` for the visible rows
   with no scroll offset, so a seventh row was never drawn, and five copies of a row clamp (`0..5`) after each list
-  move put the cursor back on the sixth row (the b70 study S3 found the drawer, the dev line's b70 build the clamps).
+  move put the cursor back on the sixth row (a study of the list code found the drawer, the development line's machine-list build the clamps, 8 Oct 2026).
   The drawer draws `name(row + top)` now (one 12-byte detour at `0x40078678`), the highlight compares `row + top`,
   and the five clamps keep `0 .. the last row` (five 8-byte detours, `ml_clamp1..5`). With six rows the top stays
   0 and the clamps keep 0..5: stock's behaviour.
@@ -1406,7 +1406,7 @@ period; cap 2,600); VOIC 4 mean 3,910 -> 4,028 -> 4,060, peak 5,348 -> 5,568
 ## The LFO destination list (2.10, 6 Oct 2026)
 
 Tim (6 Oct): "get rid of the parameters that don't exist for granular, and put
-the parameters for granular in as destinations. Do that for FM and syncussion
+the parameters for granular in as destinations. Do that for FM and [SY DRUM]
 machine too." On this line: FM.
 
 **Cause** (found on the emulator): LFO SETUP's PMTR names a destination as page x 6 + slot
