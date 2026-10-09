@@ -15,8 +15,9 @@
  *     carried with the rows and written back as that line does; no control of this module
  *     uses them.
  *   syscenNN.work / .strd -- the development line's setup scenes: this module has no setup
- *     scenes; it never reads or writes them, EXPORT copies them and DELETE removes them
- *     (scenes_io.h).
+ *     scenes and never reads them for playback; RELOAD restores them as that line does (a
+ *     saved STRD becomes WORK again, a WORK without STRD is removed), EXPORT copies them,
+ *     DELETE removes them (scenes_io.h).
  * WORK follows working edits (the stock background save, the card SYNC), STRD an explicit
  * SAVE PROJECT / SAVE BANK; RELOAD restores STRD.
  *
@@ -28,7 +29,10 @@
  *     existing sylock files first, so a stale one there is overwritten, never left behind.
  *   - RELOAD of a bank without a saved (STRD) file removes its WORK file instead of writing
  *     an all-unlocked one; both read as "no lock" on both lines.
- *   - no setup-scene state (above).
+ *   - no setup-scene state (above). Its RELOAD step for the syscen files is kept: without it a
+ *     RELOAD on an emulated card whose files had been saved in place failed in the stock loader
+ *     ('PARSE ERROR', 9 Oct 2026); with it, as on the development line, it does not (why that
+ *     step matters to the stock loader was not established).
  */
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -306,6 +310,7 @@ static s32 restore_preflight(u32 mask) {
 }
 static s32 restore_mask(u32 mask) {
     u32 bank,bit,g; s32 r;
+    sc_restore_files(mask);
     for(bank=0;bank<16;++bank)if(mask&(bit=1u<<bank)) {
         r=read_bank(sl_io_base,bank,1,&g);
         if(r==ABSENT) {

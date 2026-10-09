@@ -1,8 +1,8 @@
 /* The development line's setup-scene files (syscenNN.work / .strd, 4,128 bytes, magic
  * SYSCENE\0, version 1): this module has no setup scenes, so it never reads them for
- * playback and never writes them; DELETE removes them with the project (stock refuses to
- * delete a folder that still holds files it does not know) and EXPORT copies the ones
- * that exist. Included by locks_io.c, sharing sl_io_file / sl_io_path / sl_io_object;
+ * playback; RELOAD restores them as that line does (sc_restore_files), DELETE removes them
+ * with the project (stock refuses to delete a folder that still holds files it does not
+ * know) and EXPORT copies the ones that exist. Included by locks_io.c, sharing sl_io_file / sl_io_path / sl_io_object;
  * SC_FS(x) names the file call. sc_crc / sc_get32 / sc_put32 serve gjlocks_io.h too. */
 enum { SC_BANK=4096, SC_FILE=4128 };
 extern const u32 sl_crc_table[256];
@@ -49,6 +49,24 @@ static s32 sc_read(const char *base,u32 bank,u32 stored,u32 *generation) {
     if(sc_crc(f,28)!=sc_get32(f+28)||sc_crc(f+32,SC_BANK)!=sc_get32(f+24))return CORRUPT;
     for(i=0;i<SC_BANK;++i)if(f[32+i]>127 && f[32+i]!=255)return CORRUPT;
     *generation=sc_get32(f+20);return 0;
+}
+/* RELOAD (the development line's sc_restore for these files): a bank's saved STRD becomes its WORK
+ * again (copied as it is); no STRD: the WORK is removed (that line's "no saved scene assignment"). */
+static void sc_restore_files(u32 mask) {
+    u32 bank,g;s32 r;
+    for(bank=0;bank<16;++bank)if(mask&(1u<<bank)) {
+        r=sc_read(sl_io_base,bank,1,&g);
+        if(r==0) {
+            r=sc_path(sl_io_path,sl_io_base,bank,0);
+            if(r>=0) {
+                r=SC_FS(open)(&sl_io_object,sl_io_path,"w",sl_io_sector,512);
+                if(r>=0){s32 w=SC_FS(write)(&sl_io_object,sl_io_file,SC_FILE),c=SC_FS(close)(&sl_io_object);r=w!=1?(w<0?w:CORRUPT):c;}
+            }
+            if(r<0)note(r,0);
+        } else if(r==ABSENT) {
+            if(sc_path(sl_io_path,sl_io_base,bank,0)>=0)SC_FS(remove)(sl_io_path);
+        } else if(r!=FUTURE)note(r,0);
+    }
 }
 static s32 sc_delete(const char *base) {
     u32 bank,stored;s32 r;
