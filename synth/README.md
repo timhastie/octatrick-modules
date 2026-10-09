@@ -11,7 +11,8 @@ a held CHROMATIC key is the gate (HOLD is for sequencer trigs). And three
 fixes after the author's test of the first 2.10 build on his MKI (7 Oct): a
 note restarted while it still sounds no longer clicks at a short DEC; a fast
 run at VOIC 2..4 no longer loses notes; a live-recorded legato phrase no
-longer goes silent on playback. Each below.
+longer goes silent on playback. And the engine leaves 6 dB of headroom (8
+Oct): VOL 0 is the reference, VOL up to about +6 stays clean. Each below.
 
 **2.10: DEC puts HOLD at 127 (5 Oct 2026).** The
 PLAYBACK page's DEC knob read `HOLD` at raw 0, then the shortest decay at 1
@@ -86,6 +87,13 @@ causes, and all three are fixed:
 Not reproduced on the emulator: notes not sounding at REL 0 with the
 sequencer running, and notes jumping up an octave. Details: "The author's
 test of the first 2.10 build (2.10)" below.
+
+**2.10 also (8 Oct 2026): 6 dB of headroom.** The engine's output is 6.02 dB
+lower than before, on the mono voice and on every paraphonic voice alike (one
+arithmetic shift right before the sum): VOL 0 is the reference, VOL up to
+about +6 stays clean, and a VOIC 4 chord's coincident peaks reach full scale
+instead of twice it. The relations between VOIC 1..4, the envelopes and the
+attacks are unchanged. Details: "6 dB of headroom (2.10)" below.
 
 **OCTATRICK2.9 (28 Sep 2026, later): FINE defaults to 0c when a track
 becomes a synth track.** A track that is made a synth track -- a FLEX track
@@ -174,7 +182,9 @@ power** -- every shape but `----` plays 2 / 3 / 4 notes at VOIC 2 / 3 / 4
 (its own notes first, then octave doublings), a start with a shape is chord
 memory (the previous chord goes), a voice is `1 / sqrt(VOIC)` of the mono
 voice (-3 / -4.8 / -6 dB) and a soft limiter takes the in-phase excess --
-**"VOIC, CHRD, and the mono voice"** below.
+**"VOIC, CHRD, and the mono voice"** below. (2.10, 8 Oct 2026: every level
+the engine puts out is 6.02 dB lower, the relations unchanged -- "6 dB of
+headroom (2.10)".)
 Phase 5 (24 Sep 2026) moves the FM voice engine into a DRAM unit (`poly.s`,
 the ROM cave `synth.s` kept for the record) and makes the synth paraphonic:
 the LFO page's VOIC slot (1..4) gives a synth track that many voices playing
@@ -406,6 +416,69 @@ copied from the stock one at run time instead of carrying its five addresses.
 Not tested: hardware; MIDI notes, the live recorder and scenes on a
 machine-list track (they read the same `po_is_synth` / `qz_is_synth`);
 eight machine-list tracks playing at once.
+
+---
+
+## 6 dB of headroom (2.10, 8 Oct 2026)
+
+**The engine leaves 6 dB of headroom: VOL 0 is the reference, VOL up to about
++6 stays clean.** The author's decision (8 Oct 2026). Two places in `poly.s`
+shift right by one bit (`HEADROOM`, 1 = -6.02 dB): the mono voice's sample
+after its gain (`sy_loop`, the high word is now c / 2 at full gain) and each
+paraphonic voice's contribution before it is added to the sum (`po_fi_loop`).
+Every level in the engine moves down by the same 6.02 dB; nothing else
+changes:
+
+- the relations stay: a paraphonic voice is `1 / sqrt(VOIC)` of the mono
+  voice (-3.0 / -4.8 / -6.0 dB at VOIC 2 / 3 / 4), the AMP envelope, the
+  crossfades and fades, the attack shapes and the index ramp are untouched;
+- the final pass still doubles the sum into the mono format with the
+  saturating clamp. A VOIC 4 chord's coincident peaks, 2.0 FS before, now
+  reach 1.0 FS, so the clamp is a guard that a chord at full scale only
+  touches, where it used to clip every coincidence above 1.0 FS;
+- a fading paraphonic voice under the mono voice (VOIC 2..4 -> 1 across a
+  note) is summed in the same format as before (`po_fill_add` halves the
+  mono samples into the sum, which now holds the shifted values on both
+  sides).
+
+The factor 0.5 is the per-voice law of the author's host-side renderer (in
+development), so both engines meet the DSP chain at the same level. The
+amount is deliberate: 6.02 dB, not the 18.06 dB (`OUTPUT_SHIFT` 3) of
+Modwerk's FM Synth 0.1.2. Cost: one instruction a sample on the mono path
+and one a sample per sounding paraphonic voice; the DRAM unit grows 20,976
+-> 20,980 B (two 2-byte `asr.l #1`; every other instruction, branch and
+PC-relative form assembles to the same encoding).
+
+### Measured (8 Oct 2026, ot_emu lockstep `--dsp`, the quantizer + synth image built from this change against the same build of the commit before it; T1 on the 2.10 click and gate cards, the chooser cards for two of them)
+
+- **Level.** Eighteen renders, each against the same card on the build
+  before: -6.02 dB on every one, whole-render RMS and peak alike, the
+  100 ms windows' median -6.02 dB (C4 at INDX 0 and the INDX 0 / 40 / 100,
+  FDBK 60, RATO 1 and ATK 16 click cards; the VOIC 2 and VOIC 4 steal cards;
+  the VOIC 4 chord card, its peaks -15.25 -> -21.27 dBFS; the gate cards;
+  INDX 0 and the VOIC 4 chord on a machine-list track too).
+- **The waveform is the same, halved.** Aligned to the build before (the
+  captures start up to 47 samples apart), every sample of 16 of the 18
+  renders is the old sample / 2 within 1 LSB of the 16-bit capture -- the
+  attacks, crossfades, steals and releases are unchanged, sample for sample.
+  The other two (one key held, four keys held) differ only where the panel's
+  key-down and key-up land (100 ms envelopes within 0.24 dB of the build
+  before, +6.02 dB applied; the release ends in the same 100 ms).
+- **The click referee** (the onset splatter of "The note-start click (2.10)":
+  HF in the first 10 ms against the tone's own HF, both re the tone) reads up
+  to 4.8 dB LOWER on the quiet cards: the tone's own HF sits at -77 dB re the
+  tone, below the 16-bit capture's floor, and at 6 dB less level that floor
+  rises to -71 dB re the tone (the loud onsets read the same, e.g. the VOIC 4
+  chord's C1 -41.9 dB on both). With the samples equal within 1 LSB, that is
+  the capture's resolution, not the engine.
+- **The menu walk** (the LFO destination list, the hidden pages, the master
+  page): 171 of 171 screens pixel-identical to the build before.
+- **Modwerk's harnesses** (`gate.cpp`, `lfo_regression.cpp`): both pass; the
+  gate harness's PCM is the shifted PCM (its state hash changes, the high
+  words halve); mean cost per render +17 instructions at VOIC 1 (1,234 ->
+  1,251, peak 2,658 -> 2,690) and +64 at VOIC 4 (4,130 -> 4,194, peak 6,492 ->
+  6,556): one instruction a sample per voice. `poly.s` assembles at
+  `-mcpu=5475` and `-mcpu=54455`, 20,976 -> 20,980 B.
 
 ---
 
@@ -2617,6 +2690,10 @@ tables at `0x400d7480..0x400d7594`.
   read the Part's byte. **VOIC 1 is the exact mono synth of OCTATRICK4**: this
   file's mono path, GLIDE legato through the quantizer's hooks, the stock
   voice lifecycle, the same level.
+- **2.10 (8 Oct 2026): 6 dB of headroom.** The levels this section states and
+  measures (the mono voice's peaks, FS, the coincident peaks of a chord) are
+  from before it: since 2.10 the mono voice and each paraphonic voice are
+  6.02 dB lower, the relations unchanged; see "6 dB of headroom (2.10)".
 - **The level: equal power, a voice is `1 / sqrt(VOIC)` of the mono voice,
   and a peak limiter** (29 Sep 2026, Tim: "the volume difference between
   mono and 2 voices and 3 voices is too drastic" -- the 1/VOIC level of 28

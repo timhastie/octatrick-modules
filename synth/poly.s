@@ -82,7 +82,10 @@
 |     (c * g << 1: the high word is the sample) with a saturating clamp only
 |     (plan B: the peak limiter is gone). A single note is 3.0 / 4.8 / 6.0 dB
 |     below the mono voice at VOIC 2 / 3 / 4; a VOIC 4 chord's coincident
-|     peaks reach 2.0 FS and clamp. A stolen or chord-memory voice fades over
+|     peaks reach 2.0 FS and clamp (2.10, 8 Oct 2026: both paths leave 6.02 dB
+|     of headroom, HEADROOM -- the mono voice peaks at half its old level and
+|     each voice is halved before the sum, so those peaks reach 1.0 FS, the
+|     relations above unchanged). A stolen or chord-memory voice fades over
 |     8 frames (state 3, T_GMAX / 8 a frame; 2.10: at least one period of the
 |     voice, S-shaped); a voice above the cap (a tail
 |     from a lower VOIC, the mono voice carried in) converges on it at that
@@ -158,6 +161,9 @@
         .set    FLEX_START, 0x4000f450   | the stock FLEX START callback (the kind table's second half, 0x400d6458)
         .set    FP_PTR, 0x800062a8       | the packer's per-track DSP parameter record
         .set    RS_PTR, 0x800062a4       | the packer's per-track render state
+        .set    HEADROOM, 1              | 2.10: 6.02 dB of headroom (one arithmetic shift right) at the mono output and
+                                         | at each paraphonic voice's contribution -- the sidecar host's 0.5-per-voice
+                                         | law; VOL 0 is the reference, VOL up to about +6 stays clean (8 Oct 2026)
         .set    SETTINGS_BASE, 0x100b14f0 | the sample settings records, 0x448 each, slots 0..135
         .set    SETTINGS_SPAN, 0x24640    | 136 * 0x448
         .set    SETTINGS_STRIDE, 0x448
@@ -1050,7 +1056,8 @@ sy_loop:
         move.l  %a5,%d2
         swap    %d2                      | gain / 2, Q14
         muls.w  %d2,%d1                  | c * gain / 2 (16 x 16)
-        lsl.l   #2,%d1                   | = (c * g) << 1: the high word is (c * g) >> 15 -- at full gain c itself, as before
+        lsl.l   #2,%d1                   | = (c * g) << 1: the high word is (c * g) >> 15 -- at full gain c itself
+        asr.l   #HEADROOM,%d1            | 2.10: -6.02 dB (the high word c / 2 at full gain), as each paraphonic voice below
         clr.w   %d1                      | sample << 16: the DSP's 24-bit word is the top 24 bits
         move.l  %d1,(%a1)+               | L
         move.l  %d1,(%a1)+               | R
@@ -2887,7 +2894,8 @@ po_rank_act:                             | po_steal: free voices last
 | CLAMP on the sum only -- the peak limiter that follows in this note is HISTORY
 | (removed: its gain movement was itself a level modulation under chords; the
 | level law 1/sqrt(VOIC) alone bounds a single note at 0.5 FS and a VOIC 4 chord's
-| coincident peaks at 2.0 FS, clamped). History (29 Sep 2026): a PEAK LIMITER, a gain and not a curve: the frame's
+| coincident peaks at 2.0 FS, clamped; 2.10: each contribution is shifted right by
+| HEADROOM first, as the mono voice's samples are, so they reach 1.0 FS). History (29 Sep 2026): a PEAK LIMITER, a gain and not a curve: the frame's
 | peak |x| is scanned; the track's gain g (T_LIM, Q16) releases toward 1.0
 | by 1/2048 of the deficit a frame (tau = 0.74 s) and is pulled down to FS /
 | peak at once when this frame's peak would pass FS, so no sample ever
@@ -2906,8 +2914,8 @@ po_rank_act:                             | po_steal: free voices last
 | divu.l a frame while limiting. The saturation after the doubling is only a
 | guard: |x * g| <= FS always.
 po_fill_add:                             | BUILD 32: the mono voice's samples are in the record (sy_gend): the
-        moveq   #1,%d4                   | fading voices are ADDED to them -- each L long, (c * g) << 1 with its low
-        bra     po_fill1                 | word cleared, is halved into the sum's format (c * g) first
+        moveq   #1,%d4                   | fading voices are ADDED to them -- each L long, ((c * g) << 1) >> HEADROOM with its
+        bra     po_fill1                 | low word cleared, is halved into the sum's format ((c * g) >> HEADROOM) first
 po_fill:
         moveq   #0,%d4                   | the record is cleared first
 po_fill1:
@@ -3001,6 +3009,8 @@ po_fi_loop:
         move.l  %a5,%d2
         swap    %d2                      | its integer part, Q15
         muls.w  %d2,%d1                  | c * gain (16 x 16: c is +-0x4000, the gain at most 23170)
+        asr.l   #HEADROOM,%d1            | 2.10: -6.02 dB BEFORE summing, as the mono voice (a VOIC 4 chord's coincident
+                                         | peaks reach 1.0 FS, not 2.0; the clamp below stays as the guard)
         add.l   %d1,(%a1)                | into the sum
         addq.l  #8,%a1
         add.l   %d5,%d0

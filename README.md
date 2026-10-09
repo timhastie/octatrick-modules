@@ -190,7 +190,10 @@ builds on the author's unit and were never tagged.
   at least one carrier period, where DEC 0 dropped it within a frame); a
   second key inside a paraphonic voice's fade no longer drops the first
   key's note; a live-recorded legato phrase no longer goes silent at its
-  first trigless step on playback.
+  first trigless step on playback. And the engine leaves 6 dB of headroom
+  (the author's decision, 8 Oct): the mono voice and each paraphonic voice
+  are 6.02 dB lower, so VOL 0 is the reference and VOL up to about +6 stays
+  clean (not Modwerk 0.1.2's 18.06 dB).
 - `v2.9` -- Octatrick 2.9 (29 Sep 2026): a ROOT row under SCALE (the scale
   is built on it; battery RAM `0x100b14ee`); the quantizer as a DRAM unit
   (a 192-byte core stays in the OS image); FINE 0c the moment a track
