@@ -14,7 +14,8 @@ One DRAM unit (sydrum.s, with engine.inc.s, the step locks' sources and
 synth/engine_abi.inc through its remix.inc), a 2 MiB DramRegion (the lock table) and 52
 detours of its own: the page resolver's epilogue (0x40031ed6), where a SY DRUM track gets
 its PLAYBACK page, the setup editor (0x4003a524), and the step locks' 50 (sequencer, UI,
-clipboard, card I/O; LOCK_HOOKS). Verified in ot_emu (README.md).
+clipboard, card I/O; LOCK_HOOKS). Not with STEM REC: the lock table and STEM REC's buffers
+together exceed the platform reserve (conflicts). Verified in ot_emu (README.md).
 """
 
 import os
@@ -200,5 +201,8 @@ MODULE = Module(
     conflicts=(("KITS", "both hook the project load / save / reload / clear jobs and the pattern clipboard "
                         "(SY DRUM's step-lock files and clipboard)"),
                ("PLOCKS P2", "both hook the sequencer's lock queue and clear paths and the held-trig encoder "
-                             "(SY DRUM's step locks)"),),
+                             "(SY DRUM's step locks)"),
+               ("STEM REC", "both take DRAM regions at the top of the platform reserve: SY DRUM's 2 MiB lock table "
+                            "and STEM REC's ring, stack and stream buffers do not fit it together (the build "
+                            "refuses: the runtime would end above the lowest region)"),),
 )
