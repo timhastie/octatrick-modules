@@ -304,7 +304,7 @@ flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 
 import os
 
-from remix.schema import CavePatch, Detour, Kind, Linked, Module, Poke, SymbolRef
+from remix.schema import CavePatch, Detour, Kind, Linked, Module, SymbolRef
 
 # This module's own directory, relative to the build's cwd (octabam's repo
 # root): "modules/synth" when the module is checked out directly, and
@@ -444,6 +444,19 @@ FM_VALIDATE_HOOK = 0x40002318            # `lea %sp@(-96),%sp; moveml %d2-%d7/%a
 FM_VALIDATE_STOCK = bytes.fromhex("4fefffa0" "48d77cfc")
 FM_SOURCE_HOOK = 0x4000d514              # `moveal %a4@+,%a0; movel %a0,%a3@+; pea 0x10` (the frame builder's second supplier call)
 FM_SOURCE_STOCK = bytes.fromhex("205c" "26c8" "48780010")
+# 2.11: the machine list's six row-count / row-bound sites (machine.s ml_*; pokes 5 -> 6 until 2.10)
+ML_WIN_COUNT_HOOK = 0x40079248            # `pea 5; pea 6` (the machine window's list init: rows, visible)
+ML_WIN_COUNT_STOCK = bytes.fromhex("48780005" "48780006")
+ML_SRC_COUNT_HOOK = 0x400585fa            # `pea 5; pea 5` (SRC SETUP's list init: rows, visible)
+ML_SRC_COUNT_STOCK = bytes.fromhex("48780005" "48780005")
+ML_NAME_BOUND_HOOK = 0x4003c950           # `moveq #4,%d1; cmpl %d2,%d1; bcss 0x4003c95a` (SRC SETUP's name lookup)
+ML_NAME_BOUND_STOCK = bytes.fromhex("7204" "b282" "6504")
+ML_DRAW_BOUND_HOOK = 0x40078678           # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786a2` (the machine window's drawer)
+ML_DRAW_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d24")
+ML_HI_BOUND_HOOK = 0x400786ce             # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786fc` (its highlight)
+ML_HI_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d28")
+ML_CUR_BOUND_HOOK = 0x40079904            # `moveq #4,%d3; cmpl %d4,%d3; bgew 0x400797cc` (its cursor)
+ML_CUR_BOUND_STOCK = bytes.fromhex("7604" "b684" "6c00fec2")
 KIND_TABLE_FLEX_START = 0x400d6458       # the kind table's FLEX START callback (stock 0x4000f450)
 FLEX_START = 0x4000f450
 
@@ -569,6 +582,10 @@ MODULE = Module(
     name="synth",
     key="SYNTH MACHINE",
     kind=Kind.CF_PATCH,
+    # 2.11: ANALOG BD (octabam modules/analog-bassdrum) owns the same machine-list sites
+    # (the sixth row and its hooks); the ledger refuses the pair on bytes already, this
+    # names the reason.
+    conflicts=(("ANALOG BD", "both own the machine list's rows after PICKUP (the same chooser sites)"),),
     doc="FM SYNTH in the machine list (FUNC + SRC, or SELECT MACHINE TYPE), or a FLEX track whose sample is named SYNTH*, plays a two-operator FM "
         "voice (STRT/LEN/RTRG/RTIM = ratio/index/feedback/decay); the DSP "
         "shapes and effects it as a sample. Its PLAYBACK page reads RATO/INDX/"
@@ -728,21 +745,29 @@ MODULE = Module(
                "the frame builder's second supplier call: a chosen track's supplier is sy_render (an empty FLEX voice gets stock's "
                "silent one)",
                kind="jmp", pad_to=8),
+        # ---- the machine list's row count and bounds (2.11, machine.s; 2.10 poked them to 6 rows) ----
+        Detour(ML_WIN_COUNT_HOOK, ML_WIN_COUNT_STOCK, "fmmachine", "ml_win_count",
+               "the machine window's list init: 5 + the remix's machine-list rows (6 with FM SYNTH, 7 with SY DRUM), six visible",
+               kind="jmp", pad_to=8),
+        Detour(ML_SRC_COUNT_HOOK, ML_SRC_COUNT_STOCK, "fmmachine", "ml_src_count",
+               "SRC SETUP's machine selector: 5 + the machine-list rows, five visible",
+               kind="jmp", pad_to=8),
+        Detour(ML_NAME_BOUND_HOOK, ML_NAME_BOUND_STOCK, "fmmachine", "ml_name_bound",
+               "SRC SETUP's name lookup admits the machine-list rows",
+               kind="jmp"),
+        Detour(ML_DRAW_BOUND_HOOK, ML_DRAW_BOUND_STOCK, "fmmachine", "ml_draw_bound",
+               "the machine window draws the machine-list rows",
+               kind="jmp"),
+        Detour(ML_HI_BOUND_HOOK, ML_HI_BOUND_STOCK, "fmmachine", "ml_hi_bound",
+               "the machine window highlights the machine-list rows",
+               kind="jmp"),
+        Detour(ML_CUR_BOUND_HOOK, ML_CUR_BOUND_STOCK, "fmmachine", "ml_cur_bound",
+               "the machine window applies a machine-list row under its cursor",
+               kind="jmp", pad_to=8),
     ),
-    pokes=(
-        Poke(0x40079248, expect=bytes.fromhex("48780005"), write=bytes.fromhex("48780006"),
-             note="the machine window has six rows (`pea 5` -> `pea 6`), FM SYNTH the last"),
-        Poke(0x400585fa, expect=bytes.fromhex("48780005"), write=bytes.fromhex("48780006"),
-             note="SRC SETUP's machine selector has six rows"),
-        Poke(0x4003c950, expect=bytes.fromhex("7204"), write=bytes.fromhex("7205"),
-             note="SRC SETUP's name lookup admits row 5 (`moveq #4,%d1` -> 5)"),
-        Poke(0x40078678, expect=bytes.fromhex("7004"), write=bytes.fromhex("7005"),
-             note="the machine window draws row 5"),
-        Poke(0x400786ce, expect=bytes.fromhex("7004"), write=bytes.fromhex("7005"),
-             note="the machine window highlights row 5"),
-        Poke(0x40079904, expect=bytes.fromhex("7604"), write=bytes.fromhex("7605"),
-             note="the machine window keeps its cursor on row 5"),
-    ),
+    # 2.11: the six row-count / row-bound constants were pokes (5 -> 6) until 2.10; a poke is
+    # static, the number of rows is the remix's (FM SYNTH, + SY DRUM): six detours read it.
+    pokes=(),
     cf_patches=(
         CavePatch(
             label="synth page",

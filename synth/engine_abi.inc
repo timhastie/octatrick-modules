@@ -27,6 +27,8 @@
         .set    KEY_HELD, 0x46c7d8de+0x10 | + code * 0x18: nonzero while that key is held
         .set    PUSH_CODE, 0x38          | the encoder push switches: key codes 0x38..0x3d = A..F
         .set    KN_SLOTS, 0x12a          | a page descriptor's six knob handler pointers
+        .set    FM_DESC, 0x400d24d0      | page.s's fm_descriptor (the pinned page cave's first routine): d0 := the FM
+                                         | SYNTH page clone, built on first use (d0/d1/a0/a1 clobbered)
 
 | ---- the engine's numbers ----
         .set    C4_INC, 25480119         | C4: 261.6256 / 44100 * 2^32
