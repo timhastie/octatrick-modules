@@ -155,6 +155,10 @@
         .include "remix.inc"             | 2.11: the remix's flags (HAVE_SYDRUM: SY DRUM in the remix) and the shared
                                          | equates (engine_abi.inc), written beside this unit by the build (manifest.py);
                                          | with HAVE_SYDRUM 0 the unit assembles byte for byte as 2.10's
+        .if     HAVE_SYDRUM
+        .global po_ident, po_is_fm, po_signed | 2.11: SY DRUM (sy-drum/sydrum.s) on this engine: the tests,
+        .global po_clock, po_voices, sy_state | and the state its engine reads
+        .endif
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
@@ -352,11 +356,19 @@ sy_render:
         lea     (%a0,%d2.l),%a0
         btst    #4,(%a0)                 | a voice starts this frame: resolve the marker
         beq     sy_ison
+        .if     HAVE_SYDRUM
+        lea     sy1_leg_pending:l,%a0    | (SY DRUM) a real START supersedes any queued mono key recharge
+        clr.b   (%a0,%d2.l)
+        .endif
         bsr     sy_machine               | d0 := the track's machine (the Part's byte; clobbers d0, d1, a0)
         subq.l  #1,%d0
         bne     sy_no                    | not FLEX (a STATIC track, kind 0, comes here since 2.8): a sample, no marker scan
         bsr     po_signed                | FM SYNTH chosen in the machine list (machine.s): a synth, no marker scan
+        .if     HAVE_SYDRUM
+        bne     sy_listed                | (2.11: or SY DRUM -- d0 = the row's engine kind)
+        .else
         bne     sy_cold
+        .endif
         move.l  #VOICE_STRIDE,%d3
         muls.l  %d2,%d3
         lea     VOICE_BASE,%a0
@@ -392,6 +404,28 @@ sy_cmp:
         bne     sy_no
         subq.l  #1,%d3
         bne     sy_cmp
+        .if     HAVE_SYDRUM
+| ---- (2.11) the engine of this START: sy1_kind[track] (sy-drum/sydrum.s) 0 FM, 1 SY DRUM --
+| the dev line's sy_kind_found. A track whose engine changes starts cold (the other engine's
+| level, its voices freed); a SY DRUM START runs that engine's trigger (sd_trigger: its LFO's
+| outputs brought up to this frame, both envelopes recharged, warm keeps phase and filter).
+        moveq   #1,%d0                   | an FM marker: FM
+sy_listed:                               | d0 = the engine kind of the machine-list row (1 FM, 2 SY DRUM)
+        subq.l  #1,%d0
+        move.l  %d0,%d5                  | the engine: 0 FM, 1 SY DRUM
+        lea     sy1_kind:l,%a0
+        cmp.b   (%a0,%d2.l),%d5
+        beq     sy_kind_same
+        clr.l   S_GAIN(%a3)              | a different engine starts cold
+        clr.w   S_GPREV(%a3)
+        bsr     po_free
+        lea     sy1_kind:l,%a0
+        move.b  %d5,(%a0,%d2.l)
+sy_kind_same:
+        tst.l   %d5
+        beq     sy_cold
+        jsr     sd_trigger:l             | SY DRUM's START (a3 = the track record; every register kept)
+        .endif
 sy_cold:                                 | a synth starts -- THE START RULE (plan B, 28 Sep 2026): the engine owns
         move.l  #CV_STRIDE,%d1           | the AMP envelope (the DSP sees ATK 0 / HOLD INF / REL INF: sy_ison), so
         muls.l  %d2,%d1                  | the only question is whether THIS voice still sounds. S_GPREV != 0 (the
@@ -422,6 +456,11 @@ sy_cold_hold:
         move.l  %d1,S_HTIM(%a3)
         tst.w   S_GPREV(%a3)
         beq     sy_cold1                 | silent: cold
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM: no crossfade -- its START recharged the envelopes
+        tst.b   (%a0,%d2.l)              | of the same voice (sd_trigger), sounding or not, as on the dev line
+        bne     sy_warm_env
+        .endif
         bsr     po_xfq                   | (2.10) sounding: a mono note at ANOTHER pitch crossfades -- the old tone
         beq     sy_warm_env              | fades as a voice (po_carry, state 3: one period, S-shaped, po_fade_frame)
         bsr     po_carry                 | and the new note starts cold from phase 0 with its attack; the same
@@ -444,6 +483,14 @@ sy_warm_env:
 sy_warm:                                 | (sy_env_ramp, 5.8 ms), the carrier and the level continuous (BUILD 38)
         move.l  RS_PTR,%a0
         clr.l   4(%a0)                   | the retrig count the packer just latched: no stock retrigs
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM is one voice a track: VOIC is not its
+        tst.b   (%a0,%d2.l)
+        beq     sy_warm_voic
+        clr.b   T_POLY(%a3)
+        bra     sy_warm_mono
+sy_warm_voic:
+        .endif
         move.l  #CV_STRIDE,%d1           | VOIC (the current value, locks applied) 2..4: this note
         muls.l  %d2,%d1                  | is paraphonic; 1, or anything outside 1..4: the mono voice
         lea     CURVALS,%a0
@@ -453,6 +500,9 @@ sy_warm:                                 | (sy_env_ramp, 5.8 ms), the carrier an
         sls     %d1
         move.b  %d1,T_POLY(%a3)
         bne     sy_topoly
+        .if     HAVE_SYDRUM
+sy_warm_mono:
+        .endif
         bsr     po_fade                  | a mono note: whatever paraphonic voices the track still had (VOIC 2..4 -> 1
         bsr     po_mring_reset           | across a sounding note) FADE over 8 frames under the mono voice (state 3:
         lea     KEYS_AT,%a0              | po_fade_frame steps them, po_fill_add sums them; BUILD 32 -- po_free cut them)
@@ -472,6 +522,10 @@ sy_synth:
         bra     sy_set
 sy_no:
         bsr     po_free                  | not a synth: nothing of ours may sound on this track
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) a sample: the engine kind is FM's 0 again
+        clr.b   (%a0,%d2.l)
+        .endif
         clr.w   S_GPREV(%a3)             | (the mono voice is silent too)
         lea     KEYS_AT,%a0              | the identity the quantizer posted for this START (a CHROMATIC key on
         clr.b   (%a0,%d2.l)              | any track since BUILD 28) is consumed: nothing stale for a later synth START
@@ -619,6 +673,17 @@ sy_machine:
 | ---- the mono voice's frame: the rate, as the stock renderer computes it -----
 sy_mono_frame:
         bsr     po_fade_frame            | paraphonic voices fading under the mono voice: their envelope (BUILD 32)
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM's frame: a posted LEG MONO key's recharge, the
+        tst.b   (%a0,%d2.l)              | engine's controls from the record (d6 = the slewed word), then
+        beq     sy_mono_fm_frame         | the AMP envelope the engine owns, as FM's
+        jsr     sy1_mono_key_frame:l
+        jsr     sy1_mono_frame:l
+        move.l  52(%sp),%d2              | track
+        bsr     po_mono_env
+        bra     sy_check
+sy_mono_fm_frame:
+        .endif
         bsr     po_rate_fold             | d0 = the increment for the word d6, any octave (clobbers d0/d1/d3/d4/d7/a0)
         cmpi.l  #INC_MAX,%d0             | safety net: an impossible pitch (a word off the curve's
         bls     sy_mono_inc              | table, a stale record) silences the voice instead of
@@ -748,11 +813,19 @@ po_me_atk:
         mvz.b   CV_ATK(%a0),%d0
         lea     po_atk(%pc),%a0
         mvz.w   (%a0,%d0.l*2),%d0
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) the onset law is the FM voice's: a SY DRUM track keeps the
+        tst.b   (%a0,%d2.l)              | linear law (S_INC is not its pitch), as on the dev line
+        bne     po_me_add
+        .endif
         movea.l S_INC(%a3),%a0           | the onset law (po_alaw): no faster than one carrier period, S-shaped
         move.l  %a1,-(%sp)
         movea.l #32768,%a1
         bsr     po_alaw
         movea.l (%sp)+,%a1
+        .if     HAVE_SYDRUM
+po_me_add:
+        .endif
         add.l   %d0,%d1
         cmpi.l  #32768,%d1
         ble     po_me_store
@@ -969,6 +1042,14 @@ sy_alive:
         clr.w   S_GPREV(%a3)             | paraphonic: the mono voice is silent (a VOIC change mid-note carried it into a voice: po_carry) ...
         bra     po_fill                  | ... sum the voices (ends at sy_done)
 sy_mono:
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM renders its own samples (a1 = the first L long, d7 =
+        tst.b   (%a0,%d2.l)              | the count; S_GPREV updated), then the fading voices' tails as FM's
+        beq     sy_mono_fm
+        jsr     sy1_mono_render:l
+        bra     sy_mono_tails
+sy_mono_fm:
+        .endif
         move.l  %a2,-(%sp)               | the header: sy_gend's pass over the fading voices reads it (popped there)
         move.l  S_PHC(%a3),%d0
         move.l  S_PHM(%a3),%d6
@@ -1050,6 +1131,7 @@ sy_loop:
 sy_gend:
         move.w  %d1,S_GPREV(%a3)
         move.l  (%sp)+,%a2               | the header
+sy_mono_tails:
         move.l  52(%sp),%d2              | track
         bsr     po_any                   | paraphonic voices still fading under the mono voice (VOIC 2..4 -> 1 across
         beq     sy_done                  | a note, sy_warm's po_fade): summed onto the mono voice's samples (BUILD 32)
@@ -1075,6 +1157,10 @@ po_tick:
         lea     po_clock(%pc),%a0
         move.l  %a0,CLOCK_AT             | published for the quantizer
         addq.l  #1,CK_FRAMES(%a0)
+        .if     HAVE_SYDRUM
+        jsr     sd_tick:l                | (2.11) SY DRUM, once a frame: its SETUP controls to the engine, the CF
+                                         | records' SETUP bytes neutral on its tracks, its LFOs (every register kept)
+        .endif
         mvz.w   SEQ_STEP,%d1
         lsl.l   #8,%d1
         mvz.b   SEQ_TICK,%d3
@@ -1168,6 +1254,13 @@ sy_word:
         move.l  %d6,%d0
         lsl.l   #2,%d6
         add.l   %d0,%d6                  | (ptch - 0x4000) * 5
+        .if     HAVE_SYDRUM
+        move.l  %a0,-(%sp)
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM: its RATE byte is SWEP, not FINE (the dev line's
+        tst.b   (%a0,%d2.l)              | sy_word_base)
+        movea.l (%sp)+,%a0
+        bne     sy_word_base
+        .endif
         mvz.w   6(%a4),%d0
         subi.l  #0x4000,%d0              | (fine - 0x4000): cents << 8 ...
         move.l  #3277,%d1
@@ -1175,6 +1268,9 @@ sy_word:
         asr.l   #8,%d0
         asr.l   #8,%d0                   | ... / 20 = cents * 12.8 (3277 / 65536 = 1/20)
         add.l   %d0,%d6
+        .if     HAVE_SYDRUM
+sy_word_base:
+        .endif
         addi.l  #0x4000,%d6
         rts
 
@@ -2481,6 +2577,36 @@ po_cp_out:
 | release posts the stock AMP release (the quantizer's qz_leg0, po_moff).
 | GLIDE OFF: sy_slew snaps, so the chord changes at once without a retrigger.
 po_legkey:
+        .if     HAVE_SYDRUM
+| (2.11) the quantizer also calls this for a legato key on a SY DRUM track (qz_g2_mono): a mono
+| legato key there recharges the drum's envelopes once its trigless pitch lock lands (the dev
+| line's po_legkey: sy1_leg_pending, consumed by sy1_mono_key_frame); paraphonic tracks as before.
+        lea     -12(%sp),%sp
+        movem.l %d0-%d1/%a0,(%sp)
+        bsr     po_polytrack
+        bne     po_lgk_poly
+        bsr     po_is_synth
+        beq     po_lgk_out                | a sample's mono legato stays stock
+        lea     sy1_kind:l,%a0
+        tst.b   (%a0,%d2.l)
+        beq     po_lgk_out                | FM mono legato never recharges its envelopes
+        lea     sy1_leg_pending:l,%a0
+        moveq   #1,%d1
+        move.b  %d1,(%a0,%d2.l)          | SY DRUM mono: deferred to the key's posted trigless frame
+        bra     po_lgk_out
+po_lgk_poly:
+        move.l  (%sp),%d0                | the key's identity
+        lea     sy_state(%pc),%a0
+        move.l  %d2,%d1
+        lsl.l   #7,%d1
+        adda.l  %d1,%a0
+        move.b  %d0,T_LEGKEY(%a0)
+        clr.b   T_LEGN(%a0)
+po_lgk_out:
+        movem.l (%sp),%d0-%d1/%a0
+        lea     12(%sp),%sp
+        rts
+        .else
         move.l  %a0,-(%sp)
         move.l  %d1,-(%sp)
         lea     sy_state(%pc),%a0
@@ -2492,6 +2618,7 @@ po_legkey:
         move.l  (%sp)+,%d1
         movea.l (%sp)+,%a0
         rts
+        .endif
 
 | ---- po_handover: a5 = the track record, d2 = track, d7 = the identity, T_W = the
 | new word. Clobbers d0, d1, d3, d4, d6, d7, a0, a1, a2, a6.
@@ -2668,7 +2795,11 @@ po_ho_new1:
 | track any nonzero byte is MONO). A stock Part reads OFF. tst.l d0 done;
 | preserves every other register.
 po_legmode:
+        .if     HAVE_SYDRUM
+        bsr     po_is_fm                 | (2.11) SY DRUM, like a sample track, offers OFF / MONO only
+        .else
         bsr     po_is_synth
+        .endif
         beq     po_lm_sample             | not a synth track: its LEG byte, 0 -> 0 (stock), else 1 (mono legato)
         lea     -16(%sp),%sp
         movem.l %d1/%d3/%d4/%a0,(%sp)
@@ -3056,6 +3187,11 @@ po_lfo3_depth:
         move.l  %a4,%d1                  | (whatever VOIC: slot 5 is the chord byte on a synth track,
         subi.l  #LFO_STATE,%d1
         lsr.l   #3,%d1                   | the track
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0           | (2.11) SY DRUM keeps the stock LFO page: LFO 3 is an LFO there
+        tst.b   (%a0,%d1.l)
+        bne     po_l3_back
+        .endif
         lsl.l   #7,%d1
         lea     sy_state(%pc),%a0        | and stock's depth on it would be a pitch LFO, 24 Sep 2026)
         tst.b   S_ON(%a0,%d1.l)          | its playing voice is a synth?
@@ -3981,6 +4117,10 @@ po_keyrec:
         move.l  %d0,%d5                  | the step, or -1: the join query
         move.l  %a2,%d6                  | the raw
         move.l  %d3,%d4                  | the identity (index + 1, or 0x80 | note)
+        .if     HAVE_SYDRUM
+        bsr     po_is_fm                 | (2.11) SY DRUM never records VOIC / CHRD locks from held keys
+        beq     po_kr_out
+        .endif
         movea.l PART_PTR,%a0             | the Part's LFO page bytes: VOIC 2..4 and CHRD "----" only
         mvz.b   PART_IDX,%d0
         move.l  #6322,%d1
@@ -4167,6 +4307,10 @@ po_keyrel:
         lea     -52(%sp),%sp
         movem.l %d0-%d7/%a0-%a4,(%sp)
         move.l  %d0,%d4
+        .if     HAVE_SYDRUM
+        bsr     po_is_fm                 | (2.11) no FM chord record can rewrite a SY DRUM key's release
+        beq     po_rl_out
+        .endif
         cmpi.l  #0x80,%d4
         bcc     po_rl_id
         addq.l  #1,%d4                   | a panel key's identity
@@ -4358,7 +4502,14 @@ po_lockw:
 | Part and the settings table), else 0; tst.l d0 done. Preserves every other register.
 po_is_synth:
         bsr     po_signed                | FM SYNTH chosen in the machine list (machine.s)
+        .if     HAVE_SYDRUM
+        beq     po_is_unsigned           | (2.11) or SY DRUM: any machine of the list answers 1
+        moveq   #1,%d0
+        rts
+po_is_unsigned:
+        .else
         bne     po_is_rts
+        .endif
         lea     -16(%sp),%sp
         movem.l %d1/%d3/%a0/%a1,(%sp)
         movea.l PART_PTR,%a0
@@ -4422,8 +4573,9 @@ po_sig_out:
         lea     8(%sp),%sp
         tst.l   %d0
         rts
-| po_signed: d2 = track of the current Part -> d0 = 1 when FM SYNTH is chosen; tst.l
-| done. Preserves every other register.
+| po_signed: d2 = track of the current Part -> d0 = 1 when FM SYNTH is chosen (2.11: 2
+| when SY DRUM is: the engine kind of the track's machine-list row); tst.l done.
+| Preserves every other register.
 po_signed:
         lea     -8(%sp),%sp
         movem.l %d1/%a0,(%sp)
@@ -4433,11 +4585,66 @@ po_signed:
         muls.l  %d1,%d0
         adda.l  %d0,%a0                  | the Part
         move.l  %d2,%d0
+        .if     HAVE_SYDRUM
+        bsr     po_sigkind
+        .else
         bsr     po_sig
+        .endif
         movem.l (%sp),%d1/%a0
         lea     8(%sp),%sp
         tst.l   %d0
         rts
+        .if     HAVE_SYDRUM
+| po_sigkind (2.11): a0 = the Part, d0 = track -> d0 = 1 for FLEX with "FM", 1, 2 for FLEX
+| with "SY", 1 (SY DRUM, sy-drum/), else 0; tst.l done. Preserves every other register.
+po_sigkind:
+        lea     -8(%sp),%sp
+        movem.l %d1/%a1,(%sp)
+        movea.l %a0,%a1
+        adda.l  #MACH_OFF,%a1
+        mvz.b   (%a1,%d0.l),%d1          | the track's machine
+        subq.l  #1,%d1
+        bne     po_sk_no                 | not FLEX
+        mulu.w  #30,%d0
+        movea.l %a0,%a1
+        adda.l  %d0,%a1
+        adda.l  #SIG_OFF,%a1
+        mvz.b   2(%a1),%d1
+        subq.l  #1,%d1                   | version 1
+        bne     po_sk_no
+        mvz.w   (%a1),%d1
+        moveq   #1,%d0
+        cmpi.l  #0x464d,%d1              | "FM"
+        beq     po_sk_out
+        moveq   #2,%d0
+        cmpi.l  #0x5359,%d1              | "SY"
+        beq     po_sk_out
+po_sk_no:
+        moveq   #0,%d0
+po_sk_out:
+        movem.l (%sp),%d1/%a1
+        lea     8(%sp),%sp
+        tst.l   %d0
+        rts
+| po_ident (2.11): d2 = track of the current Part -> d0 = the machine it plays: 1 FM (FM
+| SYNTH chosen, or FLEX with an FMSYNTH* / SYNTH* slot), 2 SY DRUM (chosen), 0 a sample
+| track; tst.l done. Preserves every other register.
+po_ident:
+        bsr     po_signed
+        bne     po_id_rts
+        bsr     po_is_synth              | (not chosen) the FM marker: 1
+po_id_rts:
+        rts
+| po_is_fm (2.11): d2 -> d0 = 1 when the track plays FM (po_ident 1), else 0; tst.l done --
+| what owns VOIC / CHRD, chords and the paraphonic LEG modes: SY DRUM is a mono drum voice
+| (the dev line's po_is_fm). Preserves every other register.
+po_is_fm:
+        bsr     po_ident
+        subq.l  #1,%d0
+        seq     %d0
+        andi.l  #1,%d0
+        rts
+        .endif
 
 | ---- 0x4000d514 (jmp, 8 B): the frame builder's second supplier call takes the per-track
 | supplier from its list (`moveal %a4@+,%a0`), caches it (`movel %a0,%a3@+`) and pushes
@@ -4546,7 +4753,11 @@ po_sm_out:
 | is 2..4 (the panel keys' qz_polytrack rule: the release of one note among
 | several ends nothing), else 0; tst.l done. Preserves every other register.
 po_polytrack:
+        .if     HAVE_SYDRUM
+        bsr     po_is_fm                 | (2.11) VOIC is FM's: a SY DRUM track is never paraphonic
+        .else
         bsr     po_is_synth
+        .endif
         beq     po_pt_ret
         move.l  %d1,-(%sp)
         move.l  %a0,-(%sp)
@@ -5477,7 +5688,11 @@ po_amp_kind:
         tst.b   MASTER_ON                | track 8 as the MASTER track: not ours
         bne     po_ak_out
 po_ak_audio:
+        .if     HAVE_SYDRUM
+        bsr     po_is_fm                 | (2.11) 2 sample / SY DRUM (OFF / MONO), 3 FM (OFF / MONO / POLY)
+        .else
         bsr     po_is_synth
+        .endif
         addq.l  #2,%d0                   | 2 sample, 3 synth
 po_ak_out:
         tst.l   %d0
