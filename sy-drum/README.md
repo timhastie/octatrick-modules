@@ -62,10 +62,76 @@ oscillators' pitch, the filter's tracking and the tuning-dependent decay. With R
 value and holds it to the next hit. The random streams are separate for each track and are not restarted by notes;
 a cold boot starts them again.
 
-The four setup controls are **Part settings** in this version: saved with the Part, edited on the page, not
-lockable per step, not in scenes and not LFO destinations (see "What v1 leaves out"). The three ordinary Octatrack
-LFOs work on the PLAYBACK knobs as on any track; the LFO page is the stock one (no VOIC / CHRD: SY DRUM is one
-voice a track).
+The four setup controls are the **Part's defaults** (saved with the Part, edited on the page) and **each can be
+locked per step** (next section). They are not in scenes and are no LFO destinations (see "What it leaves out").
+The three ordinary Octatrack LFOs work on the PLAYBACK knobs as on any track; the LFO page is the stock one (no
+VOIC / CHRD: SY DRUM is one voice a track).
+
+## Step locks of the setup controls (LSPD LDEP WAVE S&H)
+
+The PLAYBACK SETUP page's four controls have per-step locks of their own, separate from the stock parameter locks
+(they use no stock lock column and none of the three LFOs). They are the author's development builds' locks
+(Octatrick 3.0), with the same card files, so a project moves between those builds and this module with its
+locks.
+
+**Recording a lock.** Open the page (FUNC + PLAYBACK), turn on GRID RECORDING, hold a trig and turn A..D: the step
+gets a lock, starting from its own lock or, if it has none, from the Part's value.
+
+- Several held trigs are edited together (each moves by the same turn).
+- The page follows stock's main pages: while one or more trigs are held, a control is drawn **inverted** when a
+  held step carries a lock on it, with the value of the **lowest** such step; releasing every trig redraws the page
+  normal at once, and holding a locked trig shows its locked controls inverted with their values.
+- Press and release an encoder without turning it: on a control the held steps do not lock, every held step gets a
+  lock at the Part's value; on a locked control the untouched locks are removed.
+- With no trig held, turning edits the Part's value. While a locked step plays, editing that control releases the
+  step's lock until the next step, so the new value is heard at once.
+- **LIVE RECORDING:** turning A..D while recording live records locks at the playing step, with the stock
+  recording's timing and quantization. An empty step gains an ordinary lock trig; an existing trig keeps its
+  timing and conditions.
+
+**Playing.** A step's lock applies from its own START until the next step; a step without a lock plays the Part's
+value: the effective value is the Part's default, then the step's lock (clamped to LSPD 127, LDEP 127, WAVE 3,
+S&H 1). A step whose only locks are these is a lock trig (trigless): it changes the values without a new note.
+Conditional trigs the stock sequencer rejects apply no lock. The locks belong to bank, pattern, audio track and
+step; they are applied only while the track plays SY DRUM (a track switched to another machine keeps them, unheard,
+and they come back with SY DRUM).
+
+**Copy, paste, clear.** The locks travel with the step in every stock sequence edit: a held trig's copy / paste /
+clear, a page's or a track's or a pattern's copy / paste / clear and their undo, the shift of a track's trigs, the
+duplication of a page, and the erase of a step in GRID RECORDING or LIVE RECORDING.
+
+**On the card.** Each project folder may hold `sylock01.work` / `sylock01.strd` .. `sylock16.work` /
+`sylock16.strd`, one pair a bank:
+
+- a bank's files are written only when the bank holds a lock, or when its file already exists (so removing the last
+  lock is saved too): a project without SY DRUM locks gets no file;
+- WORK follows working edits (the stock background save, SYNC TO CARD), STRD an explicit SAVE PROJECT / SAVE BANK;
+  RELOAD restores the saved state (a bank saved without locks loses its WORK file); SAVE TO NEW and EXPORT carry the
+  files, DELETE removes them (stock removes only the files it knows, then the folder);
+- a project without these files loads with no step locks, as before (projects saved by 2.10 load unchanged);
+- the stock bank files keep their format. Keep the companion files with the project when copying or backing it up
+  on a computer.
+
+Recovery: a damaged WORK file with a good STRD loads the saved locks and shows `LOCKS RECOVERED; SAVE TO REPAIR` (the
+damaged file is rewritten only by an explicit SAVE); a file this module cannot read, or one of a later format, is
+preserved and that bank's locks are disabled with `SY LOCK FILE ERROR`; every other project feature keeps working.
+Writes are checked; the stock files and the companion files are separate writes, so a save is not one atomic step
+across a power loss.
+
+**The file format** (the development line's version 2): a 32-byte big-endian header -- `SYLOCKS\0`, the version
+(2), the header length (32), the zero-based bank, flags 0, the payload length (49,152), the edit generation, the
+CRC-32 (ISO-HDLC) of the payload and of the first 28 header bytes -- then 8,192 rows (pattern, track, step) of six
+controls: A..D = LSPD LDEP WAVE S&H on a SY DRUM track, E / F (a sidecar FM track's controls on the development
+line; never written here, carried as read), each 0..127 or 255 for no lock. A file is 49,184 bytes. Version 1 files
+(older development builds: four controls a row) are read. `tools/lockfile.py FILE` prints a file's bank, version,
+generation and lock count; it reads and writes both versions.
+
+**Development-line projects.** Their sylock files load and save as here (the development line writes all sixteen
+pairs; this module then keeps updating the pairs that exist). Their two other companion families stay intact:
+`sylkgjNN` (the GRANULAR machine's controls G..J) is read, carried with the rows and written back by that line's
+rules; `syscenNN` (setup scenes, which this module does not have) is never read for playback; RELOAD restores it as
+that line does, EXPORT copies it and DELETE removes it. SAVE TO NEW copies the locks this module holds, not the
+scene files.
 
 ## Playing it
 
@@ -76,34 +142,102 @@ voice a track).
 - PTCH, SWEP, the CHROMATIC keys and MIDI notes are in semitones, as on FM SYNTH; the SCALE quantizer snaps PTCH.
 - No chords, no VOIC, no fingered-chord recording (FM SYNTH's).
 
-## What v1 leaves out
+## What it leaves out
 
-The author's development builds (Octatrick 3.0) have more than this module: per-step locks of the four setup
-controls (kept in companion files on the card), setup scenes, the setup controls as LFO destinations, and a marker
-file that selects the machine from a FLEX slot. They need a private card file format and about seventy more stock
-hooks across copy, paste, clear, undo and save, so they stay out of the public module; they can follow as an
-addition (nothing stored here would change).
+The author's development builds (Octatrick 3.0) have more than this module: setup scenes (hold a scene and turn a
+setup control), the four setup controls as destinations of the three LFOs, and a marker file that selects the
+machine from a FLEX slot. They can follow as an addition (nothing stored here would change).
 
 ## How it works
 
 - `sydrum.s` is one DRAM unit in octabam's platform reserve, linked beside SYNTH MACHINE's `poly.s` and `machine.s`.
   Its `remix.inc` (written per remix by the manifest) brings `synth/engine_abi.inc` -- the equates the two modules
   share, one copy -- and, at the unit's end, `engine.inc.s`, the engine: the model in fixed point, its tables and
-  the per-track state (`sy1_*`).
+  the per-track state (`sy1_*`), then the step locks (`setup_stage.inc.s`, `locks_*.inc.s`).
 - SYNTH MACHINE's `poly.s` calls it where its own FM engine runs, when the remix carries SY DRUM: at a START
   (`sd_trigger`: the envelopes recharge; `sy1_kind[t]`, the engine a track's last START chose, 0 FM or 1 SY DRUM),
   every frame (`sy1_mono_frame`: the controls from the frame's parameter record), every render call
   (`sy1_mono_render`: the samples), and once a frame from its clock (`sd_tick`: the setup controls to the engine,
   the CF record's sample settings neutral on SY DRUM tracks, the LFOs). The machine-list row is `sd_row` in
   SYNTH MACHINE's row table (`synth/machine.s`, `ml_rows`).
-- One hook of its own: the page resolver's epilogue (`0x40031ed6`, `sd_page`): a FLEX track whose page would be the
+- The page resolver's epilogue (`0x40031ed6`, `sd_page`): a FLEX track whose page would be the
   stock FLEX page and which has SY DRUM chosen gets SY DRUM's page -- a run-time clone of the FM SYNTH page (itself a
   clone of the stock FLEX record built in RAM; the repository carries no byte of it) with SY DRUM's title, names,
   ranges, formatters, widgets and knob handler, and a setup half with LSPD LDEP WAVE S&H. The same clone is SRC
   SETUP's page for the SY DRUM row.
+- **The step locks** are the development line's code (8 Oct 2026, its on-board configuration) for SY DRUM's page:
+  - the table: 16 banks x 8,192 rows x 16 bytes = 2 MiB of uninitialised DRAM at the top of octabam's platform
+    reserve (a `DramRegion`, `sl_work_table`; it is filled before any reader looks), the rows' controls A..F, G..J
+    (the development line's) and padding; `locks_store.inc.s` writes and checks rows and packs / validates the files;
+  - the sequencer (`locks_seq.inc.s`): the row of an accepted event is snapshotted into the stock event queues and
+    published with the event, so a lock plays on its own step even when the stock queue prefetches it (the next
+    pattern, the next bank by negative micro timing); a lock-only step becomes a trigless trig after the stock trig
+    condition accepted it;
+  - the setup stage (`setup_stage.inc.s`): every frame and once more before a step's START, a SY DRUM track's four
+    effective values = the live lane's (the Part default the page edits), then the playing step's lock, clamped,
+    handed to the engine;
+  - the UI (`locks_ui.inc.s`, `locks_live.inc.s`): the held-trig encoder, the encoder press / release, the trig
+    press / release redraw, the four widgets (a held step's lock inverted), LIVE RECORDING, the has-lock marks of the
+    trig LEDs;
+  - copy / paste / clear / shift / duplicate / undo (`locks_clip`, `locks_sparse`, `locks_transform`,
+    `locks_delete`): the companion rows follow every stock sequence operation;
+  - the card (`locks_io.inc.s`, generated from `tools/locks_io.c` by `tools/gen_locks_io.py`): the stock engine
+    task's load / save / reload / sync / SAVE TO NEW / EXPORT / DELETE jobs carry the companion files; playback reads
+    RAM only.
+  52 stock hooks of its own (the manifest: the resolver, the setup editor `sd_setup_edit`, and `LOCK_HOOKS`' 50); the
+  machine is the Part's signature (`sd_kind`), where the development line asks its marker files. SY DRUM declares
+  the conflicts with octabam's KITS (the card jobs and the pattern clipboard) and PLOCKS P2 (the lock queue and the
+  held encoder): the same stock sites.
 - `tools/gen_tables.py --check` checks the generated tables against the calibration constants; `tools/sy1_model.py`
   and `tools/sy1_mod_model.py` are the float reference models the engine was written against.
 
 ## Measured
 
-(filled in below by date)
+All on octabam's emulator (`ot_emu`, the pinned build: MKII panel, DSP lockstep), 8 - 9 Oct 2026, with the
+octatrick remix plus SY DRUM; nothing on hardware yet. Instruction counts are the emulator's, not hardware
+percentages.
+
+**Sound.** Batch renders (the transport started frame-exactly, the SY LFOs' state set at its first frame) against
+the author's development build 3.0 (its on-board SY engine): three SY DRUM tracks at once (TRI / SQR LFOs, MODE F
+with RND S&H, a track with step locks) and single tracks (MODE F, RND S&H, both): sample for sample identical over
+the whole 2.2 s capture. A project the development build saved with a step lock plays identically on both.
+Without any lock, SY DRUM 2.11 with the locks renders exactly as before them.
+
+**Step locks.** The same pattern with and without one lock (T1 step 5, LDEP 100 over a TRI LFO): identical up to
+step 5, the locked step's pitch modulated (zero-crossing periods 64..142 samples against 170..172), every later step
+back at the Part's pitch (the later samples differ by at most 2 / 2^23 -- the tail of the modulated note -- when
+each START is cold, and in oscillator phase only when the notes run into each other). Two SY DRUM tracks locked on
+different steps: each lock changes only its own track's step. GRID RECORDING (hold a trig, turn; several held;
+the lowest held step's value inverted; release; encoder press to add / remove), LIVE RECORDING (six turns recorded
+as locks on the playing steps, two of them on empty steps), shift (FUNC + RIGHT / LEFT in GRID RECORDING moves a
+lock with its step) and a held trig's clear (FUNC + PLAY) were run on this module and on development build 3.0 with
+the same key presses: every lock row the same on both, every PLAYBACK SETUP screen pixel-identical. The paste paths
+were not exercised (the stock paste did not run in the emulator sessions on either build); copy, paste, undo and
+page duplication use the development build's code unchanged.
+
+**Card files.** SAVE PROJECT writes the `sylock` pair of each bank that has a lock (version 2, 49,184 bytes); a
+project without locks gets no file; a cold load of a saved project brings the locks back (WORK, which also holds a
+lock made after the SAVE once the background save has run, as stock's working files do); PROJECT > RELOAD
+brings back the saved locks (a lock made after the SAVE is gone; development build 3.0 gives the same rows on
+the same card); SAVE TO NEW writes into the new project exactly the pair of the one bank that holds locks; a
+Part SAVE / RELOAD leaves the step locks alone. The file I/O
+(`tools/locks_io.c`) was also run on the Mac against an in-memory card: 31 cases -- no file without locks, exactly
+the locked banks' pairs, cold load, removing the last lock, RELOAD, SAVE TO NEW and a new project over a folder with
+stale files, a development-build project (sixteen pairs, `syscen`, `sylkgj`) loaded, saved, EXPORTed and DELETEd,
+a version 1 file, a later version (blocked, preserved, `SY LOCK FILE ERROR`), a damaged WORK (`LOCKS RECOVERED; SAVE
+TO REPAIR`, repaired by SAVE), RELOAD with the development build's scene files. One finding on the way: without
+the development build's RELOAD step for its scene files (`syscenNN`), a RELOAD on an emulated card whose files had
+been saved in place failed in the stock loader ('PARSE ERROR'); with it -- the development build's own sequence --
+the same card reloads (why the step matters to the stock loader was not established). EXPORT and DELETE ran on
+the Mac only.
+
+**Cost.** `sd_tick`, once a frame: 1,404 instructions with no SY DRUM track (751 before the locks), 1,616 with one
+SY DRUM track and a trig on every step (973 before), 1,641 with a lock on every step; 223 - 268 more at each
+START (`sl_seq_publish`). The voice itself is unchanged (`sy1_mono_render` about 938 a call). DRAM: the unit
+134,759 bytes (code 67,019, data 67,740: the 49 KB file buffer and the 16 KB clipboards), the lock table 2 MiB in
+the platform reserve's top (no sample memory is taken: the reserve is octabam's fixed one). The table and
+STEM REC's buffers (9,099,264 bytes) do not fit the reserve (10,487,808 bytes) together, so octabam refuses a remix
+with both (arithmetic from the two manifests; not built).
+
+**Not yet measured:** anything on hardware -- in particular a reboot that keeps only battery RAM (the companion
+files are on the card; the RAM table is filled from them at every project load).

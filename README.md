@@ -72,10 +72,15 @@ to watch.
   drum machine in the machine list, the row after FM SYNTH: a two-oscillator
   percussion voice with a sweep, a filter opened by the decay, six modes
   (PTCH MODE WDTH SWEP SPED DEC, stock p-locks, LFOs and scenes) and a
-  dedicated LFO / S&H on its PLAYBACK SETUP page (LSPD LDEP WAVE S&H, Part
-  settings). One voice a track, any number of tracks; no sample or marker
-  file. It runs on SYNTH MACHINE's engine (one DRAM unit beside it, one hook
-  of its own). `sy-drum/README.md`.
+  dedicated LFO / S&H on its PLAYBACK SETUP page (LSPD LDEP WAVE S&H), each
+  of the four lockable per step: hold a trig in GRID RECORDING and turn, or
+  turn while LIVE RECORDING; the locks follow copy / paste / clear / shift
+  and are saved in companion files beside the project's banks
+  (`sylockNN.work` / `.strd`, the author's development builds' format, so a
+  project moves between them with its locks). One voice a track, any number
+  of tracks; no sample or marker file. It runs on SYNTH MACHINE's engine (one
+  DRAM unit beside it, a 2 MiB lock table in the platform reserve, 52 stock
+  hooks of its own). `sy-drum/README.md`.
 - **`quantizer/`** (key `SCALE QUANTIZER`) -- a SCALE row in PROJECT >
   CONTROL > SEQUENCER (24 scales): the PTCH knob, parameter locks and
   CHROMATIC trig keys snap to the scale; a GLIDE row, the synth's slide
@@ -184,8 +189,14 @@ builds on the author's unit and were never tagged.
   byte for byte 2.10's; SYNTH MACHINE declares the conflict with ANALOG
   BD (the same chooser sites). The quantizer treats a SY DRUM track as a synth
   track (semitone PTCH, the keys), mono. Projects saved by 2.10 load unchanged
-  (the FM SYNTH mark is the same three bytes). SY DRUM is emulator-verified,
-  not yet on hardware.
+  (the FM SYNTH mark is the same three bytes). SY DRUM's PLAYBACK SETUP
+  controls (LSPD LDEP WAVE S&H) lock per step as on the author's development
+  builds -- GRID and LIVE RECORDING, the held-trig display, copy / paste /
+  clear / shift -- with the same companion files (`sylockNN`, version 2),
+  written only for banks that hold a lock; SY DRUM declares the conflicts
+  with KITS and PLOCKS P2 (the same stock sites). FM SYNTH has no setup
+  controls on this line and is unchanged. SY DRUM is emulator-verified, not
+  yet on hardware.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
   four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
   (FUNC + SRC) and of SELECT MACHINE TYPE on every track: it plays with no
