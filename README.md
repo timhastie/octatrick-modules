@@ -196,7 +196,8 @@ builds on the author's unit and were never tagged.
   written only for banks that hold a lock; SY DRUM declares the conflicts
   with KITS and PLOCKS P2 (the same stock sites) and with STEM REC (the
   platform reserve does not hold both modules' buffers). With no SY DRUM
-  track in the Part its per-frame work is a test and a return. FM SYNTH has
+  track in the Part its per-frame work is a test, the SETUP controls' read
+  and the LFOs' phase (they keep running, as with a SY DRUM track). FM SYNTH has
   no setup controls on this line and is unchanged. SY DRUM is
   emulator-verified, not yet on hardware.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,

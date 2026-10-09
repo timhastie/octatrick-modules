@@ -47,14 +47,15 @@
 |      SY DRUM (no FLEX track with "SY", 1), nothing below has work: the setup stage and the
 |      shield are for SY DRUM tracks alone, no reader of the LFOs' outputs runs, and the
 |      lock rows reach a track only through a SY DRUM track's stage (or a lock-only trig,
-|      which the sequencer grants a SY DRUM track alone). The frame then keeps only what the
-|      steps below would leave for tracks that are not SY DRUM -- ss_kind 0, a track's
-|      active / pending rows cleared after a trig (sl_seq_cleanm) -- and marks the frame
-|      skipped (sy1_mod_skipf, as 4.). The free-running LFOs are not advanced: the first
-|      frame with a SY DRUM track advances them over the skipped frames at once, at the
-|      LSPD then in force (sy1_mod_advance: the engine's elapsed-frame law; the development
-|      line advances them every frame, so a phase after an idle stretch whose LSPD changed
-|      can differ from that line's). Measured on ot_emu: README.md "Measured".
+|      which the sequencer grants a SY DRUM track alone). The frame then does only what the
+|      steps below do for tracks that are not SY DRUM -- 1. (the Part's SETUP controls into
+|      sy1_mod_params: the LFO phase reads LSPD there), ss_kind 0, a track's active /
+|      pending rows cleared after a trig (sl_seq_cleanm), and 4.'s phase part
+|      (sy1_mod_phase_tick, the frame marked skipped in sy1_mod_skipf) -- and skips the
+|      lock staging, the shield and the LFOs' outputs. The free-running LFOs therefore
+|      advance every frame at the LSPD in force, exactly as without the test (the
+|      development line's rule: the timing keeps running, only the outputs are skipped).
+|      Measured on ot_emu: README.md "Measured".
 | Then, in the development line's order:
 |   1. the four SETUP controls of every track, from the Part (sy1_setup_tick: Part +
 |      PLAY_SETUP + 30 t, clamped to LSPD 127 LDEP 127 WAVE 3 S&H 1) into sy1_mod_params;
@@ -107,6 +108,7 @@ sd_tk_scan1:
         subq.l  #1,%d1
         bpl     sd_tk_scan
 sd_tk_idle:
+        bsr     sy1_setup_tick           | 1. (the LSPD the phase reads)
         clr.l   ss_kind:l                | every track "not SY DRUM", as 2. leaves them
         clr.l   ss_kind+4:l
         move.l  sl_seq_cleanm:l,%d0
@@ -116,6 +118,7 @@ sd_tk_idle:
 sd_tk_idle1:
         move.l  po_clock+CK_FRAMES,%d1
         move.l  %d1,sy1_mod_skipf        | as 4.: this frame's outputs are not computed
+        bsr     sy1_mod_phase_tick       | as 4.: the phase part alone, every frame
         bra     sd_tk_out
 sd_tk_work:
         bsr     sy1_setup_tick           | 1.

@@ -241,17 +241,15 @@ been saved in place failed in the stock loader ('PARSE ERROR'); with it -- the d
 the same card reloads (why the step matters to the stock loader was not established). EXPORT and DELETE ran on
 the Mac only.
 
-**Cost.** `sd_tick`, once a frame (2 s of playing, 5,513 frames, the emulator's PC watch): 85 instructions with no SY
-DRUM track in the Part (it returns at once: no setup tick, lock staging or LFO tick; 1,404 without that test, 751 in
-SY DRUM before the locks), 1,620 with one SY DRUM track and a trig on every step (1,616 without the test, 973 before
-the locks), 1,645 with a lock on every step (1,641 without the test); 223 - 268 more at each START
-(`sl_seq_publish`). The voice itself is unchanged (`sy1_mono_render` about 938 a call). With no SY DRUM track the
-free-running LFOs are not advanced: the first frame with one advances them over the skipped frames at once, at the
-LSPD then set (the engine's elapsed-frame law), so their phase after such a stretch (the frames from boot to the
-project load are one) can differ from the development build's, which advances them every frame; with the LFOs' state
-set alike, renders with SY DRUM tracks are unchanged ("Sound"). DRAM: the unit 135,707 bytes (code 67,967, data
-67,740: the 49 KB file buffer and the 16 KB clipboards), the lock table 2 MiB in the platform reserve's top (no
-sample memory is taken: the reserve is octabam's fixed one).
+**Cost.** `sd_tick`, once a frame (2 s of playing, 5,513 frames, the emulator's PC watch): 588 instructions with no SY
+DRUM track in the Part (the four SETUP controls read from the Part and the LFOs' phase, as every frame; no lock
+staging, shield or LFO outputs; 1,404 without that test, 751 in SY DRUM before the locks), 1,620 with one SY DRUM
+track and a trig on every step (1,616 without the test, 973 before the locks), 1,645 with a lock on every step (1,641
+without the test); 223 - 268 more at each START (`sl_seq_publish`). The voice itself is unchanged (`sy1_mono_render`
+about 938 a call). With no SY DRUM track the free-running LFOs still advance every frame at the LSPD in force: a
+track switched to SY DRUM after such a stretch, even one in which LSPD changed, renders sample for sample as without
+the test. DRAM: the unit 135,715 bytes (code 67,975, data 67,740: the 49 KB file buffer and the 16 KB clipboards),
+the lock table 2 MiB in the platform reserve's top (no sample memory is taken: the reserve is octabam's fixed one).
 
 **Not with STEM REC.** The lock table and STEM REC's ring, stack and stream buffers (9,099,264 bytes) are both
 DRAM regions at the top of the platform reserve (10,487,808 bytes) and do not fit it together: built with both,
