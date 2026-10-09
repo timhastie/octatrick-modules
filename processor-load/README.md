@@ -139,8 +139,10 @@ USB, the same project reads `36%` and `42%`.
   warning to back off, not a guarantee either side of it.
 - **The meter's own cost.** Per audio block, 12 instructions at the entry and 17 at
   the exit (19 when the block is the longest of the window so far), against
-  an interrupt body of about 22,000 to 27,000 instructions in the same
-  emulator runs. In the UI task, 23 instructions on each of the about 60
+  an interrupt body of about 22,000 to 38,000 instructions in the same
+  emulator runs (22,225 to 24,861 with the module alone; 24,392 to
+  37,933 in the full remix while playing). In the UI task, counted from the
+  module's tick routine to its return, 23 instructions on each of the about 60
   ticks a second that only check the clock, and 607 (the stock drawing
   calls for the overlay included) on the about four a second that take a
   reading with the popup open. The same counts with and without the
@@ -234,6 +236,6 @@ hardware times.
   the universal epilogue) and the method of timing the frame interrupt on
   DTIM3, and the hardware readings above.
 - The meter itself is the TEMPO meter of the Octatrick diagnostic build
-  (`cfdiag`, `loadmeter.s`, first shipped in the author's b48 build),
+  (`cfdiag`, `loadmeter.s`, first shipped in the author's diagnostic test images),
   stripped of everything USB and diagnostic and made standalone: its own
   UI tick, arming on the stock startup flag, the longest-block reading.

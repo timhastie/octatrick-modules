@@ -30,7 +30,7 @@ a DSP. README.md says what the number means and what it cannot see.
 
 Sam Banks's CF METER probe (octabam modules/cfmeter) found the two
 interrupt sites and the DTIM3 method; the meter itself is the TEMPO meter
-of the Octatrick diagnostic build (cfdiag loadmeter.s, b48), stripped of
+of the Octatrick diagnostic build (cfdiag loadmeter.s), stripped of
 everything USB and diagnostic and made standalone.
 """
 

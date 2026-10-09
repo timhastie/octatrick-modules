@@ -185,7 +185,7 @@ builds on the author's unit and were never tagged.
 
 - 2.11 (not tagged yet; 8 Oct 2026): PROCESSOR LOAD, a new module -- the
   ColdFire's audio-interrupt load in the TEMPO popup (the TEMPO meter of the
-  author's diagnostic builds since b48, made standalone: its own UI tick,
+  author's diagnostic test images, made standalone: its own UI tick,
   started by the stock startup flag, no USB; FUNC held shows the longest
   block). Emulator-verified; not yet flashed.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
