@@ -298,6 +298,16 @@ page cave gained fm_descriptor (pg_resolve moved to +16) and the signature
 test; the quantizer's qz_is_synth tests the signature too. The marker files
 still select the engine.
 
+THE MACHINE LIST FOR MORE THAN ONE MACHINE (2.11, machine.s): the rows after
+PICKUP are a table (ml_rows) assembled per remix -- FM SYNTH always, SY DRUM
+(sy-drum/) when the remix carries it -- and the six pokes became six detours
+that take the remix's row count (6 with FM SYNTH alone, 7 with SY DRUM), so
+a second machine module adds a row without a site of its own. The units
+include a per-remix remix.inc (remix_include below): HAVE_SYDRUM and the
+equates shared with SY DRUM (engine_abi.inc); with HAVE_SYDRUM 0 the engine
+(poly.s) is byte for byte 2.10's. ANALOG BD is a declared conflict (it owns
+the same chooser sites).
+
 Verified in ot_emu through the virtual panel and the pipe (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 """
@@ -452,11 +462,13 @@ ML_SRC_COUNT_STOCK = bytes.fromhex("48780005" "48780005")
 ML_NAME_BOUND_HOOK = 0x4003c950           # `moveq #4,%d1; cmpl %d2,%d1; bcss 0x4003c95a` (SRC SETUP's name lookup)
 ML_NAME_BOUND_STOCK = bytes.fromhex("7204" "b282" "6504")
 ML_DRAW_BOUND_HOOK = 0x40078678           # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786a2` (the machine window's drawer)
-ML_DRAW_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d24")
+ML_DRAW_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d24" "2f02" "2043" "4e90")  # ... movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@ (12 B)
 ML_HI_BOUND_HOOK = 0x400786ce             # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786fc` (its highlight)
 ML_HI_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d28")
 ML_CUR_BOUND_HOOK = 0x40079904            # `moveq #4,%d3; cmpl %d4,%d3; bgew 0x400797cc` (its cursor)
 ML_CUR_BOUND_STOCK = bytes.fromhex("7604" "b684" "6c00fec2")
+ML_CLAMP_HOOKS = (0x40078c22, 0x40078cb0, 0x40078d2e, 0x40078dee, 0x40078e7c)  # the machine window's row clamp after a list move
+ML_CLAMP_STOCK = bytes.fromhex("7205" "b280" "6c02" "7005")   # `moveq #5,%d1; cmpl %d0,%d1; bges +2; moveq #5,%d0`
 KIND_TABLE_FLEX_START = 0x400d6458       # the kind table's FLEX START callback (stock 0x4000f450)
 FLEX_START = 0x4000f450
 
@@ -756,14 +768,19 @@ MODULE = Module(
                "SRC SETUP's name lookup admits the machine-list rows",
                kind="jmp"),
         Detour(ML_DRAW_BOUND_HOOK, ML_DRAW_BOUND_STOCK, "fmmachine", "ml_draw_bound",
-               "the machine window draws the machine-list rows",
-               kind="jmp"),
+               "the machine window's row drawer draws name(row + top) up to the last row: SELECT MACHINE TYPE scrolls like SRC SETUP",
+               kind="jmp", pad_to=12),
         Detour(ML_HI_BOUND_HOOK, ML_HI_BOUND_STOCK, "fmmachine", "ml_hi_bound",
                "the machine window highlights the machine-list rows",
                kind="jmp"),
         Detour(ML_CUR_BOUND_HOOK, ML_CUR_BOUND_STOCK, "fmmachine", "ml_cur_bound",
                "the machine window applies a machine-list row under its cursor",
                kind="jmp", pad_to=8),
+    ) + tuple(
+        Detour(a, ML_CLAMP_STOCK, "fmmachine", f"ml_clamp{i + 1}",
+               "the machine window's row clamp after a list move: 0 .. the last row (stock 0..5)",
+               kind="jmp", pad_to=8)
+        for i, a in enumerate(ML_CLAMP_HOOKS)) + (
     ),
     # 2.11: the six row-count / row-bound constants were pokes (5 -> 6) until 2.10; a poke is
     # static, the number of rows is the remix's (FM SYNTH, + SY DRUM): six detours read it.

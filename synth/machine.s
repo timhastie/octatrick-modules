@@ -54,6 +54,7 @@
         .global fm_main_commit, fm_src_commit, fm_src_commit2
         .global fm_tick, fm_validate
         .global ml_win_count, ml_src_count, ml_name_bound, ml_draw_bound, ml_hi_bound, ml_cur_bound
+        .global ml_clamp1, ml_clamp2, ml_clamp3, ml_clamp4, ml_clamp5
         .global ml_rows, fm_row
         .include "remix.inc"             | 2.11: HAVE_SYDRUM and the shared equates (engine_abi.inc; manifest.py)
 
@@ -93,7 +94,8 @@
         .set    SRC_COUNT_RET, 0x40058602 | SRC SETUP's list init after its `pea 5; pea 5` (ml_src_count)
         .set    NAME_BOUND_IN, 0x4003c956 | SRC SETUP's name lookup: the row has a name ...
         .set    NAME_BOUND_OUT, 0x4003c95a | ... or not (the default string)
-        .set    DRAW_BOUND_IN, 0x4007867e | the machine window's drawer: the row is drawn ...
+        .set    DRAW_BOUND_IN, 0x40078684 | the machine window's drawer: the row's name drawn (after the formatter call) ...
+        .set    WIN_LIST, 0x460e7386     | SELECT MACHINE TYPE's list: +0 top, +4 cursor in the window, +8 row, +12 visible, +16 count
         .set    DRAW_BOUND_OUT, 0x400786a2 | ... or not
         .set    HI_BOUND_IN, 0x400786d4  | the machine window's highlight: the row is highlighted ...
         .set    CUR_BOUND_IN, 0x400797cc | the machine window's cursor: the row is applied ...
@@ -374,11 +376,14 @@ fm_setup_row:
         jmp     SETUP_ROW_RET
 
 | ---- 0x400786c8 (jmp, 6 B): the machine window's row highlight: displaced `mvsb
-| %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (d2 = the row drawn).
+| %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (d2 = the visible row drawn; 2.11: the
+| window scrolls, so the list row is d2 + its top, ml_draw_name).
 fm_chooser_row:
         mvs.b   (%a0),%d0
         bsr     fm_type
-        cmp.l   %d0,%d2
+        move.l  WIN_LIST,%d1             | the list's top row (d1 is reloaded at 0x400786fc)
+        add.l   %d2,%d1
+        cmp.l   %d0,%d1
         bne     fm_cr_miss
         jmp     CHOOSER_HIT
 fm_cr_miss:
@@ -489,12 +494,20 @@ ml_name_bound:
         jmp     NAME_BOUND_IN
 ml_nb_out:
         jmp     NAME_BOUND_OUT
-| 0x40078678 (jmp, 6 B): the machine window's drawer, `moveq #4,%d0; cmpl %d2,%d0;
-| blts 0x400786a2` (d2 = the row drawn).
+| 0x40078678 (jmp, 12 B): the machine window's row drawer, `moveq #4,%d0; cmpl %d2,%d0;
+| blts 0x400786a2; movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@` (d2 = the visible row, d3 =
+| the name formatter). It drew name(d2) for d2 = 0 .. 5 with no scroll offset: a seventh
+| row was never drawn and the cursor box left its name (found by the b70 study S3). 2.11:
+| name(d2 + the list's top), up to the last row -- the window scrolls as SRC SETUP's does,
+| six rows visible. With six rows or fewer the top stays 0: stock's drawing.
 ml_draw_bound:
-        moveq   #ML_LAST,%d0
-        cmp.l   %d2,%d0
-        blt     ml_db_out
+        move.l  WIN_LIST,%d0             | the top row
+        add.l   %d2,%d0
+        cmpi.l  #ML_LAST,%d0
+        bgt     ml_db_out
+        move.l  %d0,-(%sp)               | (replaces the pushed d2: the same stack)
+        movea.l %d3,%a0
+        jsr     (%a0)
         jmp     DRAW_BOUND_IN
 ml_db_out:
         jmp     DRAW_BOUND_OUT
@@ -507,6 +520,24 @@ ml_hi_bound:
         jmp     HI_BOUND_IN
 ml_hb_out:
         jmp     CHOOSER_MISS
+| The machine window's row clamp after a list move (five sites, 8 B each: `moveq #5,%d1;
+| cmpl %d0,%d1; bges +2; moveq #5,%d0` -- the absolute row 0x460e738e kept to 0..5, the
+| six rows the window shows, then handed to the list's row setter 0x4007edb0): a row past
+| the sixth was put back on the sixth, so it could not be selected or committed (b70 F20
+| located them). 2.11: kept to 0 .. the last row.
+        .macro  ML_CLAMP n, back
+ml_clamp\n:
+        moveq   #ML_LAST,%d1
+        cmp.l   %d0,%d1
+        bge     1f
+        moveq   #ML_LAST,%d0
+1:      jmp     \back
+        .endm
+        ML_CLAMP 1, 0x40078c2a
+        ML_CLAMP 2, 0x40078cb8
+        ML_CLAMP 3, 0x40078d36
+        ML_CLAMP 4, 0x40078df6
+        ML_CLAMP 5, 0x40078e84
 | 0x40079904 (jmp, 8 B): the machine window's cursor, `moveq #4,%d3; cmpl %d4,%d3;
 | bgew 0x400797cc` (d4 = the cursor's row).
 ml_cur_bound:
