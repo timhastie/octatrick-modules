@@ -134,6 +134,23 @@ constant and assembled unit up in your own stock image and lists what
 matches (the hook-site replays and a few call idioms the assembler shares
 with the stock compiler; no data).
 
+**No code at an odd address.** A ColdFire stops with an address error when
+it fetches an instruction from an odd address, and neither GNU as (code
+after an odd-length string or byte table) nor the emulators complain. After
+`make bus` or `make image`, run from the octabam checkout
+
+```
+.venv/bin/python3 modules/synth/upstream/tools/align_check.py [--remix NAME] [-v]
+```
+
+(the remix of the last build by default). It assembles every linked unit
+and source cave of the remix again with line rows, checks that they link
+to the bytes the image carries, and fails if any instruction -- any code
+symbol -- of them sits at an odd address, or if any detour, symbol ref, cave
+hook or poke writes an odd target (or a jump into a unit that is not the
+start of an instruction). Exit 0 = clean, 1 = an odd address (listed), 2 =
+cannot check. Run it on every image before flashing.
+
 ## Using them
 
 **In octabam** (merged 30 Sep 2026, sambanks/octabam PR #526): the module
