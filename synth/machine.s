@@ -38,22 +38,14 @@
         .global fm_setup_edit6, fm_setup_draw6
         .global fm_main_commit, fm_src_commit, fm_src_commit2
         .global fm_tick, fm_validate
+        .include "remix.inc"             | 2.11: HAVE_SYDRUM and the shared equates (engine_abi.inc; manifest.py)
 
         .set    FM_ROW, 5                | the sixth row: FM SYNTH
         .set    FLEX, 1
-        .set    PART_PTR, 0x46c82456     | the bank blob; the Part = blob + part index * 6322
-        .set    PART_IDX, 0x100b14cf
         .set    PART_OFF, 0x8ed80        | the Part's own +0 (what the validator is handed)
-        .set    PART_SHADOW, 0x1001614e  | + part * 6322 + a blob offset = that Part byte's shadow (poly.s)
-        .set    MACH_OFF, 0x8eda2        | + track: the machine byte
         .set    FLEX_PB, 0x8edb0         | + 30 * track: the FLEX PLAYBACK bytes (PTCH STRT LEN RATE RTRG RTIM)
         .set    SETUP_GAP, 0x1b0         | ... their FLEX SETUP bytes this far on (blob + 0x8ef60 + 30 * track)
-        .set    SIG_OFF, 0x8edbc         | + 30 * track: the NEIGHBOR PLAYBACK bytes, "FM", 1
-        .set    CURVALS, 0x80000810      | the live lanes, 72 B a track: flat slots 0..5 = the PLAYBACK page
-        .set    CV_STRIDE, 72
         .set    CV_SETUP, 32             | + lane: the PLAYBACK page's SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
-        .set    CV_WORDS, 0x80000a50     | + 64 * track: the lane's value words (byte << 8), PLAYBACK first
-        .set    CV_SLEW, 0x80000db4      | + 32 * track: the words' slew counters (0 = take the lane's value)
         .set    SRC_CURSOR, 0x460d5c30   | SRC SETUP's machine row (the sample-list window's)
         .set    NAMES, 0x400a78c8        | the stock machine-name table, five pointers (STATIC .. PICKUP)
         .set    PB_TABLE, 0x400d5f38     | the machine -> PLAYBACK descriptor table (slot 5: a spare)

@@ -313,6 +313,22 @@ from remix.schema import CavePatch, Detour, Kind, Linked, Module, Poke, SymbolRe
 # so one manifest serves both layouts.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
+
+def engine_abi():
+    """synth/engine_abi.inc: the equates SYNTH MACHINE's units share with the machine
+    modules that run on its engine (sy-drum). Read from disk, so one file is the truth."""
+    with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "engine_abi.inc"),
+              encoding="utf-8") as source:
+        return source.read()
+
+
+def remix_include(modules):
+    """The `remix.inc` each unit of this module includes (octabam's Linked.include, written
+    per remix): HAVE_SYDRUM -- 1 when SY DRUM (sy-drum/) is in the remix: its machine-list row
+    and the engine's calls into its unit are assembled; 0 assembles nothing of it, byte for
+    byte the 2.10 engine (poly.s) -- then the shared equates."""
+    return f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n" + engine_abi()
+
 # The kind table: kind -> renderer, 8 longs at 0x400d6434 (0 STATIC, 1 FLEX,
 # 2 THRU, 3 NEIGHBOR, 4 PICKUP). STATIC and FLEX share the stock sample
 # renderer 0x40004008; both entries point at sy_render since OCTATRICK2.8
@@ -560,8 +576,8 @@ MODULE = Module(
         "and RATE is FINE (cents) on a synth track, 0c the moment a track becomes one. "
         "A FLEX or STATIC sample track with LEG MONO and GLIDE slides its pitch (2.8).",
     linked=(
-        Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True),
-        Linked("fmmachine", os.path.join(_HERE, "machine.s"), cpu="5475", dram=True),
+        Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True, include=remix_include),
+        Linked("fmmachine", os.path.join(_HERE, "machine.s"), cpu="5475", dram=True, include=remix_include),
     ),
     # The kind table's FLEX entry is a 4-byte data pointer, not an
     # instruction: upstream octabam's SymbolRef (a stock u32 rewritten to a

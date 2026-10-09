@@ -152,10 +152,12 @@
         .global po_fmsource, po_fmstart  | the FM SYNTH machine (machine.s): the source supplier and the START callback
         .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
         .global po_lfdname, po_lfdedit, po_lfdlfo | 2.10: the LFO destination list (LFO SETUP's PMTR)
+        .include "remix.inc"             | 2.11: the remix's flags (HAVE_SYDRUM: SY DRUM in the remix) and the shared
+                                         | equates (engine_abi.inc), written beside this unit by the build (manifest.py);
+                                         | with HAVE_SYDRUM 0 the unit assembles byte for byte as 2.10's
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
         .set    CURSOR, 0x80001c80
-        .set    NIBBLE, 0x46104d0c
         .set    STOCK_RENDER, 0x40004008
         .set    FMSRC_RET, 0x4000d51c    | po_fmsource's way back
         .set    FLEX_START, 0x4000f450   | the stock FLEX START callback (the kind table's second half, 0x400d6458)
@@ -167,17 +169,11 @@
         .set    SETTINGS_BASE, 0x100b14f0 | the sample settings records, 0x448 each, slots 0..135
         .set    SETTINGS_SPAN, 0x24640    | 136 * 0x448
         .set    SETTINGS_STRIDE, 0x448
-        .set    PITCH_TAB, 0x400aa294    | the stock 2^(x/12) curve, longs Q26 (index = PTCH word >> 5)
-        .set    C4_INC, 25480119         | C4: 261.6256 / 44100 * 2^32
-        .set    ENV_ONE, 0x01000000      | the index envelope's 1.0 (Q24)
         .set    ENV_FLOOR, 0x00100000    | it decays toward 1/16
         .set    K_NUM, 3068384           | k = K_NUM / RTIM^2, Q20 per frame: tau = 2 s * (RTIM/127)^2; 127 holds
         .set    K_MAX, 0xfffff
         .set    INDEX_SCALE, 2628        | 8 rad / 127 in cycles * 2^18 (offset = m_Q14 * I)
         .set    FB_SCALE, 516            | 0.25 cycle / 127 * 2^16
-        .set    INC_MAX, 0x73000000      | a carrier above ~19.8 kHz (increment > 0.45 cycle a sample) is no note
-                                         | of this synth: the safety net resets such a voice (24 Sep 2026; raised
-                                         | from 8 kHz on 27 Sep 2026 for PTCH +63 and the octave shapes)
         .set    GLIDE_AT, 0x100b14ed     | the GLIDE byte in battery RAM (modules/quantizer/manifest.py GLIDE_AT; 0 = off)
         .set    LK_HELD, 0x460d171d      | stock's chromatic key handler: the held key per track (key + 1; 0 = none)
         .set    KEYS_AT, 0x400d2cb0      | modules/quantizer/keys.s: qz_pkey[8] bytes, qz_pmask[8] longs at +8,
@@ -185,42 +181,29 @@
         .set    SEQ_STEP, 0x800065b2     | the sequencer's step (word) and tick (byte, counting down) ...
         .set    SEQ_TICK, 0x800065b6     | ... the clock below counts their changes
         .set    CV_HOLD, 13              | flat slot 13 = AMP page slot 1 (HOLD): a sequencer note's gate
-        .set    CK_TICKS, 0              | po_clock: ticks seen (monotonic, no pattern wrap)
-        .set    CK_TPS, 4                | ticks a step (the largest tick value seen + 1; 0 = not yet)
-        .set    CK_FPS, 8                | frames a step (measured between step changes; 345 until then)
-        .set    CK_FRAMES, 12            | frames seen
         .set    CK_LAST, 16              | the last (step << 8 | tick)
         .set    CK_PING, 20              | (unused)
         .set    CK_STEP, 24              | the last step
         .set    CK_FSTEP, 28             | frames at the last step change
         .set    FPS_DEFAULT, 345         | 120 BPM, 1x: 60 / 120 / 4 s * 44100 / 16
         .set    SCALE_AT, 0x400d2ca8     | modules/quantizer/scale.s: `jmp qz_scale_mask` -- d0 := the scale's pitch-class mask, 0 = OFF
-        .set    CURVALS, 0x80000810      | the frame builder's per-track current values, 72 B a track, locks applied
-        .set    CV_STRIDE, 72
         .set    CV_CHRD, 11              | flat slot 11 = LFO page slot 5 (DEP3): the chord shape
         .set    CV_VOIC, 8               | flat slot 8 = LFO page slot 2 (SPD3): the voice count, 1..4
         .set    CV_REL, 14               | flat slot 14 = AMP page slot 2 (REL)
         .set    LFO_STATE, 0x80004858    | the LFO engine's per-track state, 8 B a track (a4 in its loop)
         .set    LFO_P, 0x400d37f6        | the stock LFO page descriptor (P form), 0x192 bytes
         .set    LFO_DESC_LEN, 0x192
-        .set    FLEX_P, 0x400d31ae       | the stock FLEX PLAYBACK descriptor (P form), 0x192 bytes:
-        .set    FLEX_DESC_LEN, 0x192     | the source of the page clone po_pgdesc builds for page.s
         .set    RESOLVER_RET, 0x40031ed6
         .set    SLOT_OFF, 0x8f04b        | Part: 0x8f04a + track*5 + machine (1 = FLEX)
         .set    SLOT_COL, 0x8f04a        | Part: the five slot bytes of a track, one a machine (the column the assigners index by machine)
-        .set    PART_SHADOW, 0x1001614e  | the bank's mirror in battery RAM: + part * 6322 + the Part offset = the shadow of a Part byte (0x100a5198 = the slot bytes', 0x100a4ef0 = the machine's, 0x100a51c6 = the AMP page-2's)
         .set    CV_RATE, 3               | flat slot 3 = PLAYBACK slot D (RATE; FINE on a synth track)
-        .set    CV_WORDS, 0x80000a50     | + 64 * track: the lane's value words (byte << 8) the frame builder copies on
-        .set    CV_SLEW, 0x80000db4      | + 32 * track: their slew counters, a long per four lane bytes (0 = take the lane's)
         .set    LISTWIN_MACH, 0x460d5c30 | the sample-list window's chosen machine (its apply path 0x4005a826)
         .set    ASSIGN_RET, 0x400795c2   | the slot assigner 0x40079424: after its slot-byte write (po_assign)
         .set    MACHWIN_RET, 0x4007981e  | the machine window's apply path 0x400797cc: its machine-byte write (po_machwin)
         .set    LISTWIN_RET, 0x4005a850  | the sample-list window's apply path: its machine read (po_machlist)
         .set    LOADSEL_SPRINTF, 0x40013a08 | stock's sprintf: the browser's select 0x40022610 writes the chosen path into the slot's settings record with it (po_loadsel)
-        .set    SPRINTF, 0x40013a08
         .set    SEMI, 0x500              | one semitone of the PTCH word (5 raw units << 8)
         .set    SHAPE_END, -128          | ends a shape's offsets ("----" only: every other shape has four notes)
-        .set    PING_AT, 0x800000e0      | the frame builder's ping (the copier 0x4000caf4 reads it: the record set being built this frame)
         .set    DSP_REC, 0x80000110      | the DSP voice records: + (ping << 9) + 64 * track, halfwords 0/1/2 = AMP ATK / HOLD / REL (value << 8)
         .set    CV_ATK, 12               | flat slot 12 = AMP page slot 0 (ATK)
         .set    CUT_SHIFT, 3             | a stolen voice fades over 8 frames (2.9 ms): T_GMAX / 8 a frame (plan B) -- 2.10: at least one
@@ -228,21 +211,20 @@
         .set    GLOBAL_WORD, 0x46c80350  | the sequencer's STOP / restart word the frame builder turns into the DSP all-off (po_stop)
         .set    KILL_RET, 0x40006862     | the stock VOICE KILL 0x40006820: after its CF voice-byte clear (po_kill)
 | ---- the per-track record, 128 bytes: the mono voice (0..43, synth.s's layout) and the poly frame
-        .set    ST_STRIDE, 128
+| (ST_STRIDE, S_GAIN +24, S_ON +36, S_GPREV +38 are in engine_abi.inc: SY DRUM shares them. S_ON
+| bit 0: the playing voice is a synth; bit 1: a release (the AMP release, mailbox 0x40) reached the
+| frame builder since that START (po_rel; BUILD 27) -- tst.b still means "a synth plays": bits 1 / 2
+| are set only while bit 0 is; bit 2: STOPPED (po_stop, BUILD 32): a release under REL INF takes the
+| 1 ms floor. S_GPREV, a word: the gain the last rendered call ended at -- sy_loop ramps S_GPREV ->
+| S_GAIN across the call; every start clears it with the phases, BUILD 26.)
         .set    S_PHC, 0                 | carrier phase, Q32 cycles
         .set    S_PHM, 4                 | modulator phase
         .set    S_ENV, 8                 | index envelope, Q24
         .set    S_INC, 12                | carrier increment per sample (the true pitch)
         .set    S_INCM, 16               | modulator increment
         .set    S_IEFF, 20               | index * envelope, the per-sample multiplier -- the RUNNING value: sy_loop steps it by S_ISTEP a sample (BUILD 38)
-        .set    S_GAIN, 24               | start ramp, Q15
         .set    S_FB, 28                 | feedback multiplier
         .set    S_LASTM, 32              | the modulator's last sample, Q14
-        .set    S_ON, 36                 | bit 0: the playing voice is a synth; bit 1: a release (the AMP release, mailbox 0x40)
-                                         | reached the frame builder since that START (po_rel; BUILD 27) -- tst.b still
-                                         | means "a synth plays": bits 1 / 2 are set only while bit 0 is;
-                                         | bit 2: STOPPED (po_stop, BUILD 32): a release under REL INF takes the 1 ms floor
-        .set    S_GPREV, 38              | word: the gain the last rendered call ended at (sy_loop ramps S_GPREV -> S_GAIN across the call; every start clears it with the phases -- BUILD 26)
         .set    S_CUR, 40                | the slewed PTCH word, Q12 (GLIDE)
         .set    T_REF, 44                | paraphonic: the PTCH word at the last voice start
         .set    T_LAST, 48               | paraphonic: the PTCH word seen last frame
@@ -269,19 +251,17 @@
         .set    T_LASTK, 120             | paraphonic: the frame of the last live panel-key start (a key within KR_WIN of it is a chord press)
         .set    T_POS, 92                | the marker's sample positions (voice +64..+83) before the stock call, restored after it: a synth voice never reaches the marker's end
         .set    V_POS, 64                | the voice struct's sample position fields: +64 window base, +68 position, +72/+76 the stream's, +80 frames left in the fetched chunk
-        .set    PART_PTR, 0x46c82456     | the bank blob; the Part = blob + part index * 6322
-        .set    PART_IDX, 0x100b14cf
         .set    UI_TRACK, 0x100b14cc
         .set    LFO_PAGE_OFF, 0x8ee9a    | the Part's LFO page bytes, 24 a track: +2 = VOIC, +5 = CHRD
 | ---- a voice record, 64 bytes (the first 36 match the mono voice's fields)
-        .set    V_STRIDE, 64
+| (V_STRIDE, V_GAIN +24 -- Q15, at most T_GMAX -- and V_GPREV +60 -- a word, the gain the last frame
+| ended at, po_fill ramps V_GPREV -> V_GAIN; 0 = silent -- are in engine_abi.inc)
         .set    V_PHC, 0
         .set    V_PHM, 4
         .set    V_ENV, 8
         .set    V_INC, 12
         .set    V_INCM, 16
         .set    V_IEFF, 20               | the running I * E (po_fi_loop steps it by V_ISTEP a sample; BUILD 38)
-        .set    V_GAIN, 24               | Q15 (the mono voice's S_GAIN format), at most T_GMAX
         .set    V_FB, 28
         .set    V_LASTM, 32
         .set    V_STATE, 36              | 0 free, 1 sounding, 2 releasing, 3 fading (stolen / chord-memory cut: T_GMAX / 8 a frame, plan B)
@@ -292,7 +272,6 @@
         .set    V_AGE, 48                | the allocation stamp
         .set    V_HOLD, 52               | a sequencer note: frames left before it releases (0 = no gate)
         .set    V_FRAME, 56              | the frame (po_clock CK_FRAMES) the voice was allocated at (26 Sep 2026)
-        .set    V_GPREV, 60              | word: the gain the last rendered frame ended at (po_fill ramps V_GPREV -> V_GAIN across a frame; 0 = the voice has been silent: a start resets the phases; a long until BUILD 38)
         .set    V_ERAMP, 62              | word: frames left of the voice's index ramp after a warm START (po_frame; BUILD 38; 2.10: the index ramps, po_fr_il_*; 0 = none)
 | ---- the chord record (po_keyrec, 26 Sep 2026; 32 bytes a track since the rolling window) --
         .set    CR_STRIDE, 32
@@ -336,11 +315,6 @@
                                          | ramps the index across the frame; +126 / +127 were S_HOLD / S_KEYED, BUILD 27/28's record, dead since plan B)
         .set    T_MLEG, 37               | MIDI IN: the last note-on took the legato path (po_mrec records it trigless; a byte -- the byte after S_ON, free: S_ON is a byte, S_GPREV the word at +38; it was +126 until BUILD 25, aliasing the then S_LASTF word)
 | ---- the FM SYNTH page's knob handler (po_knob, 30 Sep 2026) -------------------
-        .set    FUNC_HELD, 0x46c7dd26     | nonzero while [FUNCTION] is down (the stock handlers' tst.l)
-        .set    FUNC_ENC_OFF, 0x800000a0  | PERSONALIZE: DISABLE FUNCTION + ENCODER (the stock handlers' gate)
-        .set    KEY_HELD, 0x46c7d8de+0x10 | + code * 0x18: nonzero while that key is held (PANEL.md)
-        .set    PUSH_CODE, 0x38           | the encoder push switches: key codes 0x38..0x3d = A..F
-        .set    KN_SLOTS, 0x12a           | the descriptor's six knob handler pointers
         .set    KN_RATIO, 1               | slot B = RATO
         .set    KN_RATIO_N, 31            | the ratio table's last position
         .set    KN_SUBUNITY, 3            | positions below it: 0.25 0.5 0.75
@@ -4377,7 +4351,6 @@ po_lockw:
 | FOLLOW TM with the CHROMATIC trig mode is a different path (0x400500e8 ->
 | the key handler 0x4004fb94 with key = note - 72: the quantizer's 25-key
 | paraphony, 72..96) and is not changed.
-        .set    MACH_OFF, 0x8eda2        | Part: 0x8eda2 + track = the machine (1 = FLEX)
 
 | ---- po_is_synth: d2 = track -> d0 = 1 when a FLEX track whose FM SYNTH machine is
 | chosen in the machine list ("FM", 1 in the Part: po_signed, 2.10) or whose Part slot
@@ -4420,7 +4393,6 @@ po_is_rts:
 | "FM", 1 in the first three bytes of its NEIGHBOR PLAYBACK column (Part + 0x8ed80 +
 | 0x3c + 30 * track, unused while the track is FLEX; the battery-RAM shadow the same).
 | po_is_synth answers 1 for it as for a marker track; the marker still works.
-        .set    SIG_OFF, 0x8edbc         | the bank blob + part * 6322 + SIG_OFF + 30 * track: "FM", 1
 | po_sig: a0 = the Part (the bank blob + part * 6322), d0 = track -> d0 = 1 when it is
 | FLEX and signed, else 0; tst.l done. Preserves every other register.
 po_sig:
