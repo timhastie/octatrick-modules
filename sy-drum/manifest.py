@@ -36,7 +36,7 @@ def remix_include(modules):
     end -- the engine (engine.inc.s), whose 40 KB of tables would otherwise put the glue's
     16-bit references out of reach."""
     return "\n".join((".ifndef SD_PASS1", ".set SD_PASS1, 1", ".set HAVE_SYDRUM, 1",
-                      _read("..", "synth", "engine_abi.inc"), ".else", _read("engine.inc.s"), ".endif"))
+                      _read("..", "synth", "engine_abi.inc"), ".else", _read("engine.inc.s"), ".endif", ""))
 
 
 PAGE_HOOK = 0x40031ed6                  # `moveml %sp@,%d2-%d5; lea %sp@(16),%sp` (the page resolver's epilogue)
