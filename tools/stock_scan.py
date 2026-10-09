@@ -144,13 +144,37 @@ def blobs_hexruns(text: str):
     return out
 
 
-def blob_asm(path: pathlib.Path):
+def remix_variants(path: pathlib.Path):
+    """2.11: a unit that includes "remix.inc" (octabam writes it per remix from the
+    manifest's Linked.include) is assembled once per flag setting, with the file this
+    repository's manifests build: HAVE_SYDRUM 0 and 1 (the SY DRUM call-outs) and
+    synth/engine_abi.inc; sy-drum's unit (two passes) also gets its engine. Without it
+    the assembly would fail and the stronger check be skipped. [None] when the unit
+    includes nothing."""
+    text = path.read_text(errors="replace")
+    if '.include "remix.inc"' not in text:
+        return [None]
+    abi = (REPO / "synth" / "engine_abi.inc").read_text()
+    if path.parent.name == "sy-drum":
+        engine = (path.parent / "engine.inc.s").read_text()
+        return ["\n".join((".ifndef SD_PASS1", ".set SD_PASS1, 1", ".set HAVE_SYDRUM, 1", abi,
+                           ".else", engine, ".endif"))]
+    return [f".set HAVE_SYDRUM, {f}\n" + abi for f in (0, 1)]
+
+
+def blob_asm(path: pathlib.Path, inc=None):
     if not shutil.which("m68k-elf-as") or not shutil.which("m68k-elf-objcopy"):
         return None
     with tempfile.TemporaryDirectory() as d:
         o, b = os.path.join(d, "u.o"), os.path.join(d, "u.bin")
-        r = subprocess.run(["m68k-elf-as", "-mcpu=54455", "-o", o, str(path)], capture_output=True, text=True)
+        extra = []
+        if inc is not None:
+            pathlib.Path(d, "remix.inc").write_text(inc)
+            extra = ["-I", d]
+        r = subprocess.run(["m68k-elf-as", "-mcpu=54455", *extra, "-o", o, str(path)], capture_output=True, text=True)
         if r.returncode:
+            if inc is not None:
+                sys.exit(f"{path}: does not assemble with its remix.inc:\n{r.stderr}")
             return None
         # Link before scanning: an unlinked object's relocations are zero longs,
         # and zeros beside an absolute stock-routine constant (a formatter
@@ -222,10 +246,11 @@ def main():
                 items += [("hex", ln, b) for ln, b in blobs_py(text)]
             if p.suffix.lower() == ".s":
                 items += [("data", ln, b) for ln, b in blobs_s(text)]
-                if not a.no_asm:
-                    b = blob_asm(p)
-                    if b is not None:
-                        items.append(("asm", 0, b))
+                if not a.no_asm and not p.name.endswith(".inc.s"):    # (an include: assembled in its unit)
+                    for inc in remix_variants(p):
+                        b = blob_asm(p, inc)
+                        if b is not None:
+                            items.append(("asm", 0, b))
             if p.suffix not in (".py", ".s") and p.suffix.lower() not in (".png", ".wav", ".jpg"):
                 items += [("hexrun", ln, b) for ln, b in blobs_hexruns(text)]
             if p.suffix.lower() in (".png", ".wav", ".jpg"):
