@@ -17,8 +17,9 @@ Press TEMPO. The popup's top left corner shows the load:
 
 The number updates about four times a second while the popup is open. The
 TEMPO / EXT SYNC / PICKUP SYNC header sits two pixels lower than in stock
-to leave the number its band; the BPM, the tap tempo and every TEMPO key
-work as in stock.
+to leave the number its band; the rest of the popup draws as in stock,
+and the module hooks no key: the BPM, the tap tempo and the TEMPO keys are
+the stock ones.
 
 ![The TEMPO popup with PROCESSOR LOAD: idle, playing, FUNC held, no reading](tempo_popup.png)
 
