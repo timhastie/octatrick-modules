@@ -253,7 +253,8 @@ the lock table 2 MiB in the platform reserve's top (no sample memory is taken: t
 
 **Not with STEM REC.** The lock table and STEM REC's ring, stack and stream buffers (9,099,264 bytes) are both
 DRAM regions at the top of the platform reserve (10,487,808 bytes) and do not fit it together: built with both,
-the platform link refuses (the regions reach down to 0x409e8400, the runtime ends at 0x40af8f67). SY DRUM
+the platform link refuses (the regions reach down to 0x409e8400; the runtime, its packed stage and its .bss end at
+0x40af8fc4 in the octatrick remix with SY DRUM and STEM REC, measured at 2.11). SY DRUM
 declares the conflict, so octabam refuses the pair by name. A table of the four SY DRUM controls alone
 (512 KiB) would fit by arithmetic (not built); it would no longer hold the development builds' E / F and G..J
 controls that a project from them carries through a save here.
