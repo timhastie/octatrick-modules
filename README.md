@@ -1,6 +1,6 @@
 # octatrick-modules
 
-Firmware modules for the Elektron Octatrack (OS 1.40C, MKI and MKII),
+Six firmware modules for the Elektron Octatrack (OS 1.40C, MKI and MKII),
 written for [sambanks/octabam](https://github.com/sambanks/octabam)'s build
 system. **This repository is the source of truth for the modules**: octabam
 consumes it as a git submodule (`modules/<name>/upstream`, pinned to a tag),
@@ -109,6 +109,16 @@ to watch.
   YIN refine, integer only) in the UI task; TEMPO, YES, NO or the chord
   close it, and TEMPO alone, FUNC + TEMPO and UP alone stay stock. One DRAM
   unit, three detours, no ROM cave. `tuner/README.md`.
+- **`processor-load/`** (key `PROCESSOR LOAD`) -- how busy the ColdFire
+  is making audio, in the stock TEMPO popup: `47%`, the mean share of
+  real time spent in the audio frame interrupt over the last quarter
+  second, timed on the stock DMA timer 3; `!` from 70 %, `--%` while there
+  is no fresh reading, and with FUNC held `W112`, the longest single block
+  of the quarter second in % of a block's 362.8 us. Standalone (no USB, no
+  other module); it conflicts with octabam's CF METER and TEMPO BUS. One
+  DRAM unit, four detours, one poke. `processor-load/README.md` says what
+  the number means, what it cannot see (the DSPs, the UI, the card, USB)
+  and its limits.
 
 Each directory is one octabam module: `manifest.py` (the declaration, in
 octabam's `tools/remix/schema.py` vocabulary), the GNU-as `.s` sources, and
@@ -143,6 +153,11 @@ audio onto inputs A-D) and the stock effects less SPATIALIZER (its DSP
 words hold the USB input). The author's own images have been built from
 octabam's `main` since 30 Sep 2026.
 
+PROCESSOR LOAD is not one of octabam's wrappers yet: copy (or link) this
+repository's `processor-load/` to `modules/processor-load/` in an octabam
+checkout (the manifest serves at either path) and add `"PROCESSOR LOAD"` to
+a remix's `modules`.
+
 **Standalone:** the manifests import `remix.schema` from octabam's `tools/`
 and the build runs from octabam's repo root, so this repository is not
 built on its own; it is linked into an octabam checkout.
@@ -173,6 +188,9 @@ Combining with other modules: the synth page is pinned at the start of the
 second free gap (`0x400d24d0`), which octabam's `tempo-bus` also uses, so
 the ledger refuses that pair; the synth engine shares the sample-RAM
 reserve with the other DRAM modules (USB, MIDI SCENES) inside one runtime.
+PROCESSOR LOAD declares conflicts with octabam's CF METER (the same two
+frame-interrupt sites) and TEMPO BUS (the TEMPO popup), and runs beside
+everything in the `octatrick` remix.
 
 ## Tags
 
@@ -180,25 +198,32 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
-- 2.11 (not tagged yet; 8 Oct 2026): SY DRUM (`sy-drum/`, a new module,
-  requires SYNTH MACHINE) and the machine list for more than one machine: the
-  rows after PICKUP are a table filled per remix (FM SYNTH, then SY DRUM), the
-  six row-count / row-bound pokes became detours that read the row count, and
-  SELECT MACHINE TYPE scrolls (its six visible rows show the seventh). With FM
-  SYNTH alone every list behaves as 2.10's and the engine (`synth/poly.s`) is
-  byte for byte 2.10's; SYNTH MACHINE declares the conflict with ANALOG
-  BD (the same chooser sites). The quantizer treats a SY DRUM track as a synth
-  track (semitone PTCH, the keys), mono. Projects saved by 2.10 load unchanged
-  (the FM SYNTH mark is the same three bytes). SY DRUM's PLAYBACK SETUP
-  controls (LSPD LDEP WAVE S&H) lock per step as on the author's development
-  builds -- GRID and LIVE RECORDING, the held-trig display, copy / paste /
-  clear / shift -- with the same companion files (`sylockNN`, version 2),
-  written only for banks that hold a lock; SY DRUM declares the conflicts
-  with KITS and PLOCKS P2 (the same stock sites) and with STEM REC (the
-  platform reserve does not hold both modules' buffers). With no SY DRUM
-  track in the Part its per-frame work is a test, the SETUP controls' read
-  and the LFOs' phase (they keep running, as with a SY DRUM track). FM SYNTH has
-  no setup controls on this line and is unchanged. SY DRUM is
+- 2.11 (not tagged yet; 8 - 9 Oct 2026): two new modules and the machine list
+  they share. THE MACHINE LIST for more than one machine: the rows after
+  PICKUP are a table filled per remix (FM SYNTH, then SY DRUM), the six
+  row-count / row-bound pokes became detours that read the row count, and
+  SELECT MACHINE TYPE scrolls (its six visible rows show the seventh). With
+  FM SYNTH alone every list behaves as 2.10's and the engine
+  (`synth/poly.s`) is byte for byte 2.10's, with 2.10's 6 dB of headroom
+  (VOL 0 the reference, VOL up to about +6 clean); SYNTH MACHINE declares
+  the conflict with ANALOG BD (the same chooser sites). SY DRUM
+  (`sy-drum/`, requires SYNTH MACHINE): a drum machine in that list; the
+  quantizer treats a SY DRUM track as a synth track (semitone PTCH, the
+  keys), mono. Projects saved by 2.10 load unchanged (the FM SYNTH mark is
+  the same three bytes). SY DRUM's PLAYBACK SETUP controls (LSPD LDEP WAVE
+  S&H) lock per step as on the author's development builds -- GRID and LIVE
+  RECORDING, the held-trig display, copy / paste / clear / shift -- with the
+  same companion files (`sylockNN`, version 2), written only for banks that
+  hold a lock; SY DRUM declares the conflicts with KITS and PLOCKS P2 (the
+  same stock sites) and with STEM REC (the platform reserve does not hold
+  both modules' buffers). With no SY DRUM track in the Part its per-frame
+  work is a test, the SETUP controls' read and the LFOs' phase (they keep
+  running, as with a SY DRUM track). FM SYNTH has no setup controls on this
+  line and is unchanged. PROCESSOR LOAD (`processor-load/`): the ColdFire's
+  audio-interrupt load in the TEMPO popup (the TEMPO meter of the author's
+  diagnostic test images, made standalone: its own UI tick, started by the
+  stock startup flag, no USB; FUNC held shows the longest block); it
+  declares the conflicts with CF METER and TEMPO BUS. Both are
   emulator-verified, not yet on hardware.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
   four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
@@ -251,7 +276,8 @@ builds on the author's unit and were never tagged.
 
 - [Sam Banks](https://github.com/sambanks) -- octabam: the build system,
   the ledger, the DRAM platform, the emulators and the gates these modules
-  are written against.
+  are written against; and the CF METER probe, whose two frame-interrupt
+  sites and DMA-timer-3 method PROCESSOR LOAD's measurement uses.
 - [Maxolydian](https://github.com/mxldyn/octamax) -- octamax, the reverse
   engineering of the OS format, memory map and parameter tables that made
   any of this reachable.
