@@ -158,7 +158,8 @@ machine from a FLEX slot. They can follow as an addition (nothing stored here wo
   (`sd_trigger`: the envelopes recharge; `sy1_kind[t]`, the engine a track's last START chose, 0 FM or 1 SY DRUM),
   every frame (`sy1_mono_frame`: the controls from the frame's parameter record), every render call
   (`sy1_mono_render`: the samples), and once a frame from its clock (`sd_tick`: the setup controls to the engine,
-  the CF record's sample settings neutral on SY DRUM tracks, the LFOs). The machine-list row is `sd_row` in
+  the CF record's sample settings neutral on SY DRUM tracks, the LFOs; a test and a return when no track of the
+  Part plays SY DRUM). The machine-list row is `sd_row` in
   SYNTH MACHINE's row table (`synth/machine.s`, `ml_rows`).
 - The page resolver's epilogue (`0x40031ed6`, `sd_page`): a FLEX track whose page would be the
   stock FLEX page and which has SY DRUM chosen gets SY DRUM's page -- a run-time clone of the FM SYNTH page (itself a
@@ -187,7 +188,8 @@ machine from a FLEX slot. They can follow as an addition (nothing stored here wo
   52 stock hooks of its own (the manifest: the resolver, the setup editor `sd_setup_edit`, and `LOCK_HOOKS`' 50); the
   machine is the Part's signature (`sd_kind`), where the development line asks its marker files. SY DRUM declares
   the conflicts with octabam's KITS (the card jobs and the pattern clipboard) and PLOCKS P2 (the lock queue and the
-  held encoder): the same stock sites.
+  held encoder): the same stock sites; and with STEM REC: the platform reserve does not hold both modules' DRAM
+  regions ("Measured").
 - `tools/gen_tables.py --check` checks the generated tables against the calibration constants; `tools/sy1_model.py`
   and `tools/sy1_mod_model.py` are the float reference models the engine was written against.
 
@@ -203,17 +205,25 @@ with RND S&H, a track with step locks) and single tracks (MODE F, RND S&H, both)
 the whole 2.2 s capture. A project the development build saved with a step lock plays identically on both.
 Without any lock, SY DRUM 2.11 with the locks renders exactly as before them.
 
-**Step locks.** The same pattern with and without one lock (T1 step 5, LDEP 100 over a TRI LFO): identical up to
-step 5, the locked step's pitch modulated (zero-crossing periods 64..142 samples against 170..172), every later step
-back at the Part's pitch (the later samples differ by at most 2 / 2^23 -- the tail of the modulated note -- when
-each START is cold, and in oscillator phase only when the notes run into each other). Two SY DRUM tracks locked on
-different steps: each lock changes only its own track's step. GRID RECORDING (hold a trig, turn; several held;
-the lowest held step's value inverted; release; encoder press to add / remove), LIVE RECORDING (six turns recorded
-as locks on the playing steps, two of them on empty steps), shift (FUNC + RIGHT / LEFT in GRID RECORDING moves a
-lock with its step) and a held trig's clear (FUNC + PLAY) were run on this module and on development build 3.0 with
-the same key presses: every lock row the same on both, every PLAYBACK SETUP screen pixel-identical. The paste paths
-were not exercised (the stock paste did not run in the emulator sessions on either build); copy, paste, undo and
-page duplication use the development build's code unchanged.
+**Step locks.** The same pattern with and without one lock (T1 step 5, LDEP 100 over a TRI LFO): identical up to step
+5, the locked step's pitch modulated (zero-crossing periods 64..142 samples against 170..172), every later step back
+at the Part's pitch (the later samples differ by at most 2 / 2^23 -- the tail of the modulated note -- when each
+START is cold, and in oscillator phase only when the notes run into each other). A project loaded with a lock on step
+1 plays it on its first step (the render differs from the unlocked one from its first samples and is the development
+build's, sample for sample). A track switched to SY DRUM in SRC SETUP while the pattern plays, in a Part that had no
+SY DRUM track: its locks are applied on their steps from the first pass, the effective values frame by frame the same
+as without the per-frame test (`sd_tick`, "Cost"). Two SY DRUM tracks locked on different steps: each lock changes
+only its own track's step. GRID RECORDING (hold a trig, turn; several held; the lowest held step's value inverted;
+release; encoder press to add / remove), LIVE RECORDING (six turns of LDEP while the pattern played, recorded as
+locks on the playing steps 4, 6, 7, 10, 13 and 16 -- four of them, 4, 6, 10 and 16, steps that had no trig), shift
+(FUNC + RIGHT / LEFT in GRID RECORDING moves a lock with its step), a held trig's clear (FUNC + PLAY), and in GRID
+RECORDING a page's copy (FUNC + REC), its paste onto another SY DRUM track (FUNC + STOP: the lock lands on that
+track's step) and the paste's undo (FUNC + STOP again), a page's clear (FUNC + PLAY) and the clear's undo (FUNC +
+PLAY again) were run on this module and on development build 3.0 with the same key presses: every lock row the same
+on both, every screen taken pixel-identical but where each build names the machine (the footer, the machine list: the
+development build names it from a marker file). Not exercised on the emulator: a held trig's copy / paste (the
+presses tried changed no lock on either build), a track's or a pattern's copy / paste and the duplication of a page;
+they use the development build's code unchanged.
 
 **Card files.** SAVE PROJECT writes the `sylock` pair of each bank that has a lock (version 2, 49,184 bytes); a
 project without locks gets no file; a cold load of a saved project brings the locks back (WORK, which also holds a
@@ -231,13 +241,24 @@ been saved in place failed in the stock loader ('PARSE ERROR'); with it -- the d
 the same card reloads (why the step matters to the stock loader was not established). EXPORT and DELETE ran on
 the Mac only.
 
-**Cost.** `sd_tick`, once a frame: 1,404 instructions with no SY DRUM track (751 before the locks), 1,616 with one
-SY DRUM track and a trig on every step (973 before), 1,641 with a lock on every step; 223 - 268 more at each
-START (`sl_seq_publish`). The voice itself is unchanged (`sy1_mono_render` about 938 a call). DRAM: the unit
-134,759 bytes (code 67,019, data 67,740: the 49 KB file buffer and the 16 KB clipboards), the lock table 2 MiB in
-the platform reserve's top (no sample memory is taken: the reserve is octabam's fixed one). The table and
-STEM REC's buffers (9,099,264 bytes) do not fit the reserve (10,487,808 bytes) together, so octabam refuses a remix
-with both (arithmetic from the two manifests; not built).
+**Cost.** `sd_tick`, once a frame (2 s of playing, 5,513 frames, the emulator's PC watch): 85 instructions with no SY
+DRUM track in the Part (it returns at once: no setup tick, lock staging or LFO tick; 1,404 without that test, 751 in
+SY DRUM before the locks), 1,620 with one SY DRUM track and a trig on every step (1,616 without the test, 973 before
+the locks), 1,645 with a lock on every step (1,641 without the test); 223 - 268 more at each START
+(`sl_seq_publish`). The voice itself is unchanged (`sy1_mono_render` about 938 a call). With no SY DRUM track the
+free-running LFOs are not advanced: the first frame with one advances them over the skipped frames at once, at the
+LSPD then set (the engine's elapsed-frame law), so their phase after such a stretch (the frames from boot to the
+project load are one) can differ from the development build's, which advances them every frame; with the LFOs' state
+set alike, renders with SY DRUM tracks are unchanged ("Sound"). DRAM: the unit 135,707 bytes (code 67,967, data
+67,740: the 49 KB file buffer and the 16 KB clipboards), the lock table 2 MiB in the platform reserve's top (no
+sample memory is taken: the reserve is octabam's fixed one).
+
+**Not with STEM REC.** The lock table and STEM REC's ring, stack and stream buffers (9,099,264 bytes) are both
+DRAM regions at the top of the platform reserve (10,487,808 bytes) and do not fit it together: built with both,
+the platform link refuses (the regions reach down to 0x409e8400, the runtime ends at 0x40af8f67). SY DRUM
+declares the conflict, so octabam refuses the pair by name. A table of the four SY DRUM controls alone
+(512 KiB) would fit by arithmetic (not built); it would no longer hold the development builds' E / F and G..J
+controls that a project from them carries through a save here.
 
 **Not yet measured:** anything on hardware -- in particular a reboot that keeps only battery RAM (the companion
 files are on the card; the RAM table is filled from them at every project load).

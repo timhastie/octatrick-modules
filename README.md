@@ -194,9 +194,11 @@ builds on the author's unit and were never tagged.
   builds -- GRID and LIVE RECORDING, the held-trig display, copy / paste /
   clear / shift -- with the same companion files (`sylockNN`, version 2),
   written only for banks that hold a lock; SY DRUM declares the conflicts
-  with KITS and PLOCKS P2 (the same stock sites). FM SYNTH has no setup
-  controls on this line and is unchanged. SY DRUM is emulator-verified, not
-  yet on hardware.
+  with KITS and PLOCKS P2 (the same stock sites) and with STEM REC (the
+  platform reserve does not hold both modules' buffers). With no SY DRUM
+  track in the Part its per-frame work is a test and a return. FM SYNTH has
+  no setup controls on this line and is unchanged. SY DRUM is
+  emulator-verified, not yet on hardware.
 - 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
   four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
   (FUNC + SRC) and of SELECT MACHINE TYPE on every track: it plays with no
