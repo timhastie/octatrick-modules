@@ -1,5 +1,5 @@
 """SY DRUM -- a drum machine for the Octatrack's FLEX tracks, modelled on a classic
-analog two-voice drum synthesizer (the SY-1 circuit; README.md), running on SYNTH
+analog drum synthesizer (the SY-1 circuit; README.md), one voice a track, running on SYNTH
 MACHINE's engine: chosen in the machine list (SELECT MACHINE TYPE or SRC SETUP: the
 row after FM SYNTH), it plays PTCH MODE WDTH SWEP SPED DEC on its PLAYBACK page (stock
 p-locks, LFOs and scenes reach them) with a dedicated LFO / S&H on its PLAYBACK SETUP
@@ -177,7 +177,7 @@ MODULE = Module(
     proof=Proof.PORT,
     proof_note="ot_emu (MKII panel, DSP lockstep) with SYNTH MACHINE 2.11: the machine-list walk, "
                "renders sample-identical to the development builds' on-board engine, save / reload; not yet on hardware",
-    doc="SY DRUM in the machine list (after FM SYNTH): a two-voice analog-style drum machine on FLEX "
+    doc="SY DRUM in the machine list (after FM SYNTH): an analog-style drum machine, one voice a track, on FLEX "
         "tracks -- PTCH MODE (A..F) WDTH SWEP SPED DEC with stock p-locks, LFOs and scenes, and a "
         "dedicated LFO / S&H (LSPD LDEP WAVE S&H) on its PLAYBACK SETUP page, lockable per step "
         "(sylockNN files beside the banks). Needs SYNTH MACHINE.",

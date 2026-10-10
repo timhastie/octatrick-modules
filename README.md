@@ -175,6 +175,11 @@ repository's `processor-load/` to `modules/processor-load/` in an octabam
 checkout (the manifest serves at either path) and add `"PROCESSOR LOAD"` to
 a remix's `modules`.
 
+SY DRUM is not one of octabam's wrappers yet either: copy (or link) `sy-drum/`
+to `modules/sy-drum/` the same way and add `"SY DRUM"` to the remix's `modules`
+beside `"SYNTH MACHINE"` (it needs the SYNTH MACHINE of the same tag). The
+author's 2.11 test image was built this way on octabam's `main` of 9 Oct 2026.
+
 **Standalone:** the manifests import `remix.schema` from octabam's `tools/`
 and the build runs from octabam's repo root, so this repository is not
 built on its own; it is linked into an octabam checkout.
@@ -215,7 +220,7 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
-- 2.11 (not tagged yet; 8 - 9 Oct 2026): two new modules and the machine list
+- 2.11 (tag `v2.11`, 9 Oct 2026): two new modules and the machine list
   they share. THE MACHINE LIST for more than one machine: the rows after
   PICKUP are a table filled per remix (FM SYNTH, then SY DRUM), the six
   row-count / row-bound pokes became detours that read the row count, and
@@ -242,7 +247,7 @@ builds on the author's unit and were never tagged.
   stock startup flag, no USB; FUNC held shows the longest block); it
   declares the conflicts with CF METER and TEMPO BUS. Both are
   emulator-verified, not yet on hardware.
-- 2.10 (not tagged yet; 5 - 8 Oct 2026): FM SYNTH in the machine list,
+- 2.10 (tag `v2.10`, 8 Oct 2026): FM SYNTH in the machine list,
   four synth changes and three fixes. FM SYNTH is the sixth row of SRC SETUP
   (FUNC + SRC) and of SELECT MACHINE TYPE on every track: it plays with no
   sample and no marker file (the chooser adapted from Modwerk's FM Synth
