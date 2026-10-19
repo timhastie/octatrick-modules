@@ -219,7 +219,10 @@ there, the held-chord crackle and the live-key pops gone, by ear; the tuner
 (UP + TEMPO) works there too (29 Sep 2026). The last two 2.9 fixes (a sequencer trig on a sounding note, the index ramp) are
 emulator-verified and not yet flashed; so is FM SYNTH in the machine list
 (2.10, 8 Oct 2026). 2.15 (the selection guard, the MIDI tracks' scale)
-was flashed on the author's MKI (18 Oct 2026) and works there. Every feature was verified in an
+was flashed on the author's MKI (18 Oct 2026) and works there. 2.16
+(the load budget -- two FM SYNTH tracks in a Part -- and the LFO SETUP
+page's V/C column on FM SYNTH tracks) is emulator-verified and not yet on a
+unit. Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
 real-time build of octabam's emulator and a virtual front panel). Read
@@ -240,6 +243,57 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
+- 2.16 (tag `v2.16`, 18 Oct 2026): THE LOAD BUDGET -- TWO FM SYNTH TRACKS IN
+  A PART -- AND THE LFO SETUP PAGE NAMES LFO 3'S COLUMN V/C ON AN FM SYNTH
+  TRACK. 2.15's guard counted tracks (one FM SYNTH track at most). 2.16
+  replaces its three counting rules with one price per Part: an FM SYNTH
+  track costs by the voices that may sound on it (4 / 9 / 10 / 12 points at a
+  voice cap of 1 / 2 / 3 / 4), an SY DRUM track 11, 15 are paid once when the
+  Part holds any of the two and 13 once when it holds FM SYNTH, and the Part
+  must fit 54 -- points of PROCESSOR LOAD's worst block above an empty
+  project, fitted to twelve readings on the author's MKI (18 Oct 2026, 2.14,
+  every synth track playing four-note chords); the ceiling is the worst
+  block of about 88 the author has run on his unit. The engine then CAPS the
+  FM voices so the Part fits: the largest cap in 4, 3, 2, 1 whose cost fits,
+  and every FM SYNTH track plays min(VOIC, cap) voices -- VOIC 2, 3 and 4 act
+  as the cap (the shape's first notes, the same stealing order and level per
+  voice), the VOIC shown stays the one set. What a Part may hold: two FM
+  SYNTH tracks at four voices each (2.15 refused the second); two FM SYNTH
+  and one SY DRUM, both FM mono; one FM SYNTH and two SY DRUM, the FM mono;
+  one FM SYNTH, with or without one SY DRUM, unchanged at four voices; two SY
+  DRUM unchanged. Refused, with the message: a third FM SYNTH track (`FM
+  SYNTH: 2 MAX`), a third SY DRUM track (`SY DRUM: 2 MAX`), and two FM SYNTH
+  with two SY DRUM (`FM+SY DRUM: LIMIT`). Both lists, COPY / PASTE TRACK, the
+  PLAYBACK page's paste, the Part paste, their undo and the FLEX preview
+  apply the one rule; a project saved by an older build with more loads and
+  plays as saved, every FM SYNTH track mono. The cap is cached per Part in
+  the synth unit and checked at every voice START against the Part's own
+  machine bytes and marks (about 50 instructions), so a machine change, a
+  paste, a Part or pattern change, PART RELOAD, a bank change or a load is
+  seen at the next note with nothing hooked for it. The weights and the
+  budget are one table (`synth/machine_limits.inc`) and can be retuned after
+  a reading on the unit.
+
+  AND: on an FM SYNTH track the third LFO is muted and its SPD / DEP bytes
+  are the track's VOIC and CHRD (the LFO page already prints them so), but
+  the LFO SETUP page (FUNC + LFO) still showed an "LFO 3" column whose SPD
+  and DEP dials turned VOIC and CHRD over the stock 0..127 without saying so.
+  Now, on an FM SYNTH track, the LFO SETUP page's third column reads V/C, its
+  SPD box is VOIC (1..4, as the LFO page's) and its DEP box is CHRD (the
+  chord-shape names); the two LFO columns stay LFO 1 / LFO 2, the LFO
+  designer is unchanged, and on SY DRUM tracks and stock tracks the page is
+  byte-identical to 2.15. The four LFO-only boxes (PMTR / WAVE / MULT / TRIG)
+  are left as stock there (LFO 3 does nothing on an FM track). This is a
+  display and naming change of one page: storage, the step and scene locks,
+  the LFO destination list, the engine and the renders are untouched.
+
+  Hooks at 2.16: SYNTH MACHINE 62 detours (58 at 2.15: four more for the LFO
+  SETUP window's descriptor) and 4 symbol refs (3 at 2.15: one more for the
+  page's third-row label), SY DRUM 53, SCALE QUANTIZER 24 detours + 3 tables
+  + 1 poke, TUNER 3, PROCESSOR LOAD 4 + 1 poke, DIRECT JUMP its cave; the
+  stock instructions every detour and poke displaces were checked against OS
+  1.40C (148 sites, 144 at 2.15). SY DRUM, SCALE QUANTIZER, TUNER, DIRECT
+  JUMP and PROCESSOR LOAD are 2.15's. Emulator-verified, not yet on a unit.
 - 2.15 (tag `v2.15`, 16 Oct 2026): A SELECTION GUARD FOR FM SYNTH AND
   SY DRUM, AND MIDI TRACKS THAT PLAY IN THE SCALE. FM SYNTH and SY DRUM
   render their sound on the main processor; with too many of them it runs

@@ -1,5 +1,7 @@
 # Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
 
+**Octatrick 2.16 (in preparation): the load budget, and the LFO SETUP page's V/C column.** 2.16 replaces 2.15's three counting rules with one load budget per Part, so two FM SYNTH tracks fit (the FM voices capped to the budget beside SY DRUM tracks); and on an FM SYNTH track the LFO SETUP page's third column now reads V/C with VOIC / CHRD boxes instead of LFO 3 with SPD / DEP. Details: "The load budget (2.16)" and "The LFO SETUP page's V/C column (2.16)" below.
+
 **Octatrick 2.15 (in preparation): a selection guard.** FM SYNTH and SY DRUM run on the unit's
 main processor, and too many tracks of them freeze the unit. Both machine lists (SELECT MACHINE TYPE
 and SRC SETUP) now refuse a choice that would put more than **2 SY DRUM tracks**, more than **1 FM
@@ -708,6 +710,118 @@ else changed" were run again on the 2.15 release image (with the MIDI-track scal
   slot column). On a STATIC track carrying a dormant SY DRUM mark beside two SY DRUM tracks, 2.14 turned it into a
   third SY DRUM track while the preview was held; 2.15 previews it as a plain FLEX and clears the mark when the
   preview stops, two SY DRUM tracks throughout.
+
+## The load budget (2.16)
+
+2.15's selection guard counted tracks: at most 1 FM SYNTH track, 2 SY DRUM tracks, FM SYNTH beside at most
+1 SY DRUM track. 2.16 replaces the three counting rules with **one price per Part**, so that two FM SYNTH
+tracks fit, and SY DRUM tracks beside them cost FM voices instead of being refused.
+
+**The price.** Points of PROCESSOR LOAD's worst block W above an empty project, from twelve readings on the
+author's MKI (OS 1.40C, OCTATRICK 2.14 which has no guard, 18 Oct 2026; every synth track playing a
+16-trig pattern of four-note chords, CHRD set, VOIC = the cap under test, DEC long enough that the chords
+overlap; W read with FUNC held, the upper end of its range; the empty project reads 34):
+
+| term | points | paid |
+|---|---|---|
+| `LOAD_S_ANY` | 15 | once, when the Part holds any FM SYNTH or SY DRUM track |
+| `LOAD_S_FM` | 13 | once, when the Part holds any FM SYNTH track |
+| `LOAD_FM_V1` .. `LOAD_FM_V4` | 4 / 9 / 10 / 12 | per FM SYNTH track, by its EFFECTIVE voice cap 1 / 2 / 3 / 4 |
+| `LOAD_SY_TRACK` | 11 | per SY DRUM track |
+| `LOAD_BUDGET` | 54 | the most a Part may cost: a worst block of about 88 in an empty project, the ceiling the author has run on his unit |
+
+The readings the table was fitted to (model vs measured, W over the empty project's 34): 1 FM at VOIC
+1 / 2 / 3 / 4 read 64 / 70 / 72 / 74 (model 66 / 71 / 72 / 74); 2 FM at 1 / 2 / 3 / 4 each read 70 / 80 /
+82 / 86 (70 / 80 / 82 / 86); 2 FM at 1 + 1 SY DRUM 81 (81); 2 FM at 2 + 1 SY 92 (91); 1 FM at 1 + 2 SY 86
+(88); 2 FM at 1 + 2 SY 88 (92); and, from 16 Oct, 1 SY about 60 (60), 2 SY 67 - 76 (71), 1 FM at 4 + 1 SY
+76 - 85 (85). Within a point everywhere that matters, high where it is off. The model is a four-entry
+table per voice cap, not a line: the first FM SYNTH track costs about 28 points at VOIC 1, a second one 4
+more, the step from VOIC 1 to 2 (the mono path to the paraphonic engine) about 5 per track, each voice
+above 2 about 1.5, an SY DRUM track about 11 beside FM tracks (about 26 alone).
+
+**The cap.** The cost of a Part with every FM SYNTH track at v voices is
+`S_ANY * [any FM or SY] + S_FM * [any FM] + nFM * FM_Vv + nSY * SY_TRACK`. The engine plays every FM SYNTH
+track of the Part at `min(VOIC, cap)` voices, where the cap is the largest v in 4, 3, 2, 1 whose cost
+fits the budget (1 when none does: a Part saved past the budget by an older build plays as saved, mono).
+VOIC 2, 3 and 4 then simply act as the cap: the shape's first `cap` notes, the same stealing order, the
+level per voice as that VOIC gives; the VOIC shown on the LFO page stays the one set, and the lock, the
+scene and the knob all go through the same cap. The matrix:
+
+| the Part holds | 2.15 | 2.16 | cost | the author's W |
+|---|---|---|---|---|
+| 1 FM SYNTH | VOIC up to 4 | unchanged: cap 4 | 40 | 65 - 74 |
+| 1 FM SYNTH + 1 SY DRUM | allowed, FM at 4 | unchanged: cap 4 | 51 | 76 - 85 |
+| 2 SY DRUM | allowed | unchanged | 37 | 67 - 76 |
+| 2 FM SYNTH | refused | allowed: cap 4 each | 52 | 78 - 86 |
+| 2 FM SYNTH + 1 SY DRUM | refused | allowed: cap 1, both FM mono | 47 | 72 - 81 |
+| 1 FM SYNTH + 2 SY DRUM | refused | allowed: cap 1, FM mono | 54 | 75 - 86 |
+| 2 FM SYNTH + 2 SY DRUM | refused | refused: 58 even at mono | 58 | 78 - 88 |
+| 3 FM SYNTH | refused | refused in the lists; a project saved with more loads and plays as saved, every FM track mono | | |
+
+**The guard.** Both lists and the paste guards keep their 2.15 form with the new rule: with the chosen
+machine in the Part (the other seven tracks counted by their marks), refuse when the Part would hold more
+than `ML_FM_MAX` = 2 FM SYNTH tracks (`FM SYNTH: 2 MAX`), more than `ML_SY_MAX` = 2 SY DRUM tracks
+(`SY DRUM: 2 MAX`), or would cost more than the budget even with every FM SYNTH track mono (`FM+SY DRUM:
+LIMIT`, the existing string); else allow, the cap does the rest. So a second FM SYNTH track is allowed
+where 2.15 refused it, FM SYNTH into a Part with two SY DRUM tracks is allowed (it plays mono), and two FM
+SYNTH with two SY DRUM is refused. Everything 2.15 says about a refusal (nothing written, the message,
+the list left open), about COPY / PASTE TRACK, the PLAYBACK page's paste, the Part paste and their undo,
+the FLEX preview, the marker file and projects that already hold more still holds.
+
+**Retuning.** The weights, the budget and the two hard caps are one file, `synth/machine_limits.inc`
+(`ML_FM_MAX`, `ML_SY_MAX`, `LOAD_S_ANY`, `LOAD_S_FM`, `LOAD_FM_V1..V4`, `LOAD_SY_TRACK`, `LOAD_BUDGET`);
+the messages print the hard caps; nothing else in the code depends on the values (the assembler checks
+their ranges, and that one FM SYNTH track and one SY DRUM track each fit the budget). Change the file,
+build, flash.
+
+### How it works
+
+`machine.s`: `ml_count` counts a Part's FM SYNTH and SY DRUM tracks by their marks (`ml_sigkind`, a track
+left out for the lists); `ml_cost` prices the counts at a voice cap v from the table; `ml_cap_of` finds the
+largest v that fits; `ml_over` is the guards' rule (the hard caps, then the cost at v = 1 against the
+budget) and `ml_guard` / `ml_guard_p` / `ml_part_over` use it where 2.15 compared counts with limits.
+
+`ml_cap` answers the cap of the current Part to the engine. It is called inside the frame interrupt at
+every voice START of an FM SYNTH track (`poly.s` `po_voiccap`: the START, the crossfade question `po_xfq`,
+the chord `po_start` and the legato hand-over `po_ho`), so it reads a cache of the unit's own,
+`ml_budget`: the 32 bytes the count depends on -- the Part's eight machine bytes and the eight mark places
+`ml_sigkind` reads (a long each) -- beside the cap. At a START the cached bytes are compared with the
+Part's (about 50 instructions); equal, the cached cap is the answer; else the Part is counted again and
+the bytes and the new cap stored. Nothing is hooked for the recount: whatever writes a Part's machines --
+the lists' commits, the paste / undo stores, the slot assigner, the FLEX preview, a project or Part
+load, PART RELOAD, a bank change, the battery-backed bank at power-on -- is seen by the bytes at the next
+START, and a Part change to a Part with the same machines rightly counts nothing. (A hooked recount was
+the first design: on the emulator a PART RELOAD and a bank change write the Part through no site the
+synth detours, so the bytes are compared instead.) The cache is read and written inside the frame
+interrupt only; the callers outside it -- `po_polytrack` (the keys' release rule, `po_moff`, `po_legkey`),
+`po_legmode` (the LEG gate) and `po_keyrec` (the fingered-chord recorder) -- take `ml_cap_now` through
+`po_voiccap_now`, which counts on the spot and never touches the cache, so no reader sees a half-written
+one. The cap is unknown at power-on (the image's 0) and counted at the first START. The pages' VOIC
+(`po_fmt_chord`) stays the Part's; the quantizer's own `qz_polytrack` (the panel keys' press / release
+bookkeeping) reads the Part's VOIC byte itself and is not capped -- the sound its keys make is the
+engine's, capped (`quantizer/` is unchanged). No new stock site: SYNTH MACHINE keeps 2.15's 58 detours;
+`machine_limits.inc` is read into `machine.s`'s `remix.inc` as before.
+
+### Measured (18 Oct 2026, octabam's emulator `ot_emu`, the 2.16 candidate `fa019f2f`; emulator results, not the unit)
+
+All on octabam's `ot_emu`, the 2.16 candidate (bus `98b1a58f`, the image's bus), against OCTATRICK 2.15 on the same
+walks and cards (`work/r16/G`, `work/r16/Q`). The budget's own walks and the regression walks re-run on this candidate.
+
+- **Two FM SYNTH tracks at four voices each**: a Part with T1 and T2 FM SYNTH (VOIC 4, a four-note chord on each) plays
+  four voices on each track -- the budget (52 of 54) allows the second FM track 2.15 refused.
+- **Capped beside an SY DRUM track**: add an SY DRUM track (T5) and both FM tracks drop to one voice at the next START
+  (the cap is 1: 2 FM + 1 SY cost 47 at mono, over budget at any higher cap); the VOIC box still reads 4. Set T5 back
+  to a stock machine and the next START is four voices again (the recount, by the Part's own bytes, no hook).
+- **The chooser**: a second FM SYNTH track is allowed, a third refused (`FM SYNTH: 2 MAX`); two FM + two SY refused
+  (`FM+SY DRUM: LIMIT`); FM into a Part with two SY DRUM allowed, playing mono; a third SY DRUM refused (`SY DRUM:
+  2 MAX`). COPY / PASTE TRACK, the PLAYBACK page's paste, the Part paste, their undo and the FLEX preview apply the one
+  rule. A 2.14-style project with three FM tracks loads and plays as saved, every FM track mono.
+- **Unchanged where the budget does not change it**: one FM track at VOIC 1..4, and one FM + one SY DRUM, render
+  byte-identical to 2.15; a VOIC lock and a VOIC scene act as the cap; the quantizer's own CHROMATIC-key rule is the
+  Part's VOIC (`quantizer/` unchanged, noted as a limit). Cost (PORT, per-frame ColdFire cycles): one FM VOIC 4 equal
+  to 2.15; the two-FM, two-FM + SY and FM + two-SY figures are the budget's, reported plainly in `work/r16/REPORT.md`.
+- **The LFO SETUP page is display-only**: no engine change, so every SY DRUM render and every regression render is
+  byte-identical to 2.15 / the budget candidate where the budget does not change it.
 
 ## The machine list for more than one machine, and SY DRUM's hooks (2.11, 8 Oct 2026)
 
@@ -1878,6 +1992,70 @@ Part byte read from the bank blob):
 
 The DRAM unit grows 18,896 -> 19,200 B (the three hooks and the step-over); the
 page cave (`page.s`) is unchanged.
+
+## The LFO SETUP page's V/C column (2.16, 18 Oct 2026)
+
+Tim (18 Oct): on an FM SYNTH track the LFO page shows VOIC in LFO 3's speed box and CHRD in its
+depth box (SPD3 / DEP3 are their storage; LFO 3 is muted on an FM track, `po_lfo3`), and that is
+how he wants it -- VOIC and CHRD are scene parameters, which only main-page slots are. "What is
+wrong is the LFO SETUP page (FUNC + LFO): it still shows an LFO 3 column with speed and depth
+boxes, and turning those changes VOIC and CHRD without saying so. Change it from saying LFO 3 to
+V/C for voice / chord, and from saying speed and depth to display VOIC and CHRD."
+
+**The page.** The LFO SETUP window is a list on the left (LFO 1, LFO 2, LFO 3, DESIGN) and, for the
+LFO the cursor is on, six boxes -- PMTR WAVE MULT / TRIG SPD DEP -- which are the LFO descriptor's
+setup slots 6..11 (as the AMP SETUP window's sixth box is AMP p2 slot 11, "LEG" above). On an FM
+SYNTH track the third LFO is muted and the selected LFO's SPD / DEP, when that LFO is the third,
+are SPD3 / DEP3 = VOIC / CHRD. On this track the third row now reads **V/C**, the SPD box **VOIC**
+(1..4, as the LFO page's) and the DEP box **CHRD** (the chord-shape names); the two LFO columns
+stay LFO 1 / LFO 2, the LFO designer is unchanged, and on a SY DRUM track or any stock track the
+page is 2.15's.
+
+**Cause.** The window addresses the STOCK LFO record (`0x400d37f6`) by its address, not through the
+page resolver that `page.s` and `po_lfopage` hook -- so the VOIC / CHRD clone (`po_lfodesc`) never
+reached it (a PC watch at the six box-name draws shows the stock record; the resolver's clone, with
+its setup names poked to markers, changes nothing in the window). Its third row therefore read
+`LFO 3`, and its SPD / DEP dials turned VOIC and CHRD over the stock 0..127.
+
+**The change** (`poly.s` "THE LFO SETUP WINDOW'S V/C COLUMN", four 6-byte detours and one
+SymbolRef). On an FM SYNTH track only (`po_sig` on the current Part's UI track):
+- `po_lfsstage` at `0x40058488` (`pea 0x400d37f6`, the staging at the window's open) and
+  `po_lfsmove` at `0x4003a45c` (the staging at every list move) push `po_lfs_desc`'s descriptor;
+  `po_lfsdraw` at `0x400574cc` (`lea 0x400d37f6,%a4`, the drawer) and `po_lfsedit` at `0x40039020`
+  (`lea 0x400d37f6,%a3`, the setup editor) take `a4` / `a3` from it too.
+- `po_lfs_desc` answers the VOIC / CHRD clone (built by `po_lfo_build`, shared with `po_lfopage`):
+  with the selected LFO the third row, the stock SPD / DEP DIALS are RENAMED -- slot 10 VOIC
+  (`po_fmt_voic`: "1".."4", a byte outside 1..4 shown "1", the mono voice, exactly as the LFO page
+  and as the engine reads it) and slot 11 CHRD (`po_fmt_chord`: the shape names, "----" while VOIC
+  is 1). Their dials, their stepping (the stock SPD / DEP accumulator over the Part's SPD3 / DEP3
+  bytes) and the enable nibbles are untouched, so turning them edits VOIC and CHRD exactly as the
+  stock SPD / DEP did -- now **saying so**. The four LFO-only boxes PMTR WAVE MULT TRIG are **left
+  stock** (LFO 3 does nothing on an FM track; clearing their enable nibble blanks only the label,
+  not the knob, so they are left as they are -- the spec's fallback).
+
+  VOIC is NOT hard-clamped to 1..4 on this page as it is on the LFO page: the setup editor's dial
+  accumulator steps the raw byte and a dial's step scales by its range, so a range of four rounds
+  to no step (it stalls) -- measured on the emulator across a text-select widget, an enum stepper
+  and a custom handler, none of which the editor steps for this box. So the SETUP page's VOIC steps
+  the SPD3 byte as 2.15's SPD box did (now labelled and formatted 1..4); the LFO page is where VOIC
+  clamps to the four voice counts. This is a display and naming change; turning VOIC past 4 reads
+  back the mono voice ("1"), consistent with the engine and with what the LFO page shows. On LFO 1 / LFO 2 the boxes are stock.
+- The selected LFO is this unit's own byte `po_lfs_sel` (0 LFO 1 .. 3 DESIGN), set from the move's
+  new row at `po_lfsmove` and nowhere else: 0 at power-on, changed only on a cursor move, untouched
+  by a knob edit or by closing the window -- exactly as the stock window's highlight persists across
+  close / reopen -- so the two stay in step and the V/C column holds through edits and reopen. (The
+  stock UI keeps no selected-row cell that survives a knob edit: a wide RAM diff across LFO 1 / 2 / 3,
+  a DEP edit and a close+reopen found none, so the row is cached here.)
+- The window's row table (string pointers at `0x400a750e`, 2-mod-4) names `po_lfs_label` at its
+  third entry `0x400a7516` (a `SymbolRef`): `V/C` on an FM SYNTH track, else the string the table
+  named, copied from the image at run time (the repository carries no stock label; `po_vc` is the
+  only new string).
+
+No new parameter, no storage change: the window's knob writes the same SPD3 / DEP3 bytes through the
+stock setup editor, so the LFO page, the step and scene locks, the LFO destination list (`po_lfdedit`
+already steps over VOIC / CHRD), the designer, the engine and the renders are unchanged. Four new
+stock sites were needed (the window reaches the record only by its address); their displaced bytes
+are checked against OS 1.40C like every other detour.
 
 ## A held key is the gate (2.10, 6 Oct 2026)
 
