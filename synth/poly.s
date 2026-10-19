@@ -162,6 +162,7 @@
         .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
         .global po_slot_marker           | 2.12: ... and the marker test (machine.s: the machine change, ml_kindof)
         .global po_lfdname, po_lfdedit, po_lfdlfo | 2.10: the LFO destination list (LFO SETUP's PMTR)
+        .global po_lfsstage, po_lfsmove, po_lfsdraw, po_lfsedit, po_lfs_label | 2.16: the LFO SETUP window's V/C column on an FM SYNTH track
         .include "remix.inc"             | 2.11: the remix's flags (HAVE_SYDRUM: SY DRUM in the remix) and the shared
                                          | equates (engine_abi.inc), written beside this unit by the build (manifest.py);
                                          | with HAVE_SYDRUM 0 the unit assembles byte for byte as 2.10's
@@ -3217,6 +3218,24 @@ po_lp_clone:
         lea     po_lfodesc(%pc),%a1
         tst.b   po_lfo_built
         bne     po_lp_have
+        bsr     po_lfo_build             | a1 = the clone, built (2.16: shared with the LFO SETUP window, po_lfs_desc)
+po_lp_have:
+        move.l  %a1,%d0
+po_lp_done:
+        tst.b   po_lfs_label             | (2.16) the window's third row label, filled from the image on first use
+        bne     po_lp_out
+        move.l  %d0,-(%sp)
+        bsr     po_lfs_lblstock
+        move.l  (%sp)+,%d0
+po_lp_out:
+        jmp     RESOLVER_RET
+
+| po_lfo_build: a1 = po_lfodesc -> the clone built from the stock record in the image
+| (never written) with slot 2 VOIC and slot 5 CHRD; a1 = the clone again on return.
+| Preserves every other register (a0 and d4 used, saved).
+po_lfo_build:
+        move.l  %d4,-(%sp)
+        move.l  %a0,-(%sp)
         lea     LFO_P,%a0                | the clone: the stock record ...
         move.l  #LFO_DESC_LEN,%d4
 po_lp_copy:
@@ -3247,10 +3266,207 @@ po_lp_copy:
         move.l  %d4,0x18e(%a1)
         lea     po_lfo_built(%pc),%a0
         move.b  #1,(%a0)
-po_lp_have:
+        movea.l (%sp)+,%a0
+        move.l  (%sp)+,%d4
+        rts
+
+| ==== THE LFO SETUP WINDOW'S V/C COLUMN ON AN FM SYNTH TRACK (2.16, 18 Oct 2026) ========
+| FUNC + LFO opens the LFO SETUP window: a list on the left (LFO 1, LFO 2, LFO 3, DESIGN)
+| and, for the LFO the cursor is on, six boxes -- PMTR WAVE MULT / TRIG SPD DEP -- which are
+| the LFO descriptor's setup slots 6..11 (as the AMP SETUP window's are AMP's; LEG, above).
+| On an FM SYNTH track the third LFO is muted and its SPD / DEP bytes are VOIC and CHRD (the
+| LFO page prints them so, po_lfopage), but the window addresses the STOCK LFO record by
+| its address, not through the page resolver (measured 18 Oct 2026: the resolver's clone
+| is never read by it), so the third row read "LFO 3" and its SPD / DEP boxes turned VOIC
+| and CHRD over the stock 0..127 without saying so. Now, on an FM SYNTH track only:
+|   * the third row reads V/C -- the window's row table (four string pointers in the
+|     image, 0x400a750c) names po_lfs_label for its third row 0x400a7516 (a SymbolRef, manifest.py):
+|     a buffer of this unit that reads "V/C" while the UI track is an FM SYNTH track and
+|     otherwise the string the table named before (copied from the image at run time:
+|     the bytes are never carried; empty at power-on, filled on first use);
+|   * with the cursor on V/C the SPD box is VOIC (the formatter po_fmt_voic, 1..4, default
+|     1) and the DEP box is CHRD (po_fmt_chord),
+|     exactly the LFO page's two boxes; the four LFO-only boxes PMTR WAVE MULT TRIG are left
+|     stock (LFO 3 is muted on an FM track, so they do nothing there -- clearing their enable
+|     nibble blanks the box's label but not its knob here, measured, so they are left as they
+|     are and this is documented, the spec's fallback);
+|   * with the cursor on LFO 1 or LFO 2 the six boxes are stock's (the clone's slots 10 / 11
+|     are restored from the image at every hand-out; the nibbles are never changed).
+| The window takes its descriptor at four sites, each a six-byte load of the record's
+| address (the LEG pattern: a jmp detour hands it po_lfs_desc's answer, every register but
+| the destination preserved -- the staging's `pea` is followed by `jsr (%a0)`, so a0 is live):
+|   * po_lfsstage at 0x40058488, `pea 0x400d37f6`: the window's staging of the six knobs at
+|     its open and at a track change inside it (the accessor 0x400326d4 reads the nibbles);
+|   * po_lfsmove at 0x4003a45c, `pea 0x400d37f6`: the staging again at every list move (so
+|     the knobs follow the cursor);
+|   * po_lfsdraw at 0x400574cc, `lea 0x400d37f6,%a4`: the drawer (the names, formatters,
+|     widgets and nibbles of slots 6..11 through a4), run before the list rows at every redraw;
+|   * po_lfsedit at 0x40039020, `lea 0x400d37f6,%a3`: the setup editor's record (the knob's
+|     handler, min and count: VOIC clamps to 1..4 there as on the LFO page).
+| The selected LFO (which row the boxes belong to) is kept in this unit's own byte po_lfs_sel
+| (0 LFO 1, 1 LFO 2, 2 LFO 3 / V/C, 3 DESIGN): po_lfsmove sets it from d2 (the move's new row;
+| measured: d2 is the destination row at the move staging) at EVERY list move, and nothing else
+| writes it. It is 0 at power-on (the window opens on LFO 1 then), it changes only when the
+| cursor moves, and it is not touched by a knob edit or by closing the window -- exactly as the
+| stock window's own highlight persists across close / reopen and changes only on a move -- so
+| the two stay in step, and po_lfs_desc reads po_lfs_sel at the open (po_lfsstage), at a move
+| (po_lfsmove), at every redraw (po_lfsdraw) and at every knob (po_lfsedit) and renders the V/C
+| column only while it is 2. (The stock UI keeps no selected-row cell that survives a knob edit:
+| a wide RAM diff across LFO 1 / 2 / 3, a DEP edit on LFO 3 and a close+reopen found none, so the
+| row is cached here instead of read from a stock address.) Every other track (FLEX, STATIC, SY
+| DRUM, ...) gets the stock record's address at all four sites and the stock label: its window is
+| the stock one. Storage, step and scene locks, the LFO destination list (po_lfdedit steps over
+| VOIC / CHRD already), the designer (the DESIGN row draws no boxes and runs none of the four
+| sites), the engine and the renders are untouched: the window's knob writes the same SPD3 /
+| DEP3 bytes through the stock editor.
+        .set    LFS_LABEL3, 0x400b5398   | the string the row table's third entry 0x400a7516 named (copied at run time)
+        .set    LFS_STAGE_RET, 0x4005848e | after `pea 0x400d37f6` at 0x40058488
+        .set    LFS_MOVE_RET, 0x4003a462  | after `pea 0x400d37f6` at 0x4003a45c
+        .set    LFS_DRAW_RET, 0x400574d2  | after `lea 0x400d37f6,%a4` at 0x400574cc
+        .set    LFS_EDIT_RET, 0x40039026  | after `lea 0x400d37f6,%a3` at 0x40039020
+        .set    LFS_VC, 2                | the cursor on the third row
+
+| ---- 0x40058488 and 0x4003a45c, `pea 0x400d37f6` (6 B each; `jsr (%a0)` follows): the
+| descriptor pushed is po_lfs_desc's. d0 preserved (a0 is the call's target).
+po_lfsstage:
+        subq.l  #4,%sp                   | the argument's slot
+        move.l  %d0,-(%sp)
+        bsr     po_lfs_desc
+        move.l  %d0,4(%sp)               | pushed, as `pea` did
+        move.l  (%sp)+,%d0
+        jmp     LFS_STAGE_RET
+| po_lfsmove also records the move's new row (d2) in po_lfs_sel before staging; d2 is preserved
+| for the accessor (the continuation's `jsr (%a0)`), a0 is the call's target, d0 is preserved.
+po_lfsmove:
+        lea     -8(%sp),%sp
+        movem.l %d0/%a1,(%sp)
+        move.l  %d2,%d0
+        cmpi.l  #3,%d0
+        bhi     po_lm_desc               | a row outside 0..3: keep the old po_lfs_sel
+        lea     po_lfs_sel(%pc),%a1
+        move.b  %d0,(%a1)                | po_lfs_sel = the move's destination row
+po_lm_desc:
+        movem.l (%sp),%d0/%a1
+        lea     8(%sp),%sp
+        subq.l  #4,%sp
+        move.l  %d0,-(%sp)
+        bsr     po_lfs_desc
+        move.l  %d0,4(%sp)
+        move.l  (%sp)+,%d0
+        jmp     LFS_MOVE_RET
+| ---- 0x400574cc, the drawer's `lea 0x400d37f6,%a4` (6 B): a4 := po_lfs_desc's.
+po_lfsdraw:
+        move.l  %d0,-(%sp)
+        bsr     po_lfs_desc
+        movea.l %d0,%a4
+        move.l  (%sp)+,%d0
+        jmp     LFS_DRAW_RET
+| ---- 0x40039020, the setup editor's `lea 0x400d37f6,%a3` (6 B): a3 := po_lfs_desc's.
+po_lfsedit:
+        move.l  %d0,-(%sp)
+        bsr     po_lfs_desc
+        movea.l %d0,%a3
+        move.l  (%sp)+,%d0
+        jmp     LFS_EDIT_RET
+
+| ---- po_lfs_desc -> d0 = the LFO descriptor for the LFO SETUP window: the clone (built if
+| need be) with its slots 10 / 11 and page-2 nibbles set by the cursor when the UI track is
+| an FM SYNTH track (po_sig on the current Part), else the stock record's address; the
+| label buffer set with it. Preserves every other register.
+po_lfs_desc:
+        lea     -24(%sp),%sp
+        movem.l %d1-%d2/%d4/%a0-%a2,(%sp)
+        bsr     po_lfs_fm                | d0 = 1: the UI track is an FM SYNTH track
+        beq     po_lfs_stock
+        lea     po_lfodesc(%pc),%a1
+        tst.b   po_lfo_built
+        bne     po_lfs_have
+        bsr     po_lfo_build             | a1 = the clone
+po_lfs_have:
+        bsr     po_lfs_restore           | slots 10 / 11 and the page-2 nibbles as the image has them ...
+        lea     po_lfs_sel(%pc),%a0
+        mvz.b   (%a0),%d0                | the selected LFO (this unit's cache, set at po_lfsmove)
+        cmpi.l  #LFS_VC,%d0
+        bne     po_lfs_lbl
+        bsr     po_lfs_apply             | ... or, on V/C: slots 10 / 11 renamed VOIC / CHRD
+po_lfs_lbl:
+        lea     po_vc(%pc),%a0           | the third row: V/C
+        lea     po_lfs_label(%pc),%a2
+po_lfs_lcp:
+        move.b  (%a0)+,(%a2)+
+        bne     po_lfs_lcp
         move.l  %a1,%d0
-po_lp_done:
-        jmp     RESOLVER_RET
+        bra     po_lfs_out
+po_lfs_stock:
+        bsr     po_lfs_lblstock          | the third row: the string the table named
+        move.l  #LFO_P,%d0
+po_lfs_out:
+        movem.l (%sp),%d1-%d2/%d4/%a0-%a2
+        lea     24(%sp),%sp
+        rts
+| po_lfs_fm -> d0 = 1 when the UI track of the current Part is a chosen FM SYNTH track
+| (po_sig: FLEX with the list's mark), else 0; tst.l done. Clobbers d0, a0.
+po_lfs_fm:
+        movea.l PART_PTR,%a0
+        mvz.b   PART_IDX,%d0
+        move.l  #6322,%d1
+        muls.l  %d1,%d0
+        adda.l  %d0,%a0                  | the current Part
+        mvz.b   UI_TRACK,%d0
+        bsr     po_sig                   | (tst.l done)
+        rts
+| po_lfs_lblstock: the label buffer := the string the row table named (from the image, at
+| most 7 characters). Clobbers a0, a1.
+po_lfs_lblstock:
+        lea     LFS_LABEL3,%a0
+        lea     po_lfs_label(%pc),%a1
+        move.l  %d0,-(%sp)
+        moveq   #7,%d0
+po_lfs_lsc:
+        move.b  (%a0)+,(%a1)+
+        beq     po_lfs_lsd
+        subq.l  #1,%d0
+        bne     po_lfs_lsc
+        clr.b   (%a1)
+po_lfs_lsd:
+        move.l  (%sp)+,%d0
+        rts
+| po_lfs_restore: a1 = the clone: its slots 10 / 11 (SPD / DEP) NAMES and FORMATTERS copied back
+| from the stock record in the image, so the column is the stock one on LFO 1 / LFO 2. Nothing else
+| of the two boxes is changed (the dials, their stepping, their ranges and the enable nibbles all
+| stay the clone's stock copy), so the four LFO-only boxes stay stock too (PMTR WAVE MULT TRIG;
+| LFO 3 is muted on an FM track, so they do nothing there -- left stock, the spec's fallback).
+| Clobbers d0, a0.
+po_lfs_restore:
+        lea     LFO_P,%a0
+        move.l  0x16+60(%a0),0x16+60(%a1) | slots 10 / 11 names (SPD / DEP), 12 bytes
+        move.l  0x16+64(%a0),0x16+64(%a1)
+        move.l  0x16+68(%a0),0x16+68(%a1)
+        move.l  0xca+40(%a0),0xca+40(%a1) | and their formatters
+        move.l  0xca+44(%a0),0xca+44(%a1)
+        rts
+| po_lfs_apply: a1 = the clone (restored). The two boxes keep the stock SPD / DEP DIALS and are only
+| RENAMED and reformatted: slot 10 named VOIC, printed by po_fmt_voic ("1".."4", a byte outside 1..4
+| read as the mono voice -- "1" -- exactly as the LFO page's VOIC box and as the engine reads it);
+| slot 11 named CHRD, printed by po_fmt_chord (the shape names, "----" while VOIC is 1), as the LFO
+| page's slot 5. The dials, their stepping (the stock SPD / DEP accumulator over the Part's SPD3 /
+| DEP3 bytes) and the enable nibbles are untouched -- turning them edits VOIC and CHRD exactly as
+| the stock SPD / DEP did, now SAYING SO. The setup editor's dial accumulator steps the raw byte and
+| cannot be clamped to the four voice counts without stalling (a dial's step scales by its range, and
+| a range of four rounds to no step), so VOIC is NOT hard-clamped to 1..4 here as it is on the LFO
+| page (measured on the emulator; the LFO page is where VOIC clamps). Clobbers d0, a0.
+po_lfs_apply:
+        lea     po_voic(%pc),%a0
+        move.l  (%a0)+,0x16+60(%a1)
+        move.w  (%a0),0x16+64(%a1)
+        lea     po_fmt_voic(%pc),%a0
+        move.l  %a0,0xca+40(%a1)
+        lea     po_chrd(%pc),%a0         | slot 11 CHRD: the stock DEP dial, renamed, the shape names
+        move.l  (%a0)+,0x16+66(%a1)
+        move.w  (%a0),0x16+70(%a1)
+        lea     po_fmt_chord(%pc),%a0
+        move.l  %a0,0xca+44(%a1)
+        rts
 
 | ==== THE LFO DESTINATION LIST (2.10, 6 Oct 2026; three hooks) ======================
 | LFO SETUP's PMTR names a destination as page * 6 + slot (0 PLAYBACK, 1 LFO, 2 AMP, 3 FX1,
@@ -6108,6 +6324,8 @@ po_f_s:
         .asciz  "%s"
 po_f_d:
         .asciz  "%d"
+po_vc:
+        .asciz  "V/C"                   | (2.16) the LFO SETUP window's third row on an FM SYNTH track (po_lfs_label)
         .align  2
 
 | ---- the ratio table: STRT raw >> 2 -> modulator/carrier ratio, Q8 ---------
@@ -6330,6 +6548,11 @@ po_lfo_built:
         .align  4
 po_lfodesc:                              | the LFO descriptor clone (built on first use)
         .fill   LFO_DESC_LEN, 1, 0
+po_lfs_label:                            | (2.16) the LFO SETUP window's third row (the row table's SymbolRef): "V/C" on an FM
+        .fill   8, 1, 0                  | SYNTH track, else the string the table named (from the image on first use)
+po_lfs_sel:                              | (2.16) the LFO SETUP window's selected row 0..3 (set at po_lfsmove; 0 at power-on = LFO 1)
+        .byte   0
+        .align  4
 po_pg_built:
         .byte   0
         .align  4
