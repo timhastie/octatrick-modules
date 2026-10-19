@@ -53,8 +53,8 @@
 |     ml_cap, the largest voice count at which the Part's FM SYNTH and SY
 |     DRUM tracks fit LOAD_BUDGET (machine_limits.inc; 4 with two FM SYNTH
 |     tracks, 1 beside an SY DRUM track) -- at every read of it (po_voiccap:
-|     the START, po_xfq, po_start, po_ho, po_polytrack, po_legmode,
-|     po_keyrec). VOIC 2..4 then ACT AS the cap: the shape's first cap notes,
+|     the START, po_xfq, po_start, po_ho; po_voiccap_now: po_polytrack,
+|     po_legmode, po_keyrec). VOIC 2..4 then ACT AS the cap: the shape's first cap notes,
 |     the stealing order, the level per voice, the LEG gate, the recorder,
 |     all as that VOIC value does; the VOIC shown is the Part's;
 |   * a live key (the quantizer's key hooks leave the key's index+1 in
@@ -2806,7 +2806,7 @@ po_legmode:
         mvz.b   5(%a0,%d1.l),%d4         | CHRD (shape << 2 | inversion)
         suba.l  #LFO_PAGE_OFF,%a0
         move.l  %d3,%d1
-        bsr     po_voiccap               | (2.16) within the Part's FM voice cap: a capped track's keys are the mono voice's
+        bsr     po_voiccap_now           | (2.16) within the Part's FM voice cap: a capped track's keys are the mono voice's
         move.l  %d1,%d3
         move.l  %d2,%d1
         lsl.l   #5,%d1
@@ -4086,7 +4086,7 @@ po_keyrec:
         add.l   %d1,%d0
         add.l   %d1,%d0                  | track * 24
         mvz.b   2(%a0,%d0.l),%d1         | VOIC
-        bsr     po_voiccap               | (2.16) within the Part's FM voice cap: a capped track records as the mono synth
+        bsr     po_voiccap_now           | (2.16) within the Part's FM voice cap: a capped track records as the mono synth
         subq.l  #2,%d1
         cmpi.l  #2,%d1
         bhi     po_kr_out                | 1 (or out of range): the mono synth, stock recording
@@ -4669,21 +4669,32 @@ po_slot_marker:
 | Part's FM SYNTH and SY DRUM tracks fit LOAD_BUDGET -- 4 with two FM SYNTH tracks, 1
 | beside an SY DRUM track; from its cache, so a few compares at a START), else d1
 | unchanged (a stock or out-of-range byte reads 1 at every caller, as before). Every
-| read of the VOICE CAP the engine acts on goes through here: the START (sy_warm_voic),
-| the crossfade question (po_xfq), the chord (po_start, po_ho), the engine's key rules
-| (po_polytrack: po_moff, po_legkey), the LEG gate (po_legmode) and the chord recorder
-| (po_keyrec: a capped track records as the mono synth, as VOIC 1 does). Not the Part's
-| VOIC the pages show (po_fmt_chord): the VOIC shown stays the Part's. The quantizer's own
-| qz_polytrack (the panel keys' press / release bookkeeping) reads the Part's VOIC byte
-| itself and is not capped (quantizer/ is unchanged); the sound its keys make is this
-| engine's, capped. Preserves every other register.
+| read of the VOICE CAP the engine acts on goes through here: inside the frame interrupt
+| (po_voiccap, the cache: the START, sy_warm_voic; the crossfade question, po_xfq; the
+| chord, po_start and po_ho) and outside it (po_voiccap_now: counted on the spot, the cache
+| untouched -- the engine's key rules po_polytrack (po_moff, po_legkey), the LEG gate
+| po_legmode and the chord recorder po_keyrec, where a capped track records as the mono
+| synth, as VOIC 1 does). Not the Part's VOIC the pages show (po_fmt_chord): the VOIC shown
+| stays the Part's. The quantizer's own qz_polytrack (the panel keys' press / release
+| bookkeeping) reads the Part's VOIC byte itself and is not capped (quantizer/ is
+| unchanged); the sound its keys make is this engine's, capped. Preserves every other
+| register.
 po_voiccap:
         move.l  %d0,-(%sp)
         move.l  %d1,%d0
         subq.l  #1,%d0
         cmpi.l  #3,%d0
         bhi     po_vc_out                | (unsigned) outside 1..4: as it is
-        jsr     ml_cap                   | d0 = the cap, 1..4 (machine.s)
+        jsr     ml_cap                   | d0 = the cap, 1..4 (machine.s: the frame's cache)
+        bra     po_vc_cap
+po_voiccap_now:
+        move.l  %d0,-(%sp)
+        move.l  %d1,%d0
+        subq.l  #1,%d0
+        cmpi.l  #3,%d0
+        bhi     po_vc_out
+        jsr     ml_cap_now               | d0 = the cap, counted now (machine.s)
+po_vc_cap:
         cmp.l   %d0,%d1
         bls     po_vc_out                | VOIC within the cap
         move.l  %d0,%d1                  | VOIC acts as the cap
@@ -4717,7 +4728,7 @@ po_polytrack:
         add.l   %d0,%d1                  | track * 24
         mvz.b   2(%a0,%d1.l),%d0         | VOIC
         move.l  %d0,%d1
-        bsr     po_voiccap               | (2.16) within the Part's FM voice cap: a capped track's keys are the mono voice's
+        bsr     po_voiccap_now           | (2.16) within the Part's FM voice cap: a capped track's keys are the mono voice's
         move.l  %d1,%d0
         subq.l  #2,%d0
         cmpi.l  #2,%d0
