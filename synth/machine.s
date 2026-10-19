@@ -63,11 +63,11 @@
 | ml_cap answers the largest v in 4..1 whose cost fits (1 when none does), the engine
 | plays min(VOIC, cap) voices on each FM SYNTH track (poly.s po_voiccap) and the VOIC
 | shown stays the Part's. ml_cap serves every voice START, so it reads a cache of this
-| unit's own (ml_budget: the counts, the cap, the Part index and a generation), counted
-| again only when the Part index changed, a machine store is under way or was made since
-| (ml_touch at every store this unit detours; the UI tick, fm_tick, closes a store), or
-| the cache is unknown (power-on). Two FM SYNTH tracks keep four voices each; beside an
-| SY DRUM track they go mono; two FM SYNTH and two SY DRUM tracks are refused.
+| unit's own (ml_budget: one long -- the Part index, a generation and the cap, written in
+| one piece), counted again only when the Part index changed, a machine store is under way
+| or was made since (ml_touch at every store this unit detours; the UI tick, fm_tick,
+| closes a store), or the cache is unknown (power-on). Two FM SYNTH tracks keep four voices
+| each; beside an SY DRUM track they go mono; two FM SYNTH and two SY DRUM tracks are refused.
 | A refused choice writes nothing: the track keeps its machine and its patch, the
 | firmware's own message popup shows why (the stock routine and duration the lists use
 | for their own NOT AVAILABLE HERE!), and the window leaves through the same exit as
@@ -861,37 +861,49 @@ ml_cv_out:
 | is under way (ml_pending: set by ml_touch at every store this unit detours, cleared by the
 | UI tick after it, fm_tick -- a START between a store's start and that tick never trusts
 | the cache) or the generation moved since (ml_gen: bumped by ml_touch and by that tick).
-| The generation and the Part index are read BEFORE the count, and the cache reads as
-| unknown while a count is under way, so a store or a Part change that lands during a
-| count is caught at the next START and a count the UI task runs (po_polytrack) can be
-| interrupted by the frame's own. Preserves every other register (tst.l not done).
-        .set    BG_VALID, 0              | ml_budget, words (BG_GEN a long): 1 once counted (0: unknown, the image's, or counting)
-        .set    BG_PART, 2               | the Part index the counts belong to
-        .set    BG_NFM, 4                | its FM SYNTH tracks ...
+| THE CACHE IS ONE LONG, BG_KEY, written by ONE move.l at the end of a count: bit 31 set
+| (valid), bits 30..23 the Part index, bits 22..20 the cap, bits 19..0 the generation's low
+| 20 bits -- all read BEFORE the count. A reader builds the key it needs (valid, this Part,
+| the generation now), masks the cap out of the cached long and compares: equal, the cap
+| in it is the answer; else it counts. Because the commit is one aligned long write, two
+| counts that run into each other -- the UI task's (po_polytrack, po_legmode, po_keyrec,
+| the MIDI task's po_mon / po_moff) under the frame's -- can never leave a mixture of two
+| counts in the cache: whichever commit lands last is one count's own key and cap, and a
+| key whose Part or generation is stale is simply never matched again (a Part change or a
+| store during a count is caught at the next START). While a store is pending the count
+| commits nothing. The generation wraps at 2^20: a wrap between two STARTs of one Part with
+| no START between would take 524,288 stores. The two words after the key hold the last
+| count's nFM / nSY for a peek; nothing reads them. Preserves every other register (tst.l
+| not done).
+        .set    BG_KEY, 0                | ml_budget: the long (0: unknown, the image's: the first START counts)
+        .set    BG_NFM, 4                | the last count's FM SYNTH tracks ... (words, a peek's)
         .set    BG_NSY, 6                | ... and SY DRUM tracks
-        .set    BG_CAP, 8                | the cap, 1..4
-        .set    BG_GEN, 12               | ml_gen at the count (a long; +10 is a pad)
+        .set    BG_CAPSH, 20             | the cap's place in the key
+        .set    BG_PARTSH, 23            | the Part index's place
 ml_cap:
         lea     -16(%sp),%sp
         movem.l %d1-%d3/%a0,(%sp)
         lea     ml_budget(%pc),%a0
-        move.l  ml_gen-ml_budget(%a0),%d3 | the generation now (before the count)
+        moveq   #0,%d3                   | no key: a count under a pending store commits nothing
         tst.l   ml_pending-ml_budget(%a0)
         bne     ml_cap_count             | a store under way: never the cache
-        tst.w   BG_VALID(%a0)
-        beq     ml_cap_count             | unknown
-        cmp.l   BG_GEN(%a0),%d3
-        bne     ml_cap_count             | a store since
-        mvz.b   PART_IDX,%d0
-        cmp.w   BG_PART(%a0),%d0
-        bne     ml_cap_count             | another Part
-        mvz.w   BG_CAP(%a0),%d0
+        move.l  ml_gen-ml_budget(%a0),%d3 | the generation now (before the count) ...
+        andi.l  #0xfffff,%d3
+        mvz.b   PART_IDX,%d0             | ... and the Part now
+        moveq   #BG_PARTSH,%d1
+        lsl.l   %d1,%d0
+        or.l    %d0,%d3
+        bset    #31,%d3                  | d3 = the key this START needs
+        move.l  BG_KEY(%a0),%d0          | the cache, one read
+        move.l  %d0,%d1
+        andi.l  #0xff8fffff,%d1          | its key without the cap
+        cmp.l   %d3,%d1
+        bne     ml_cap_count             | unknown, another Part, or a store since
+        moveq   #BG_CAPSH,%d1
+        lsr.l   %d1,%d0
+        andi.l  #7,%d0                   | the cap
         bra     ml_cap_out
 ml_cap_count:
-        clr.w   BG_VALID(%a0)            | counting: unknown meanwhile
-        move.l  %d3,BG_GEN(%a0)
-        mvz.b   PART_IDX,%d0
-        move.w  %d0,BG_PART(%a0)
         bsr     ml_part                  | a0 = the current Part
         moveq   #-1,%d2
         bsr     ml_count                 | d0 = its FM SYNTH tracks, d1 = its SY DRUM tracks
@@ -900,9 +912,13 @@ ml_cap_count:
         move.w  %d2,BG_NFM(%a0)
         move.w  %d1,BG_NSY(%a0)
         bsr     ml_cap_of                | d0 = the cap
-        move.w  %d0,BG_CAP(%a0)
-        moveq   #1,%d1
-        move.w  %d1,BG_VALID(%a0)
+        tst.l   %d3
+        beq     ml_cap_out               | pending: nothing committed
+        move.l  %d0,%d2
+        moveq   #BG_CAPSH,%d1
+        lsl.l   %d1,%d2
+        or.l    %d3,%d2                  | the key and the cap
+        move.l  %d2,BG_KEY(%a0)          | the commit: one long
 ml_cap_out:
         movem.l (%sp),%d1-%d3/%a0
         lea     16(%sp),%sp
@@ -1560,8 +1576,8 @@ ml_limits:
 ml_load_v:
         .word   LOAD_FM_V1, LOAD_FM_V2, LOAD_FM_V3, LOAD_FM_V4
 ml_budget:
-        .word   0, 0, 0, 0, 1, 0         | BG_VALID BG_PART BG_NFM BG_NSY BG_CAP, a pad (unknown at power-on: the first START counts)
-        .long   0                        | BG_GEN
+        .long   0                        | BG_KEY: valid | Part << 23 | cap << 20 | generation (0 = unknown at power-on: the first START counts)
+        .word   0, 0                     | BG_NFM, BG_NSY: the last count's, for a peek
 ml_gen:
         .long   0                        | bumped by every machine store (ml_touch) and by the UI tick that closes it (fm_tick)
 ml_pending:
