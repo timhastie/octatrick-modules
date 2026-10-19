@@ -2049,6 +2049,11 @@ SYNTH track only (`po_sig` on the current Part's UI track):
   (2.16 rc1) a cursor moved there left the cache stale, and an FM track's window could show LFO 1
   highlighted with the boxes named VOIC / CHRD while the knob edited LFO 1's speed. Now the names
   follow the highlighted row whatever moved the cursor (measured: the MIDI-move walk, `lfsx_F2`).
+- KNOWN at 2.16 (the independent verification of the released image, 19 Oct 2026): while the cursor is
+  on the DESIGN row, or inside the LFO designer and right after leaving it, the third row reads LFO 3,
+  not V/C -- the stock's DESIGN-row redraw runs none of the four sites, so the label is not redrawn
+  there; any move off DESIGN draws V/C again. The label only. To be fixed in 2.17 (the UI tick
+  detour `fm_tick` can redraw it while the window is open on an FM SYNTH track).
 - The third row's label `V/C` is DRAWN by the drawer's detour over the stock's (`po_lfsdraw` ->
   `po_lfs_vc`). Measured on 2.15 (19 Oct 2026, a PC watch on the stock's own text and box primitives
   with full records): the function the `lea 0x400d37f6,%a4` sits in draws the four list rows first

@@ -296,6 +296,9 @@ builds on the author's unit and were never tagged.
   stock instructions every detour and poke displaces were checked against OS
   1.40C (148 sites, 144 at 2.15). SY DRUM, SCALE QUANTIZER, TUNER, DIRECT
   JUMP and PROCESSOR LOAD are 2.15's. Emulator-verified, not yet on a unit.
+  Known: with the cursor on the DESIGN row of LFO SETUP (or in the designer) the third row reads
+  LFO 3, not V/C, until the cursor moves; the label only (2.17).
+
 - 2.15 (tag `v2.15`, 16 Oct 2026): A SELECTION GUARD FOR FM SYNTH AND
   SY DRUM, AND MIDI TRACKS THAT PLAY IN THE SCALE. FM SYNTH and SY DRUM
   render their sound on the main processor; with too many of them it runs
