@@ -162,7 +162,7 @@
         .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
         .global po_slot_marker           | 2.12: ... and the marker test (machine.s: the machine change, ml_kindof)
         .global po_lfdname, po_lfdedit, po_lfdlfo | 2.10: the LFO destination list (LFO SETUP's PMTR)
-        .global po_lfsstage, po_lfsmove, po_lfsdraw, po_lfsedit, po_lfs_label | 2.16: the LFO SETUP window's V/C column on an FM SYNTH track
+        .global po_lfsstage, po_lfsmove, po_lfsdraw, po_lfsedit | 2.16: the LFO SETUP window's V/C column on an FM SYNTH track
         .include "remix.inc"             | 2.11: the remix's flags (HAVE_SYDRUM: SY DRUM in the remix) and the shared
                                          | equates (engine_abi.inc), written beside this unit by the build (manifest.py);
                                          | with HAVE_SYDRUM 0 the unit assembles byte for byte as 2.10's
@@ -3222,12 +3222,6 @@ po_lp_clone:
 po_lp_have:
         move.l  %a1,%d0
 po_lp_done:
-        tst.b   po_lfs_label             | (2.16) the window's third row label, filled from the image on first use
-        bne     po_lp_out
-        move.l  %d0,-(%sp)
-        bsr     po_lfs_lblstock
-        move.l  (%sp)+,%d0
-po_lp_out:
         jmp     RESOLVER_RET
 
 | po_lfo_build: a1 = po_lfodesc -> the clone built from the stock record in the image
@@ -3279,11 +3273,20 @@ po_lp_copy:
 | its address, not through the page resolver (measured 18 Oct 2026: the resolver's clone
 | is never read by it), so the third row read "LFO 3" and its SPD / DEP boxes turned VOIC
 | and CHRD over the stock 0..127 without saying so. Now, on an FM SYNTH track only:
-|   * the third row reads V/C -- the window's row table (four string pointers in the
-|     image, 0x400a750c) names po_lfs_label for its third row 0x400a7516 (a SymbolRef, manifest.py):
-|     a buffer of this unit that reads "V/C" while the UI track is an FM SYNTH track and
-|     otherwise the string the table named before (copied from the image at run time:
-|     the bytes are never carried; empty at power-on, filled on first use);
+|   * the third row reads V/C -- drawn by this unit over the stock's label at the drawer's
+|     site (po_lfsdraw -> po_lfs_vc): the stock draws the four rows from its row table and
+|     the cursor's bar BEFORE the `lea 0x400d37f6,%a4` the detour sits on (measured 19 Oct
+|     2026 on 2.15, a PC watch on the stock's own text / box calls: TEXT at x 4, y 48 / 41 /
+|     34 / 27, the bar x 3..50 over the cursor's row, then this lea, then the six boxes), so
+|     the detour clears the row's field, prints V/C there with the same font and primitive
+|     the stock used for the row, and inverts the field back when the stock drew the cursor's
+|     bar over it. No string in the image is renamed or repointed and nothing is shared
+|     with another window (2.16 rc1 repointed the row table's third string pointer to a
+|     buffer only this path refilled, so the MIDI track's LFO SETUP window -- which reads the
+|     same table through its own draw path, none of the four sites -- showed that buffer:
+|     blank at power-on, "V/C" after an FM track's page; the 2.16 verifier's D1). The MIDI,
+|     FLEX, STATIC and SY DRUM windows are the stock's by construction: nothing of theirs is
+|     touched;
 |   * with the cursor on V/C the SPD box is VOIC (the formatter po_fmt_voic, 1..4, default
 |     1) and the DEP box is CHRD (po_fmt_chord),
 |     exactly the LFO page's two boxes; the four LFO-only boxes PMTR WAVE MULT TRIG are left
@@ -3300,7 +3303,10 @@ po_lp_copy:
 |   * po_lfsmove at 0x4003a45c, `pea 0x400d37f6`: the staging again at every list move (so
 |     the knobs follow the cursor);
 |   * po_lfsdraw at 0x400574cc, `lea 0x400d37f6,%a4`: the drawer (the names, formatters,
-|     widgets and nibbles of slots 6..11 through a4), run before the list rows at every redraw;
+|     widgets and nibbles of slots 6..11 through a4), run after the list rows and the cursor's
+|     bar and before the six boxes at every redraw (the open, a list move, a knob, a track
+|     change inside the window), with the window's surface in d5 (the `surf` of the stock's
+|     own row draws) -- where the third row's V/C is drawn (po_lfs_vc);
 |   * po_lfsedit at 0x40039020, `lea 0x400d37f6,%a3`: the setup editor's record (the knob's
 |     handler, min and count: VOIC clamps to 1..4 there as on the LFO page).
 | The selected LFO (which row the boxes belong to) is kept in this unit's own byte po_lfs_sel
@@ -3314,17 +3320,33 @@ po_lp_copy:
 | column only while it is 2. (The stock UI keeps no selected-row cell that survives a knob edit:
 | a wide RAM diff across LFO 1 / 2 / 3, a DEP edit on LFO 3 and a close+reopen found none, so the
 | row is cached here instead of read from a stock address.) Every other track (FLEX, STATIC, SY
-| DRUM, ...) gets the stock record's address at all four sites and the stock label: its window is
+| DRUM, ...) gets the stock record's address at all four sites and no overdraw: its window is
 | the stock one. Storage, step and scene locks, the LFO destination list (po_lfdedit steps over
 | VOIC / CHRD already), the designer (the DESIGN row draws no boxes and runs none of the four
 | sites), the engine and the renders are untouched: the window's knob writes the same SPD3 /
 | DEP3 bytes through the stock editor.
-        .set    LFS_LABEL3, 0x400b5398   | the string the row table's third entry 0x400a7516 named (copied at run time)
         .set    LFS_STAGE_RET, 0x4005848e | after `pea 0x400d37f6` at 0x40058488
         .set    LFS_MOVE_RET, 0x4003a462  | after `pea 0x400d37f6` at 0x4003a45c
         .set    LFS_DRAW_RET, 0x400574d2  | after `lea 0x400d37f6,%a4` at 0x400574cc
         .set    LFS_EDIT_RET, 0x40039026  | after `lea 0x400d37f6,%a3` at 0x40039020
         .set    LFS_VC, 2                | the cursor on the third row
+| The third row's V/C (fix 1, 19 Oct 2026): the stock's LCD primitives the tuner and the
+| load meter already use (tuner/tuner.s, processor-load/loadmeter.s), the row's place as the
+| stock's own calls give it (measured on 2.15, see po_lfsdraw), and the window's surface
+| record {w, h, longs per column, ink*, mask*} (the blit-record form of synth/README.md "How
+| a box is drawn"; the surface is the handle + 36, tuner.s): a column is `longs per column`
+| longs, row y (from the bottom, as TEXT / BOX take it) at bit 31 - (y & 31) of long y >> 5
+| (the pixel routine's mapping, README), i.e. byte y >> 3 of the column, bit 7 - (y & 7).
+        .set    LFS_FONT, 0x400ba876     | the small UI font, 6 rows (FONT of tuner.s / loadmeter.s)
+        .set    LFS_TEXT, 0x40012bd8     | (font, surf, x, y, limit, str): ORs the glyphs, y the bottom row (TEXT there)
+        .set    LFS_BOX, 0x40012254      | (surf, x0, y0, x1, y1, mode): inclusive; 0 clear, 1 set, -1 invert (BOX there)
+        .set    LFS_ROW_X, 4             | the rows' x (the stock's TEXT calls: x 4, y 48 / 41 / 34 / 27 for rows 1..4)
+        .set    LFS_ROW3_Y, 34           | the third row's y (its glyphs' bottom row)
+        .set    LFS_ROW_X1, 50           | the cursor bar's right column (the stock's BOX over the cursor's row: x 3..50)
+        .set    LFS_HL_X, 3              | the bar's margin column: left of the glyphs (x 4), blank unless the bar is there
+        .set    LFS_HL_Y, 36             | a glyph row of the third row (the bar covers y 33..39)
+        .set    LFS_HL_BYTE, LFS_HL_Y >> 3        | that row's byte in a column of the ink plane ...
+        .set    LFS_HL_BIT, 7 - (LFS_HL_Y & 7)    | ... and its bit
 
 | ---- 0x40058488 and 0x4003a45c, `pea 0x400d37f6` (6 B each; `jsr (%a0)` follows): the
 | descriptor pushed is po_lfs_desc's. d0 preserved (a0 is the call's target).
@@ -3354,13 +3376,80 @@ po_lm_desc:
         move.l  %d0,4(%sp)
         move.l  (%sp)+,%d0
         jmp     LFS_MOVE_RET
-| ---- 0x400574cc, the drawer's `lea 0x400d37f6,%a4` (6 B): a4 := po_lfs_desc's.
+| ---- 0x400574cc, the drawer's `lea 0x400d37f6,%a4` (6 B): a4 := po_lfs_desc's, and on an
+| FM SYNTH track the third row's label, which the stock has just drawn, becomes V/C. Measured
+| on 2.15 (19 Oct 2026; G/walks/gen_f1probe.py: a PC watch on the four sites and the stock's
+| text / box primitives with full records, at the open, a list move, a knob, a reopen and a
+| track change inside the window): the function this lea sits in draws the four rows first
+| (TEXT, the small font, x 4, y 48 / 41 / 34 / 27, through the row table in a5), draws the
+| cursor's bar right after the cursor's row (BOX x 3..50, y the row's 33..39 for the third
+| row, mode -1), then runs this lea and the six boxes (0x40013904, return 0x40057720) from
+| the same frame; d5 holds the window's surface (the `surf` every one of those calls takes;
+| the window's handle is in a6, the surface is its + 36). The MIDI track's window runs none
+| of the four sites (its own draw path). d0 / d1 / a0 / a1 are preserved (the primitives'
+| scratch), every other register too.
 po_lfsdraw:
-        move.l  %d0,-(%sp)
+        lea     -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
         bsr     po_lfs_desc
         movea.l %d0,%a4
-        move.l  (%sp)+,%d0
+        cmpi.l  #LFO_P,%d0               | the stock record: not an FM SYNTH track, the row is the stock's
+        beq     po_ld_out
+        bsr     po_lfs_vc                | the clone: the third row reads V/C
+po_ld_out:
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea     16(%sp),%sp
         jmp     LFS_DRAW_RET
+| po_lfs_vc: V/C over the third row's stock label on the window's surface d5. The field is the
+| row's glyph rows under the cursor bar's width (x LFS_ROW_X..LFS_ROW_X1, y LFS_ROW3_Y..+5):
+| cleared (BOX mode 0), V/C drawn at the row's origin with the stock's font and primitive, and,
+| when the stock drew the cursor's bar over this row -- its ink at the bar's margin column x 3,
+| a row of the field, is set; that column holds no glyph -- inverted back (BOX mode -1): a light
+| bar with dark letters, as the stock's own highlighted rows, whichever row the stock's cursor
+| is on (this reads the stock's drawing, not po_lfs_sel). Clobbers d0, d1, a0, a1; d2 saved.
+po_lfs_vc:
+        move.l  %d2,-(%sp)
+        movea.l %d5,%a0                  | the surface record {w, h, longs per column, ink*, mask*}
+        move.l  8(%a0),%d1
+        lsl.l   #2,%d1                   | bytes per column
+        move.l  %d1,%d0
+        add.l   %d1,%d0
+        add.l   %d1,%d0                  | column LFS_HL_X = 3: three columns in
+        movea.l 12(%a0),%a1              | the ink plane
+        adda.l  %d0,%a1
+        moveq   #0,%d2
+        btst    #LFS_HL_BIT,LFS_HL_BYTE(%a1)
+        beq     po_lv_clear
+        moveq   #1,%d2                   | the cursor's bar is over the third row
+po_lv_clear:
+        moveq   #0,%d0
+        bsr     po_lfs_box               | the field cleared
+        pea     po_vc(%pc)
+        pea     -1
+        pea     LFS_ROW3_Y
+        pea     LFS_ROW_X
+        move.l  %d5,-(%sp)
+        pea     LFS_FONT
+        jsr     LFS_TEXT                 | V/C, as the stock drew the row
+        lea     24(%sp),%sp
+        tst.l   %d2
+        beq     po_lv_done
+        moveq   #-1,%d0
+        bsr     po_lfs_box               | the field inverted back under the cursor's bar
+po_lv_done:
+        move.l  (%sp)+,%d2
+        rts
+| po_lfs_box: BOX(d5, LFS_ROW_X, LFS_ROW3_Y, LFS_ROW_X1, LFS_ROW3_Y + 5, d0): the third row's field.
+po_lfs_box:
+        move.l  %d0,-(%sp)
+        pea     LFS_ROW3_Y+5
+        pea     LFS_ROW_X1
+        pea     LFS_ROW3_Y
+        pea     LFS_ROW_X
+        move.l  %d5,-(%sp)
+        jsr     LFS_BOX
+        lea     24(%sp),%sp
+        rts
 | ---- 0x40039020, the setup editor's `lea 0x400d37f6,%a3` (6 B): a3 := po_lfs_desc's.
 po_lfsedit:
         move.l  %d0,-(%sp)
@@ -3371,8 +3460,8 @@ po_lfsedit:
 
 | ---- po_lfs_desc -> d0 = the LFO descriptor for the LFO SETUP window: the clone (built if
 | need be) with its slots 10 / 11 and page-2 nibbles set by the cursor when the UI track is
-| an FM SYNTH track (po_sig on the current Part), else the stock record's address; the
-| label buffer set with it. Preserves every other register.
+| an FM SYNTH track (po_sig on the current Part), else the stock record's address.
+| Preserves every other register.
 po_lfs_desc:
         lea     -24(%sp),%sp
         movem.l %d1-%d2/%d4/%a0-%a2,(%sp)
@@ -3387,18 +3476,12 @@ po_lfs_have:
         lea     po_lfs_sel(%pc),%a0
         mvz.b   (%a0),%d0                | the selected LFO (this unit's cache, set at po_lfsmove)
         cmpi.l  #LFS_VC,%d0
-        bne     po_lfs_lbl
+        bne     po_lfs_clone
         bsr     po_lfs_apply             | ... or, on V/C: slots 10 / 11 renamed VOIC / CHRD
-po_lfs_lbl:
-        lea     po_vc(%pc),%a0           | the third row: V/C
-        lea     po_lfs_label(%pc),%a2
-po_lfs_lcp:
-        move.b  (%a0)+,(%a2)+
-        bne     po_lfs_lcp
+po_lfs_clone:
         move.l  %a1,%d0
         bra     po_lfs_out
 po_lfs_stock:
-        bsr     po_lfs_lblstock          | the third row: the string the table named
         move.l  #LFO_P,%d0
 po_lfs_out:
         movem.l (%sp),%d1-%d2/%d4/%a0-%a2
@@ -3414,22 +3497,6 @@ po_lfs_fm:
         adda.l  %d0,%a0                  | the current Part
         mvz.b   UI_TRACK,%d0
         bsr     po_sig                   | (tst.l done)
-        rts
-| po_lfs_lblstock: the label buffer := the string the row table named (from the image, at
-| most 7 characters). Clobbers a0, a1.
-po_lfs_lblstock:
-        lea     LFS_LABEL3,%a0
-        lea     po_lfs_label(%pc),%a1
-        move.l  %d0,-(%sp)
-        moveq   #7,%d0
-po_lfs_lsc:
-        move.b  (%a0)+,(%a1)+
-        beq     po_lfs_lsd
-        subq.l  #1,%d0
-        bne     po_lfs_lsc
-        clr.b   (%a1)
-po_lfs_lsd:
-        move.l  (%sp)+,%d0
         rts
 | po_lfs_restore: a1 = the clone: its slots 10 / 11 (SPD / DEP) NAMES and FORMATTERS copied back
 | from the stock record in the image, so the column is the stock one on LFO 1 / LFO 2. Nothing else
@@ -6325,7 +6392,7 @@ po_f_s:
 po_f_d:
         .asciz  "%d"
 po_vc:
-        .asciz  "V/C"                   | (2.16) the LFO SETUP window's third row on an FM SYNTH track (po_lfs_label)
+        .asciz  "V/C"                   | (2.16) the LFO SETUP window's third row on an FM SYNTH track (drawn by po_lfs_vc)
         .align  2
 
 | ---- the ratio table: STRT raw >> 2 -> modulator/carrier ratio, Q8 ---------
@@ -6548,8 +6615,6 @@ po_lfo_built:
         .align  4
 po_lfodesc:                              | the LFO descriptor clone (built on first use)
         .fill   LFO_DESC_LEN, 1, 0
-po_lfs_label:                            | (2.16) the LFO SETUP window's third row (the row table's SymbolRef): "V/C" on an FM
-        .fill   8, 1, 0                  | SYNTH track, else the string the table named (from the image on first use)
 po_lfs_sel:                              | (2.16) the LFO SETUP window's selected row 0..3 (set at po_lfsmove; 0 at power-on = LFO 1)
         .byte   0
         .align  4

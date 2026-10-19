@@ -577,7 +577,12 @@ LFD_EDIT_STOCK = bytes.fromhex("2003" "7406" "4c420807")
 # DEP boxes turned VOIC and CHRD without saying so. Each site hands the window
 # poly.s po_lfs_desc's descriptor: the VOIC / CHRD clone with its setup slots set by
 # the list cursor on an FM SYNTH track, the stock record's address on every other
-# track. The row table's third pointer (LFS_ROW3) becomes the unit's label buffer.
+# track. The third row's label V/C is drawn by the drawer's detour over the stock's
+# (fix 1, 19 Oct 2026: 2.16 rc1 repointed the row table's third string pointer, a
+# SymbolRef, to a buffer only the audio window's path refilled, and the MIDI track's
+# LFO SETUP window, which reads the same table through its own draw path, showed it --
+# blank at power-on, V/C after an FM track's page; the verifier's D1. No SymbolRef now:
+# every other window reads the stock table).
 LFS_STAGE_HOOK = 0x40058488              # `pea 0x400d37f6` (the window's staging of its six knobs at open; `jsr (%a0)` follows)
 LFS_MOVE_HOOK = 0x4003a45c               # `pea 0x400d37f6` (the staging again at a list move; `jsr (%a0)` follows)
 LFS_PEA_STOCK = bytes.fromhex("4879400d37f6")
@@ -585,8 +590,6 @@ LFS_DRAW_HOOK = 0x400574cc               # `lea 0x400d37f6,%a4` (the drawer: the
 LFS_DRAW_STOCK = bytes.fromhex("49f9400d37f6")
 LFS_EDIT_HOOK = 0x40039020               # `lea 0x400d37f6,%a3` (the setup editor: the knob's handler, min and count)
 LFS_EDIT_STOCK = bytes.fromhex("47f9400d37f6")
-LFS_ROW3 = 0x400a7516                    # the window's row table (string pointers at 0x400a750e, 2-mod-4): the third entry ...
-LFS_ROW3_STOCK = 0x400b5398              # ... names this string in the image (poly.s copies it into po_lfs_label at run time)
 # Ratified bytes: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT (26 Sep 2026: the
 # runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of the stock descriptor is gone,
 # and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
@@ -699,9 +702,6 @@ MODULE = Module(
         SymbolRef(KIND_TABLE_FLEX_START, FLEX_START, "poly", "po_fmstart",
                   "kind table FLEX START callback -> po_fmstart (2.10): a track whose FM SYNTH is chosen in the "
                   "machine list starts its voice without a sample; every other FLEX track the stock callback"),
-        SymbolRef(LFS_ROW3, LFS_ROW3_STOCK, "poly", "po_lfs_label",
-                  "LFO SETUP window row table, the third row -> po_lfs_label (2.16): V/C on an FM SYNTH track, "
-                  "the string the table named (copied from the image at run time) on every other"),
     ),
     detours=(
         Detour(LFO_DEPTH_HOOK, LFO_DEPTH_STOCK, "poly", "po_lfo3",
@@ -729,7 +729,7 @@ MODULE = Module(
                "LFO SETUP window staging at a list move: the same descriptor (the knobs follow the cursor)",
                kind="jmp"),
         Detour(LFS_DRAW_HOOK, LFS_DRAW_STOCK, "poly", "po_lfsdraw",
-               "LFO SETUP window drawer: the six boxes from po_lfs_desc's descriptor (V/C: VOIC and CHRD boxes, the four LFO-only boxes not drawn)",
+               "LFO SETUP window drawer: the six boxes from po_lfs_desc's descriptor (V/C: VOIC and CHRD boxes, the four LFO-only boxes left stock), and on an FM SYNTH track the third row's label V/C drawn over the stock's (the rows and the cursor's bar are drawn before this site)",
                kind="jmp"),
         Detour(LFS_EDIT_HOOK, LFS_EDIT_STOCK, "poly", "po_lfsedit",
                "LFO SETUP window editor: the knob's handler, min and count from po_lfs_desc's descriptor (VOIC 1..4 on V/C)",

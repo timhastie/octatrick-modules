@@ -281,15 +281,17 @@ builds on the author's unit and were never tagged.
   Now, on an FM SYNTH track, the LFO SETUP page's third column reads V/C, its
   SPD box is VOIC (1..4, as the LFO page's) and its DEP box is CHRD (the
   chord-shape names); the two LFO columns stay LFO 1 / LFO 2, the LFO
-  designer is unchanged, and on SY DRUM tracks and stock tracks the page is
-  byte-identical to 2.15. The four LFO-only boxes (PMTR / WAVE / MULT / TRIG)
-  are left as stock there (LFO 3 does nothing on an FM track). This is a
-  display and naming change of one page: storage, the step and scene locks,
-  the LFO destination list, the engine and the renders are untouched.
+  designer is unchanged, and on SY DRUM tracks, stock tracks and MIDI tracks
+  the page is byte-identical to 2.15 (the V/C label is drawn by the FM
+  track's own page draw over the stock's; no string of the OS is renamed or
+  repointed, so no other page can show it). The four LFO-only boxes (PMTR /
+  WAVE / MULT / TRIG) are left as stock there (LFO 3 does nothing on an FM
+  track). This is a display and naming change of one page: storage, the step
+  and scene locks, the LFO destination list, the engine and the renders are
+  untouched.
 
   Hooks at 2.16: SYNTH MACHINE 62 detours (58 at 2.15: four more for the LFO
-  SETUP window's descriptor) and 4 symbol refs (3 at 2.15: one more for the
-  page's third-row label), SY DRUM 53, SCALE QUANTIZER 24 detours + 3 tables
+  SETUP window's descriptor) and 3 symbol refs (as 2.15), SY DRUM 53, SCALE QUANTIZER 24 detours + 3 tables
   + 1 poke, TUNER 3, PROCESSOR LOAD 4 + 1 poke, DIRECT JUMP its cave; the
   stock instructions every detour and poke displaces were checked against OS
   1.40C (148 sites, 144 at 2.15). SY DRUM, SCALE QUANTIZER, TUNER, DIRECT

@@ -2008,8 +2008,8 @@ setup slots 6..11 (as the AMP SETUP window's sixth box is AMP p2 slot 11, "LEG" 
 SYNTH track the third LFO is muted and the selected LFO's SPD / DEP, when that LFO is the third,
 are SPD3 / DEP3 = VOIC / CHRD. On this track the third row now reads **V/C**, the SPD box **VOIC**
 (1..4, as the LFO page's) and the DEP box **CHRD** (the chord-shape names); the two LFO columns
-stay LFO 1 / LFO 2, the LFO designer is unchanged, and on a SY DRUM track or any stock track the
-page is 2.15's.
+stay LFO 1 / LFO 2, the LFO designer is unchanged, and on a SY DRUM track, any stock track or a
+MIDI track the page is 2.15's.
 
 **Cause.** The window addresses the STOCK LFO record (`0x400d37f6`) by its address, not through the
 page resolver that `page.s` and `po_lfopage` hook -- so the VOIC / CHRD clone (`po_lfodesc`) never
@@ -2017,8 +2017,8 @@ reached it (a PC watch at the six box-name draws shows the stock record; the res
 its setup names poked to markers, changes nothing in the window). Its third row therefore read
 `LFO 3`, and its SPD / DEP dials turned VOIC and CHRD over the stock 0..127.
 
-**The change** (`poly.s` "THE LFO SETUP WINDOW'S V/C COLUMN", four 6-byte detours and one
-SymbolRef). On an FM SYNTH track only (`po_sig` on the current Part's UI track):
+**The change** (`poly.s` "THE LFO SETUP WINDOW'S V/C COLUMN", four 6-byte detours). On an FM
+SYNTH track only (`po_sig` on the current Part's UI track):
 - `po_lfsstage` at `0x40058488` (`pea 0x400d37f6`, the staging at the window's open) and
   `po_lfsmove` at `0x4003a45c` (the staging at every list move) push `po_lfs_desc`'s descriptor;
   `po_lfsdraw` at `0x400574cc` (`lea 0x400d37f6,%a4`, the drawer) and `po_lfsedit` at `0x40039020`
@@ -2046,10 +2046,26 @@ SymbolRef). On an FM SYNTH track only (`po_sig` on the current Part's UI track):
   close / reopen -- so the two stay in step and the V/C column holds through edits and reopen. (The
   stock UI keeps no selected-row cell that survives a knob edit: a wide RAM diff across LFO 1 / 2 / 3,
   a DEP edit and a close+reopen found none, so the row is cached here.)
-- The window's row table (string pointers at `0x400a750e`, 2-mod-4) names `po_lfs_label` at its
-  third entry `0x400a7516` (a `SymbolRef`): `V/C` on an FM SYNTH track, else the string the table
-  named, copied from the image at run time (the repository carries no stock label; `po_vc` is the
-  only new string).
+- The third row's label `V/C` is DRAWN by the drawer's detour over the stock's (`po_lfsdraw` ->
+  `po_lfs_vc`). Measured on 2.15 (19 Oct 2026, a PC watch on the stock's own text and box primitives
+  with full records): the function the `lea 0x400d37f6,%a4` sits in draws the four list rows first
+  (the small font at x 4, y 48 / 41 / 34 / 27, from its row table), the cursor's bar right after the
+  cursor's row (x 3..50 over the row's rows, inverted), THEN runs the lea and the six boxes, with the
+  window's surface in d5 -- so at the detour the stock's `LFO 3` is already on the surface and nothing
+  after it touches the list. The detour clears the row's field (x 4..50, y 34..39: BOX, mode 0), draws
+  `V/C` at the row's origin with the stock's font and TEXT primitive (the ones `tuner.s` and
+  `loadmeter.s` already use), and, when the stock drew the cursor's bar over this row -- read from the
+  surface's own ink plane at the bar's margin column x 3 (the surface record is the blit-record form
+  `{w, h, longs per column, ink*, mask*}`, the handle + 36; a row's bit is the pixel routine's, "How a
+  box is drawn") -- inverts the field back (BOX, mode -1). `po_vc` is the only new string; nothing of
+  the OS is renamed or repointed.
+
+  (2.16 rc1 did this with a `SymbolRef` that repointed the row table's third string pointer
+  `0x400a7516` to a buffer the audio window's four sites refilled -- `V/C` on an FM track, the stock
+  string otherwise. The MIDI track's LFO SETUP window reads the SAME table through its own draw path,
+  which runs none of the four sites, so it showed the buffer: blank at power-on, `V/C` after an FM
+  track's page had been visited (the 2.16 verifier's D1). Fix 1, 19 Oct 2026: no shared string; the
+  MIDI, FLEX, STATIC and SY DRUM windows are the stock's by construction.)
 
 No new parameter, no storage change: the window's knob writes the same SPD3 / DEP3 bytes through the
 stock setup editor, so the LFO page, the step and scene locks, the LFO destination list (`po_lfdedit`
