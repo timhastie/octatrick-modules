@@ -48,7 +48,14 @@
 |     (releasing before sounding, po_steal), so VOIC 2 is a duophonic
 |     keyboard (a third key takes the oldest). Each note then takes a free
 |     voice, else the oldest releasing one, else the oldest sounding one (a
-|     global allocation stamp, V_AGE);
+|     global allocation stamp, V_AGE). THE LOAD BUDGET (2.16): the VOICE CAP
+|     the engine acts on is min(VOIC, the Part's FM voice cap) -- machine.s
+|     ml_cap, the largest voice count at which the Part's FM SYNTH and SY
+|     DRUM tracks fit LOAD_BUDGET (machine_limits.inc; 4 with two FM SYNTH
+|     tracks, 1 beside an SY DRUM track) -- at every read of it (po_voiccap:
+|     the START, po_xfq, po_start, po_ho, po_polytrack). VOIC 2..4 then ACT
+|     AS the cap: the shape's first cap notes, the stealing order, the level
+|     per voice, all as that VOIC value does; the VOIC shown is the Part's;
 |   * a live key (the quantizer's key hooks leave the key's index+1 in
 |     qz_pkey[t] at KEYS_AT and keep the mask of held keys in qz_pmask[t])
 |     tags its voices with the key; releasing the key (its bit leaves the
@@ -467,6 +474,7 @@ sy_warm_voic:
         muls.l  %d2,%d1                  | is paraphonic; 1, or anything outside 1..4: the mono voice
         lea     CURVALS,%a0
         mvz.b   CV_VOIC(%a0,%d1.l),%d1
+        bsr     po_voiccap               | (2.16) within the Part's FM voice cap
         subq.l  #2,%d1
         cmpi.l  #2,%d1
         sls     %d1
@@ -946,6 +954,7 @@ po_xfq:
         muls.l  %d2,%d1
         lea     CURVALS,%a0
         mvz.b   CV_VOIC(%a0,%d1.l),%d1
+        bsr     po_voiccap               | (2.16) within the Part's FM voice cap
         subq.l  #2,%d1
         cmpi.l  #2,%d1
         bls     po_xq_no                 | VOIC 2..4: paraphonic (po_start's own rule)
@@ -2289,8 +2298,11 @@ po_st_ns:
         muls.l  %d2,%d0
         lea     CURVALS,%a0
         mvz.b   CV_VOIC(%a0,%d0.l),%d6   | VOIC: the track's voice cap, locks applied (2..4 here:
-        subq.l  #1,%d6                   | the note started paraphonic on this byte; a byte outside
-        cmpi.l  #3,%d6                   | 1..4 reads 1)
+        move.l  %d6,%d1                  | the note started paraphonic on this byte; a byte outside
+        bsr     po_voiccap               | 1..4 reads 1); (2.16) within the Part's FM voice cap
+        move.l  %d1,%d6
+        subq.l  #1,%d6
+        cmpi.l  #3,%d6
         bls     po_st_v1
         moveq   #0,%d6
 po_st_v1:
@@ -2621,6 +2633,9 @@ po_ho_fold1:
         lea     CURVALS,%a0
         mvz.b   CV_CHRD(%a0,%d0.l),%d3   | the chord byte, locks applied: shape << 2 | inversion
         mvz.b   CV_VOIC(%a0,%d0.l),%d6   | VOIC 1..4 (as po_st_v1)
+        move.l  %d6,%d1
+        bsr     po_voiccap               | (2.16) within the Part's FM voice cap
+        move.l  %d1,%d6
         subq.l  #1,%d6
         cmpi.l  #3,%d6
         bls     po_ho_v1
@@ -4644,9 +4659,35 @@ po_slot_marker:
         moveq   #0,%d0
         rts
 
+| ---- po_voiccap (2.16, the load budget): d1 = a VOIC byte -> d1 = min(d1, the Part's
+| FM voice cap) when d1 is 1..4 (machine.s ml_cap: the largest voice count at which the
+| Part's FM SYNTH and SY DRUM tracks fit LOAD_BUDGET -- 4 with two FM SYNTH tracks, 1
+| beside an SY DRUM track; from its cache, so a few compares at a START), else d1
+| unchanged (a stock or out-of-range byte reads 1 at every caller, as before). Every
+| read of the VOICE CAP the engine acts on goes through here: the START (sy_warm_voic),
+| the crossfade question (po_xfq), the chord (po_start, po_ho) and the engine's key rules
+| (po_polytrack: po_moff, po_legkey). Not the Part's VOIC the pages show (po_fmt_chord),
+| the LEG modes offered (po_legmode) or the chord recorder's ceiling (po_keyrec): those
+| follow the VOIC set, as the quantizer's own qz_polytrack does; the lock the recorder
+| writes is capped when it plays. Preserves every other register.
+po_voiccap:
+        move.l  %d0,-(%sp)
+        move.l  %d1,%d0
+        subq.l  #1,%d0
+        cmpi.l  #3,%d0
+        bhi     po_vc_out                | (unsigned) outside 1..4: as it is
+        jsr     ml_cap                   | d0 = the cap, 1..4 (machine.s)
+        cmp.l   %d0,%d1
+        bls     po_vc_out                | VOIC within the cap
+        move.l  %d0,%d1                  | VOIC acts as the cap
+po_vc_out:
+        move.l  (%sp)+,%d0
+        rts
+
 | ---- po_polytrack: d2 = track -> d0 = 1 when a synth track whose Part VOIC byte
 | is 2..4 (the panel keys' qz_polytrack rule: the release of one note among
-| several ends nothing), else 0; tst.l done. Preserves every other register.
+| several ends nothing), else 0; tst.l done. 2.16: the byte within the Part's FM
+| voice cap (po_voiccap). Preserves every other register.
 po_polytrack:
         .if     HAVE_SYDRUM
         bsr     po_is_fm                 | (2.11) VOIC is FM's: a SY DRUM track is never paraphonic
@@ -4668,6 +4709,9 @@ po_polytrack:
         add.l   %d1,%d1
         add.l   %d0,%d1                  | track * 24
         mvz.b   2(%a0,%d1.l),%d0         | VOIC
+        move.l  %d0,%d1
+        bsr     po_voiccap               | (2.16) within the Part's FM voice cap: a capped track's keys are the mono voice's
+        move.l  %d1,%d0
         subq.l  #2,%d0
         cmpi.l  #2,%d0
         bls     po_pt_yes

@@ -54,6 +54,20 @@
 | Part past the limits of synth/machine_limits.inc (2.15: at most 2 SY DRUM tracks, at
 | most 1 FM SYNTH track, and FM SYNTH with at most 1 SY DRUM track), counted over the
 | Part's eight audio tracks by the signature each machine keeps in the Part (ml_guard).
+| THE LOAD BUDGET (2.16) replaces the three counting rules with one price per Part:
+| every FM SYNTH track costs by the voices that may sound on it (LOAD_FM_V1..V4), every
+| SY DRUM track LOAD_SY_TRACK, two amounts are paid once (LOAD_S_ANY, LOAD_S_FM), and the
+| Part must fit LOAD_BUDGET (ml_cost, ml_over). The lists and the paste guards refuse a
+| choice only past the hard caps (ML_FM_MAX, ML_SY_MAX) or when the Part would be over
+| the budget with every FM SYNTH track MONO; otherwise the engine CAPS the FM voices:
+| ml_cap answers the largest v in 4..1 whose cost fits (1 when none does), the engine
+| plays min(VOIC, cap) voices on each FM SYNTH track (poly.s po_voiccap) and the VOIC
+| shown stays the Part's. ml_cap serves every voice START, so it reads a cache of this
+| unit's own (ml_budget: the counts, the cap, the Part index and a generation), counted
+| again only when the Part index changed, a machine store is under way or was made since
+| (ml_touch at every store this unit detours; the UI tick, fm_tick, closes a store), or
+| the cache is unknown (power-on). Two FM SYNTH tracks keep four voices each; beside an
+| SY DRUM track they go mono; two FM SYNTH and two SY DRUM tracks are refused.
 | A refused choice writes nothing: the track keeps its machine and its patch, the
 | firmware's own message popup shows why (the stock routine and duration the lists use
 | for their own NOT AVAILABLE HERE!), and the window leaves through the same exit as
@@ -79,6 +93,7 @@
         .global ml_rows, fm_row
         .global ml_reset, ml_kindof, ml_became | 2.12: the machine change's init (poly.s: the marker route)
         .global ml_guard, ml_limits      | 2.15: the selection guard and its limits (machine_limits.inc)
+        .global ml_cap                   | 2.16: the FM voice cap of the current Part (poly.s po_voiccap)
         .global fm_page_store, fm_track_undo, fm_track_paste, fm_part_undo, fm_part_paste, fm_preview | 2.15: the paste guards
         .include "remix.inc"             | 2.11: HAVE_SYDRUM and the shared equates (engine_abi.inc; manifest.py)
 
@@ -128,8 +143,20 @@
         .set    TOAST_TIME, 48           | ... with this duration (NOT AVAILABLE HERE!)
         .set    WIN_REFUSE, 0x4007989c   | the machine window's way out after its own refusal (the stack as at the commit)
         .set    SRC_REFUSE, 0x4005a8ba   | SRC SETUP's way out after its own refusal (both of its paths)
-        .if     (ML_FM_MAX < 1) || (ML_FM_MAX > 8) || (ML_SY_MAX < 1) || (ML_SY_MAX > 8) || (ML_SY_WITH_FM < 0) || (ML_SY_WITH_FM > 8)
-        .error  "machine_limits.inc: each limit is 1..8 (ML_SY_WITH_FM 0..8)"
+        .if     (ML_FM_MAX < 1) || (ML_FM_MAX > 8) || (ML_SY_MAX < 1) || (ML_SY_MAX > 8)
+        .error  "machine_limits.inc: ML_FM_MAX and ML_SY_MAX are 1..8"
+        .endif
+        .if     (LOAD_S_ANY < 0) || (LOAD_S_ANY > 255) || (LOAD_S_FM < 0) || (LOAD_S_FM > 255) || (LOAD_SY_TRACK < 0) || (LOAD_SY_TRACK > 255)
+        .error  "machine_limits.inc: LOAD_S_ANY, LOAD_S_FM and LOAD_SY_TRACK are 0..255"
+        .endif
+        .if     (LOAD_FM_V1 < 0) || (LOAD_FM_V1 > LOAD_FM_V2) || (LOAD_FM_V2 > LOAD_FM_V3) || (LOAD_FM_V3 > LOAD_FM_V4) || (LOAD_FM_V4 > 255)
+        .error  "machine_limits.inc: LOAD_FM_V1 <= LOAD_FM_V2 <= LOAD_FM_V3 <= LOAD_FM_V4, each 0..255"
+        .endif
+        .if     (LOAD_BUDGET < 1) || (LOAD_BUDGET > 9999)
+        .error  "machine_limits.inc: LOAD_BUDGET is 1..9999"
+        .endif
+        .if     (LOAD_S_ANY + LOAD_S_FM + LOAD_FM_V1 > LOAD_BUDGET) || (LOAD_S_ANY + LOAD_SY_TRACK > LOAD_BUDGET)
+        .error  "machine_limits.inc: one FM SYNTH track (mono) and one SY DRUM track must each fit LOAD_BUDGET"
         .endif
 
 | ---- fm_choose: d1 = the chosen row, d2 = the track (the current Part) -> d1 = the
@@ -272,6 +299,7 @@ ml_ko_stock:
 | before: the slot assigned plays) -- a row's machine comes from a guarded write only.
 | Preserves every register.
 ml_became:
+        bsr     ml_touch                 | 2.16: a machine store is under way (the voice cap's cache)
         lea     -24(%sp),%sp
         movem.l %d0-%d5,(%sp)
         cmpi.l  #FLEX,%d1
@@ -604,6 +632,7 @@ fm_main_commit:
         move.l  %d4,%d1                  | the row
         bsr     ml_guard                 | 2.15: over a limit? (d0 = the verdict)
         bne     fm_mc_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts (the voice cap's cache)
         bsr     fm_choose
         move.l  %d1,%d4                  | the machine to store
         move.l  (%sp)+,%d0
@@ -628,6 +657,7 @@ fm_src_commit:
         move.l  %d0,-(%sp)               | part * 6322
         bsr     ml_guard                 | (d0 = the verdict)
         bne     fm_sc_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts
         move.l  (%sp)+,%d0
         bsr     fm_choose
         jmp     SRC_COMMIT_RET
@@ -636,6 +666,7 @@ fm_src_commit2:
         move.l  %d0,-(%sp)
         bsr     ml_guard
         bne     fm_sc_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts
         move.l  (%sp)+,%d0
         bsr     fm_choose
         jmp     SRC_COMMIT2_RET
@@ -644,20 +675,19 @@ fm_sc_refuse:
         bsr     ml_toast
         jmp     SRC_REFUSE
 
-| ---- the selection guard (2.15) ----
+| ---- the selection guard (2.15; 2.16: the load budget) ----
 | ml_guard: d1 = the chosen row, d2 = the track (the current Part) -> d0 = 0 when the
 | choice is allowed, else the message that refuses it; tst.l done. A stock row, or the row
-| of the machine the track has already, is allowed; a row's machine is refused when the
-| Part's other seven audio tracks hold (by their signatures, ml_sigkind):
-|   FM SYNTH: ML_FM_MAX FM SYNTH tracks already ("FM SYNTH: 1 MAX"), or more than
-|             ML_SY_WITH_FM SY DRUM tracks ("FM+SY DRUM: LIMIT");
-|   SY DRUM:  ML_SY_MAX SY DRUM tracks already ("SY DRUM: 2 MAX"), or an FM SYNTH
-|             track and ML_SY_WITH_FM SY DRUM tracks ("FM+SY DRUM: LIMIT").
-| The limits are read from ml_limits. Preserves every other register. ml_guard_p: the
-| same for a0 = any Part (the paste guards: the Part a stock paste writes into).
-        .set    LIM_FM, 0                | ml_limits: the three bytes
+| of the machine the track has already, is allowed; a row's machine is refused when, with
+| it in the Part (the other seven tracks counted by their signatures, ml_count), the Part
+| would hold more than ML_FM_MAX FM SYNTH tracks ("FM SYNTH: 2 MAX"), more than ML_SY_MAX
+| SY DRUM tracks ("SY DRUM: 2 MAX"), or cost more than LOAD_BUDGET with every FM SYNTH
+| track mono (ml_over, ml_cost at v = 1: "FM+SY DRUM: LIMIT"). Otherwise the voice cap
+| (ml_cap) fits the Part to the budget. The hard caps are read from ml_limits. Preserves
+| every other register. ml_guard_p: the same for a0 = any Part (the paste guards: the Part
+| a stock paste writes into).
+        .set    LIM_FM, 0                | ml_limits: the two bytes
         .set    LIM_SY, 1
-        .set    LIM_SYFM, 2
 ml_guard:
         move.l  %a0,-(%sp)
         bsr     ml_part                  | a0 = the current Part
@@ -666,76 +696,232 @@ ml_guard:
         tst.l   %d0
         rts
 ml_guard_p:
-        lea     -28(%sp),%sp
-        movem.l %d1-%d5/%a0-%a1,(%sp)
-        movea.l %a0,%a1                  | a1 = the Part
+        lea     -24(%sp),%sp
+        movem.l %d1-%d5/%a1,(%sp)
         move.l  %d1,%d0
         subq.l  #FM_ROW,%d0
         cmpi.l  #ML_COUNT,%d0
         bcc     ml_gd_ok                 | (unsigned) a stock row: always
-        lea     ml_rows(%pc),%a0
-        movea.l (%a0,%d0.l*4),%a0
-        mvz.b   RD_KIND(%a0),%d5         | the machine chosen: 1 FM SYNTH, 2 SY DRUM
-        movea.l %a1,%a0                  | a0 = the Part
+        lea     ml_rows(%pc),%a1
+        movea.l (%a1,%d0.l*4),%a1
+        mvz.b   RD_KIND(%a1),%d5         | the machine chosen: 1 FM SYNTH, 2 SY DRUM
         move.l  %d2,%d0
-        bsr     ml_sigkind
+        bsr     ml_sigkind               | (a0 = the Part) the machine the track has
         cmp.l   %d5,%d0
         beq     ml_gd_ok                 | the track's own machine again: always
-        moveq   #0,%d3                   | FM SYNTH tracks among the other seven
-        moveq   #0,%d4                   | SY DRUM tracks among them
-        moveq   #0,%d1
-ml_gd_track:
-        cmp.l   %d2,%d1
-        beq     ml_gd_next               | the track being changed
-        move.l  %d1,%d0
-        bsr     ml_sigkind
-        cmpi.l  #1,%d0
-        bne     ml_gd_sy1
-        addq.l  #1,%d3
-ml_gd_sy1:
-        cmpi.l  #2,%d0
-        bne     ml_gd_next
-        addq.l  #1,%d4
-ml_gd_next:
-        addq.l  #1,%d1
-        cmpi.l  #8,%d1
-        bne     ml_gd_track
-        lea     ml_limits(%pc),%a0
+        bsr     ml_count                 | d0 = FM SYNTH tracks among the other seven (d2 left out), d1 = SY DRUM tracks
         cmpi.l  #2,%d5
         beq     ml_gd_sy
-        mvz.b   LIM_FM(%a0),%d0          | FM SYNTH chosen
-        cmp.l   %d0,%d3
-        bcc     ml_gd_fm                 | (unsigned) as many FM SYNTH tracks as allowed already
-        mvz.b   LIM_SYFM(%a0),%d0
-        cmp.l   %d0,%d4
-        bhi     ml_gd_both               | more SY DRUM tracks than FM SYNTH allows beside it
-        bra     ml_gd_ok
+        addq.l  #1,%d0                   | FM SYNTH chosen: one FM SYNTH track more ...
+        bra     ml_gd_test
 ml_gd_sy:
-        mvz.b   LIM_SY(%a0),%d0          | SY DRUM chosen
-        cmp.l   %d0,%d4
-        bcc     ml_gd_symax              | as many SY DRUM tracks as allowed already
-        tst.l   %d3
-        beq     ml_gd_ok                 | no FM SYNTH track
-        mvz.b   LIM_SYFM(%a0),%d0
-        cmp.l   %d0,%d4
-        bcc     ml_gd_both               | as many as FM SYNTH allows beside it already
+        addq.l  #1,%d1                   | SY DRUM chosen: one SY DRUM track more ...
+ml_gd_test:
+        bsr     ml_over                  | ... in the Part: past a hard cap, or over the budget at mono? (d0 = the message, or 0)
+        bra     ml_gd_out
 ml_gd_ok:
         moveq   #0,%d0
-        bra     ml_gd_out
-ml_gd_fm:
-        lea     ml_msg_fm(%pc),%a0
-        bra     ml_gd_msg
-ml_gd_symax:
-        lea     ml_msg_sy(%pc),%a0
-        bra     ml_gd_msg
-ml_gd_both:
-        lea     ml_msg_both(%pc),%a0
-ml_gd_msg:
-        move.l  %a0,%d0
 ml_gd_out:
-        movem.l (%sp),%d1-%d5/%a0-%a1
-        lea     28(%sp),%sp
+        movem.l (%sp),%d1-%d5/%a1
+        lea     24(%sp),%sp
         tst.l   %d0
+        rts
+| ml_over: d0 = FM SYNTH tracks, d1 = SY DRUM tracks of a Part -> d0 = 0 when the Part may
+| hold them, else the message: more FM SYNTH tracks than ML_FM_MAX ("FM SYNTH: 2 MAX"), more
+| SY DRUM tracks than ML_SY_MAX ("SY DRUM: 2 MAX"), or a cost above LOAD_BUDGET with every
+| FM SYNTH track mono ("FM+SY DRUM: LIMIT", the existing string); tst.l done. The one rule
+| of the lists (ml_guard_p) and the Part paste (ml_part_over). Preserves every other register.
+ml_over:
+        lea     -12(%sp),%sp
+        movem.l %d2-%d3/%a0,(%sp)
+        move.l  %d0,%d3                  | nFM
+        lea     ml_limits(%pc),%a0
+        mvz.b   LIM_FM(%a0),%d0
+        cmp.l   %d0,%d3
+        bhi     ml_ov_fm                 | (unsigned) more FM SYNTH tracks than the hard cap
+        mvz.b   LIM_SY(%a0),%d0
+        cmp.l   %d0,%d1
+        bhi     ml_ov_sy                 | more SY DRUM tracks than the hard cap
+        move.l  %d3,%d0
+        moveq   #1,%d2
+        bsr     ml_cost                  | the Part's cost with every FM SYNTH track mono
+        cmpi.l  #LOAD_BUDGET,%d0
+        bhi     ml_ov_both               | over the budget even so
+        moveq   #0,%d0
+        bra     ml_ov_out
+ml_ov_fm:
+        lea     ml_msg_fm(%pc),%a0
+        bra     ml_ov_msg
+ml_ov_sy:
+        lea     ml_msg_sy(%pc),%a0
+        bra     ml_ov_msg
+ml_ov_both:
+        lea     ml_msg_both(%pc),%a0
+ml_ov_msg:
+        move.l  %a0,%d0
+ml_ov_out:
+        movem.l (%sp),%d2-%d3/%a0
+        lea     12(%sp),%sp
+        tst.l   %d0
+        rts
+| ml_count: a0 = a Part, d2 = a track left out (-1: none) -> d0 = its FM SYNTH tracks, d1 =
+| its SY DRUM tracks, by the signatures (ml_sigkind). The one count the lists, the paste
+| guards and the voice cap share. Preserves every other register.
+ml_count:
+        lea     -12(%sp),%sp
+        movem.l %d3-%d5,(%sp)
+        moveq   #0,%d3                   | FM SYNTH tracks
+        moveq   #0,%d4                   | SY DRUM tracks
+        moveq   #0,%d5                   | the track
+ml_cn_track:
+        cmp.l   %d2,%d5
+        beq     ml_cn_next               | the track left out
+        move.l  %d5,%d0
+        bsr     ml_sigkind
+        cmpi.l  #1,%d0
+        bne     ml_cn_sy
+        addq.l  #1,%d3
+ml_cn_sy:
+        cmpi.l  #2,%d0
+        bne     ml_cn_next
+        addq.l  #1,%d4
+ml_cn_next:
+        addq.l  #1,%d5
+        cmpi.l  #8,%d5
+        bne     ml_cn_track
+        move.l  %d3,%d0
+        move.l  %d4,%d1
+        movem.l (%sp),%d3-%d5
+        lea     12(%sp),%sp
+        rts
+| ml_cost: d0 = FM SYNTH tracks, d1 = SY DRUM tracks, d2 = v (1..4) -> d0 = the Part's cost
+| in points with every FM SYNTH track at v voices (machine_limits.inc: LOAD_S_ANY once when
+| the Part holds any of the two, LOAD_S_FM once when it holds FM SYNTH, LOAD_FM_Vv per FM
+| SYNTH track, LOAD_SY_TRACK per SY DRUM track; a v outside 1..4 prices as 1). Preserves
+| every other register.
+ml_cost:
+        lea     -12(%sp),%sp
+        movem.l %d3-%d4/%a0,(%sp)
+        move.l  %d0,%d3                  | nFM
+        moveq   #0,%d0
+        tst.l   %d3
+        bne     ml_co_any
+        tst.l   %d1
+        beq     ml_co_out                | neither machine: nothing
+ml_co_any:
+        move.l  #LOAD_S_ANY,%d0
+        move.l  #LOAD_SY_TRACK,%d4
+        muls.l  %d1,%d4                  | nSY * LOAD_SY_TRACK
+        add.l   %d4,%d0
+        tst.l   %d3
+        beq     ml_co_out                | no FM SYNTH track
+        addi.l  #LOAD_S_FM,%d0
+        move.l  %d2,%d4
+        subq.l  #1,%d4
+        cmpi.l  #3,%d4
+        bls     ml_co_v
+        moveq   #0,%d4                   | v outside 1..4: as 1
+ml_co_v:
+        lea     ml_load_v(%pc),%a0       | LOAD_FM_V1..V4, a word each
+        mvz.w   (%a0,%d4.l*2),%d4
+        muls.l  %d3,%d4                  | nFM * LOAD_FM_Vv
+        add.l   %d4,%d0
+ml_co_out:
+        movem.l (%sp),%d3-%d4/%a0
+        lea     12(%sp),%sp
+        rts
+| ml_cap_of: d0 = FM SYNTH tracks, d1 = SY DRUM tracks -> d0 = the FM voice cap for them: the
+| largest v in 4, 3, 2, 1 whose cost is <= LOAD_BUDGET; 1 when none is (the Part plays as
+| saved, every FM SYNTH track mono). Preserves every other register.
+ml_cap_of:
+        lea     -8(%sp),%sp
+        movem.l %d2-%d3,(%sp)
+        move.l  %d0,%d3                  | nFM
+        moveq   #4,%d2
+ml_cv_try:
+        move.l  %d3,%d0
+        bsr     ml_cost
+        cmpi.l  #LOAD_BUDGET,%d0
+        bls     ml_cv_out                | fits at v
+        subq.l  #1,%d2
+        cmpi.l  #1,%d2
+        bhi     ml_cv_try                | 3, 2 ... ; 1 is the floor whatever its cost
+ml_cv_out:
+        move.l  %d2,%d0
+        movem.l (%sp),%d2-%d3
+        lea     8(%sp),%sp
+        rts
+
+| ---- the voice cap and its cache (2.16) ----
+| ml_cap: -> d0 = the FM voice cap of the current Part, 1..4 (ml_cap_of over its counts).
+| Read by the engine at every voice START of an FM SYNTH track (poly.s po_voiccap), so it
+| answers from this unit's own cache, ml_budget (a few compares), and COUNTS the Part again
+| (ml_part, ml_count, ml_cap_of) only when the cache is unknown (power-on: the image's 0),
+| the active Part's index is not the cached one (a Part or pattern change), a machine store
+| is under way (ml_pending: set by ml_touch at every store this unit detours, cleared by the
+| UI tick after it, fm_tick -- a START between a store's start and that tick never trusts
+| the cache) or the generation moved since (ml_gen: bumped by ml_touch and by that tick).
+| The generation and the Part index are read BEFORE the count, and the cache reads as
+| unknown while a count is under way, so a store or a Part change that lands during a
+| count is caught at the next START and a count the UI task runs (po_polytrack) can be
+| interrupted by the frame's own. Preserves every other register (tst.l not done).
+        .set    BG_VALID, 0              | ml_budget, words (BG_GEN a long): 1 once counted (0: unknown, the image's, or counting)
+        .set    BG_PART, 2               | the Part index the counts belong to
+        .set    BG_NFM, 4                | its FM SYNTH tracks ...
+        .set    BG_NSY, 6                | ... and SY DRUM tracks
+        .set    BG_CAP, 8                | the cap, 1..4
+        .set    BG_GEN, 12               | ml_gen at the count (a long; +10 is a pad)
+ml_cap:
+        lea     -16(%sp),%sp
+        movem.l %d1-%d3/%a0,(%sp)
+        lea     ml_budget(%pc),%a0
+        move.l  ml_gen-ml_budget(%a0),%d3 | the generation now (before the count)
+        tst.l   ml_pending-ml_budget(%a0)
+        bne     ml_cap_count             | a store under way: never the cache
+        tst.w   BG_VALID(%a0)
+        beq     ml_cap_count             | unknown
+        cmp.l   BG_GEN(%a0),%d3
+        bne     ml_cap_count             | a store since
+        mvz.b   PART_IDX,%d0
+        cmp.w   BG_PART(%a0),%d0
+        bne     ml_cap_count             | another Part
+        mvz.w   BG_CAP(%a0),%d0
+        bra     ml_cap_out
+ml_cap_count:
+        clr.w   BG_VALID(%a0)            | counting: unknown meanwhile
+        move.l  %d3,BG_GEN(%a0)
+        mvz.b   PART_IDX,%d0
+        move.w  %d0,BG_PART(%a0)
+        bsr     ml_part                  | a0 = the current Part
+        moveq   #-1,%d2
+        bsr     ml_count                 | d0 = its FM SYNTH tracks, d1 = its SY DRUM tracks
+        move.l  %d0,%d2
+        lea     ml_budget(%pc),%a0
+        move.w  %d2,BG_NFM(%a0)
+        move.w  %d1,BG_NSY(%a0)
+        bsr     ml_cap_of                | d0 = the cap
+        move.w  %d0,BG_CAP(%a0)
+        moveq   #1,%d1
+        move.w  %d1,BG_VALID(%a0)
+ml_cap_out:
+        movem.l (%sp),%d1-%d3/%a0
+        lea     16(%sp),%sp
+        rts
+| ml_touch: a machine store starts (a list's commit, a paste / undo store, the slot assigner,
+| the FLEX preview, the Part validator at a load): the cache is set aside until the UI tick
+| after the store (ml_pending; fm_tick) and the generation moves. Preserves every register
+| and the condition codes (it sits between displaced instructions and stock's own code).
+ml_touch:
+        lea     -8(%sp),%sp
+        movem.l %d0/%a0,(%sp)
+        move.w  %ccr,%d0
+        lea     ml_gen(%pc),%a0
+        addq.l  #1,(%a0)
+        lea     ml_pending(%pc),%a0
+        move.l  #1,(%a0)
+        move.w  %d0,%ccr
+        movem.l (%sp),%d0/%a0
+        lea     8(%sp),%sp
         rts
 | ml_sigkind: a0 = a Part, d0 = a track -> d0 = the machine its signature names: the row's
 | engine kind (1 FM SYNTH, 2 SY DRUM) for FLEX with a row's signature, else 0; tst.l done.
@@ -811,6 +997,7 @@ ml_toast:
 | its slot). FLEX pasted over a track whose signature place holds a row's signature makes
 | that machine (the signature is not written by this store): guarded.
 fm_page_store:
+        bsr     ml_touch                 | 2.16: a machine store starts (the voice cap's cache)
         move.b  19(%a2),%d3              | displaced: the machine pasted
         mvs.b   %d3,%d6                  | displaced
         move.b  18(%a2),%d7              | displaced: its slot
@@ -844,8 +1031,10 @@ fm_track_undo:
         lea     UNDO_BUF,%a1
         bsr     ml_trackchk
         bne     fm_tu_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts ...
         pea     (UNDO_BUF).l             | displaced
         jsr     FULL_STORE               | displaced
+        bsr     ml_touch                 | ... and ended (the condition codes kept)
         jmp     TRACK_UNDO_RET
 fm_tu_refuse:
         bsr     ml_toast
@@ -855,8 +1044,10 @@ fm_track_paste:
         lea     CLIP_BUF,%a1
         bsr     ml_trackchk
         bne     fm_tp_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts ...
         pea     (CLIP_BUF).l             | displaced
         jsr     FULL_STORE               | displaced
+        bsr     ml_touch                 | ... and ended
         jmp     TRACK_PASTE_RET
 fm_tp_refuse:
         bsr     ml_toast
@@ -907,8 +1098,10 @@ fm_part_undo:
         lea     UNDO_BUF-PART_OFF,%a0
         bsr     ml_part_over
         bne     fm_pu_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts ...
         pea     (UNDO_BUF).l             | displaced
         jsr     PART_STORE               | displaced
+        bsr     ml_touch                 | ... and ended
         jmp     PART_UNDO_RET
 fm_pu_refuse:
         bsr     ml_toast
@@ -918,57 +1111,27 @@ fm_part_paste:
         lea     CLIP_BUF-PART_OFF,%a0
         bsr     ml_part_over
         bne     fm_pp_refuse
+        bsr     ml_touch                 | 2.16: a machine store starts ...
         pea     (CLIP_BUF).l             | displaced
         jsr     PART_STORE               | displaced
+        bsr     ml_touch                 | ... and ended
         jmp     PART_PASTE_RET
 fm_pp_refuse:
         bsr     ml_toast
         addq.l  #4,%sp                   | the store's other argument
         moveq   #0,%d0                   | nothing pasted (the paste's own answer)
         rts
-| ml_part_over: a0 = a Part -> d0 = 0 when its eight tracks are within the limits, else
-| the message (as ml_guard's); tst.l done. Preserves every other register.
+| ml_part_over: a0 = a Part -> d0 = 0 when its eight tracks are within the hard caps and
+| the budget at mono (ml_count over all eight, ml_over), else the message (as ml_guard's);
+| tst.l done. Preserves every other register.
 ml_part_over:
-        lea     -20(%sp),%sp
-        movem.l %d1/%d3-%d4/%a0-%a1,(%sp)
-        moveq   #0,%d3                   | FM SYNTH tracks
-        moveq   #0,%d4                   | SY DRUM tracks
-        moveq   #0,%d1
-ml_po_track:
-        move.l  %d1,%d0
-        bsr     ml_sigkind
-        cmpi.l  #1,%d0
-        bne     ml_po_sy
-        addq.l  #1,%d3
-ml_po_sy:
-        cmpi.l  #2,%d0
-        bne     ml_po_next
-        addq.l  #1,%d4
-ml_po_next:
-        addq.l  #1,%d1
-        cmpi.l  #8,%d1
-        bne     ml_po_track
-        lea     ml_limits(%pc),%a1
-        lea     ml_msg_fm(%pc),%a0
-        mvz.b   LIM_FM(%a1),%d0
-        cmp.l   %d0,%d3
-        bhi     ml_po_msg                | more FM SYNTH tracks than allowed
-        lea     ml_msg_sy(%pc),%a0
-        mvz.b   LIM_SY(%a1),%d0
-        cmp.l   %d0,%d4
-        bhi     ml_po_msg                | more SY DRUM tracks than allowed
-        lea     ml_msg_both(%pc),%a0
-        tst.l   %d3
-        beq     ml_po_ok
-        mvz.b   LIM_SYFM(%a1),%d0
-        cmp.l   %d0,%d4
-        bhi     ml_po_msg                | more SY DRUM tracks than FM SYNTH allows beside it
-ml_po_ok:
-        suba.l  %a0,%a0
-ml_po_msg:
-        move.l  %a0,%d0
-        movem.l (%sp),%d1/%d3-%d4/%a0-%a1
-        lea     20(%sp),%sp
+        lea     -8(%sp),%sp
+        movem.l %d1-%d2,(%sp)
+        moveq   #-1,%d2                  | every track
+        bsr     ml_count                 | d0 = FM SYNTH tracks, d1 = SY DRUM tracks
+        bsr     ml_over                  | d0 = 0, or the message
+        movem.l (%sp),%d1-%d2
+        lea     8(%sp),%sp
         tst.l   %d0
         rts
 | 0x40096d22 (jmp, 12 B): the sample preview of the FLEX list (0x40096c54: d4 = the track
@@ -980,6 +1143,7 @@ fm_preview:
         move.l  %d3,PREVIEW_SAVE         | displaced
         cmpi.l  #FLEX,%d3
         beq     fm_pv_flex               | FLEX already: the track plays what it played
+        bsr     ml_touch                 | 2.16: a mark may go (the voice cap's cache)
         move.l  %d2,-(%sp)
         move.l  %d4,%d2
         bsr     ml_unsign_t
@@ -1180,6 +1344,13 @@ fm_d6:
 fm_tick:
         jsr     TICK_A                   | displaced
         jsr     TICK_B                   | displaced
+        lea     ml_pending(%pc),%a0      | 2.16: a machine store this task began has ended by now ...
+        tst.l   (%a0)
+        beq     fm_tk_nop
+        clr.l   (%a0)
+        lea     ml_gen(%pc),%a0
+        addq.l  #1,(%a0)                 | ... so the next voice START counts the Part again (ml_cap)
+fm_tk_nop:
         lea     NAMES,%a0
         lea     fm_src_names(%pc),%a1
         moveq   #5,%d0
@@ -1291,6 +1462,7 @@ ml_cb_out:
 | are swapped for the stock FLEX defaults (read from the descriptor), the stock
 | validator runs, and the row's bytes are put back. d0 = the stock result.
 fm_validate:
+        bsr     ml_touch                 | 2.16: a Part arrives (a project or Part load): the voice cap's cache
         lea     -116(%sp),%sp            | 96 B: 8 tracks x 12 saved bytes; 20 B: d2-d4/a2-a3
         movem.l %d2-%d4/%a2-%a3,96(%sp)
         movea.l 120(%sp),%a2
@@ -1377,12 +1549,23 @@ fm_stock_validate:
         movem.l %d2-%d7/%a2-%fp,(%sp)    | displaced
         jmp     VALIDATE_BODY
 
-| the guard's limits (machine_limits.inc), as bytes ml_guard reads: FM SYNTH, SY DRUM, SY
-| DRUM beside FM SYNTH; and its three messages, the numbers printed from the same limits.
-| The popup shows a short line only: 17 characters were measured on screen, 21 were not
-| drawn at all (the stock routine draws nothing for a line wider than its box).
+| the guard's hard caps (machine_limits.inc), as bytes ml_over reads: FM SYNTH, SY DRUM (the
+| third byte, 2.15's SY DRUM beside FM SYNTH, is 0 and not read: the budget replaced it); the
+| load table ml_cost reads (LOAD_FM_V1..V4, a word each); the voice cap's cache (ml_cap); and
+| the three messages, the numbers printed from the same caps. The popup shows a short line
+| only: 17 characters were measured on screen, 21 were not drawn at all (the stock routine
+| draws nothing for a line wider than its box); 19 is the most.
 ml_limits:
-        .byte   ML_FM_MAX, ML_SY_MAX, ML_SY_WITH_FM, 0
+        .byte   ML_FM_MAX, ML_SY_MAX, 0, 0
+ml_load_v:
+        .word   LOAD_FM_V1, LOAD_FM_V2, LOAD_FM_V3, LOAD_FM_V4
+ml_budget:
+        .word   0, 0, 0, 0, 1, 0         | BG_VALID BG_PART BG_NFM BG_NSY BG_CAP, a pad (unknown at power-on: the first START counts)
+        .long   0                        | BG_GEN
+ml_gen:
+        .long   0                        | bumped by every machine store (ml_touch) and by the UI tick that closes it (fm_tick)
+ml_pending:
+        .long   0                        | 1 from a store's start to the UI tick after it
 ml_msg_fm:
         .ascii  "FM SYNTH: "
         .byte   '0' + ML_FM_MAX
