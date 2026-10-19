@@ -2040,12 +2040,15 @@ SYNTH track only (`po_sig` on the current Part's UI track):
   the SPD3 byte as 2.15's SPD box did (now labelled and formatted 1..4); the LFO page is where VOIC
   clamps to the four voice counts. This is a display and naming change; turning VOIC past 4 reads
   back the mono voice ("1"), consistent with the engine and with what the LFO page shows. On LFO 1 / LFO 2 the boxes are stock.
-- The selected LFO is this unit's own byte `po_lfs_sel` (0 LFO 1 .. 3 DESIGN), set from the move's
-  new row at `po_lfsmove` and nowhere else: 0 at power-on, changed only on a cursor move, untouched
-  by a knob edit or by closing the window -- exactly as the stock window's highlight persists across
-  close / reopen -- so the two stay in step and the V/C column holds through edits and reopen. (The
-  stock UI keeps no selected-row cell that survives a knob edit: a wide RAM diff across LFO 1 / 2 / 3,
-  a DEP edit and a close+reopen found none, so the row is cached here.)
+- The selected LFO is this unit's own byte `po_lfs_sel` (0 LFO 1 .. 3 DESIGN). It is read back from
+  the stock's own drawing at every redraw (`po_lfs_row`, 19 Oct 2026): the stock draws the cursor's
+  bar over the selected row before the drawer's site, and the bar's margin column (x 3, where no
+  glyph is drawn) is set in exactly one row band, so the band that is set is the cursor's row. The
+  move site (`po_lfsmove`) also records the move's destination row. The read-back matters because the
+  MIDI track's LFO SETUP window shares the stock cursor but runs none of the four sites: before it
+  (2.16 rc1) a cursor moved there left the cache stale, and an FM track's window could show LFO 1
+  highlighted with the boxes named VOIC / CHRD while the knob edited LFO 1's speed. Now the names
+  follow the highlighted row whatever moved the cursor (measured: the MIDI-move walk, `lfsx_F2`).
 - The third row's label `V/C` is DRAWN by the drawer's detour over the stock's (`po_lfsdraw` ->
   `po_lfs_vc`). Measured on 2.15 (19 Oct 2026, a PC watch on the stock's own text and box primitives
   with full records): the function the `lea 0x400d37f6,%a4` sits in draws the four list rows first
