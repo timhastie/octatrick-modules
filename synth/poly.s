@@ -3310,7 +3310,9 @@ po_lp_copy:
 |   * po_lfsedit at 0x40039020, `lea 0x400d37f6,%a3`: the setup editor's record (the knob's
 |     handler, min and count: VOIC clamps to 1..4 there as on the LFO page).
 | The selected LFO (which row the boxes belong to) is kept in this unit's own byte po_lfs_sel
-| (0 LFO 1, 1 LFO 2, 2 LFO 3 / V/C, 3 DESIGN): po_lfsmove sets it from d2 (the move's new row;
+| (0 LFO 1, 1 LFO 2, 2 LFO 3 / V/C, 3 DESIGN), read back from the stock's own cursor bar at every
+| redraw (po_lfs_row, fix 2), so a cursor moved by the MIDI track's window is seen too; po_lfsmove
+| also sets it from d2 (the move's new row;
 | measured: d2 is the destination row at the move staging) at EVERY list move, and nothing else
 | writes it. It is 0 at power-on (the window opens on LFO 1 then), it changes only when the
 | cursor moves, and it is not touched by a knob edit or by closing the window -- exactly as the
@@ -3391,6 +3393,7 @@ po_lm_desc:
 po_lfsdraw:
         lea     -16(%sp),%sp
         movem.l %d0-%d1/%a0-%a1,(%sp)
+        bsr     po_lfs_row               | (fix 2) po_lfs_sel := the row the stock's cursor bar is on
         bsr     po_lfs_desc
         movea.l %d0,%a4
         cmpi.l  #LFO_P,%d0               | the stock record: not an FM SYNTH track, the row is the stock's
@@ -3438,6 +3441,46 @@ po_lv_clear:
         bsr     po_lfs_box               | the field inverted back under the cursor's bar
 po_lv_done:
         move.l  (%sp)+,%d2
+        rts
+| po_lfs_row (2.16 fix 2): the selected row read from the stock's own drawing, at every redraw,
+| before the descriptor is handed out. The stock draws the cursor's bar (BOX x 3..50 over the
+| cursor's row, mode -1) before the drawer's lea, and the bar's margin column x 3 holds no glyph,
+| so the one row band whose column-3 ink is set is the cursor's row: y 50 / 43 / 36 / 29 (a glyph
+| row of rows 1..4, whose glyphs' bottom rows are 48 / 41 / 34 / 27). po_lfs_sel := that row; when
+| no band is set (nothing drawn yet) the cache is left alone. This replaces the cache's reliance on
+| po_lfsmove alone: the MIDI track's LFO SETUP window shares the stock cursor but runs none of the
+| four sites, so a move there left po_lfs_sel stale and an FM track's window could show LFO 1
+| highlighted with the boxes named VOIC / CHRD (the 2.16 rc1 verifier's second finding). Reads the
+| surface in d5 as po_lfs_vc does. Preserves every register.
+po_lfs_row:
+        lea     -20(%sp),%sp
+        movem.l %d0-%d2/%a0-%a1,(%sp)
+        movea.l %d5,%a0                  | the surface record {w, h, longs per column, ink*, mask*}
+        move.l  8(%a0),%d1
+        lsl.l   #2,%d1                   | bytes per column
+        move.l  %d1,%d0
+        add.l   %d1,%d0
+        add.l   %d1,%d0                  | column LFS_HL_X = 3: three columns in
+        movea.l 12(%a0),%a1              | the ink plane
+        adda.l  %d0,%a1
+        moveq   #0,%d2                   | row 1 (LFO 1): y 50 = byte 6, bit 5
+        btst    #5,6(%a1)
+        bne     po_lr_set
+        moveq   #1,%d2                   | row 2 (LFO 2): y 43 = byte 5, bit 4
+        btst    #4,5(%a1)
+        bne     po_lr_set
+        moveq   #2,%d2                   | row 3 (V/C):   y 36 = byte 4, bit 3 (LFS_HL_Y)
+        btst    #LFS_HL_BIT,LFS_HL_BYTE(%a1)
+        bne     po_lr_set
+        moveq   #3,%d2                   | row 4 (DESIGN): y 29 = byte 3, bit 2
+        btst    #2,3(%a1)
+        beq     po_lr_out                | no bar in any band: keep the cache
+po_lr_set:
+        lea     po_lfs_sel(%pc),%a0
+        move.b  %d2,(%a0)
+po_lr_out:
+        movem.l (%sp),%d0-%d2/%a0-%a1
+        lea     20(%sp),%sp
         rts
 | po_lfs_box: BOX(d5, LFS_ROW_X, LFS_ROW3_Y, LFS_ROW_X1, LFS_ROW3_Y + 5, d0): the third row's field.
 po_lfs_box:
