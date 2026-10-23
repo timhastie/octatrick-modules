@@ -91,7 +91,7 @@ po_setup_patch:
         move.l  %d0,0x9a+28(%a1)
         move.l  0x18e(%a1),%d0
         andi.l  #0x00ffffff,%d0
-        ori.l   #0x11000000,%d0
+        ori.l   #0x55000000,%d0           | enabled, fixed-layout SETUP dials
         move.l  %d0,0x18e(%a1)
         movea.l %a1,%a0
         jsr     fl_ui_patch:l

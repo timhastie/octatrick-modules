@@ -526,6 +526,13 @@ fl_ui_widget:
         move.l  80(%sp),16(%sp)
         move.l  84(%sp),20(%sp)
         move.l  88(%sp),24(%sp)
+| These two dials use fixed layout, independently of native enum staging.
+| Keep inversion and the native negative value's frame-only request intact.
+        move.l  16(%sp),%d0
+        ori.l   #8,%d0
+        move.l  %d0,16(%sp)
+        tst.l   12(%sp)
+        bmi     fl_uw_native
         move.l  8(%sp),%d4
 | Own both the displayed value and formatter: SETUP's stock staging still
 | supplies its native parameter context. The other four widgets stay stock.
@@ -570,6 +577,7 @@ fl_uw_found:
         move.l  %d0,16(%sp)
 fl_uw_draw:
         jsr     fs_widget_overlay:l
+fl_uw_native:
         jsr     0x400479b4
 fl_uw_out:
         movem.l 28(%sp),%d2-%d7/%a2-%a3
