@@ -75,9 +75,11 @@ behind the loader, depacked at boot; the unit gives up 10 MB of sample
 memory); the kind table's FLEX entry is pointed at its sy_render by a
 SymbolRef (octabam's 4-byte stock pointer rewritten to a symbol; the fork
 had added a Detour of kind "ptr" for the same job). Since 2.17 VOIC and CHRD occupy the PLAYBACK SETUP LOOP/SLIC
-boxes; the LFO page and LFO SETUP remain stock. Independent FM step and
-scene tables resolve step > selected scene > Part before the existing cap.
-The frame's LFO clock tap remains, replaying the original depth read.
+boxes; all three LFO speeds and depths remain stock. FM PMTR appends native
+values 30/31 for VOIC/CHRD, applied into private words and latched at note START.
+Independent FM step and scene tables resolve step > selected scene > Part
+before the module LFO offset and existing cap. PMTR retains native Part-byte
+storage and cannot be locked on a trig.
 VOIC is the switch: 1 = the mono synth
 of phase 4, bit for bit (GLIDE legato, the stock lifecycle); 2..4 = that
 many voices playing the chord shape at every trig or live key, per-voice
@@ -387,7 +389,8 @@ SCENE_HOOKS = (
 def poly_include(modules):
     names = ("setup", "locks_store", "locks_scene_store", "scenes_value", "scenes_ui",
              "scenes_ops", "locks_effective", "locks_seq", "locks_ui", "locks_sparse",
-             "locks_clip", "locks_transform", "locks_delete", "locks_live", "locks_io")
+             "locks_clip", "locks_transform", "locks_delete", "locks_live", "locks_io",
+             "lfo_destinations")
     sources = []
     for name in names:
         with open(os.path.join(_HERE, name + ".inc.s"), encoding="utf-8") as source:
@@ -727,9 +730,28 @@ MODULE = Module(
     ),
     detours=(
 
-        Detour(LFO_DEPTH_HOOK2, stock_guard(LFO_DEPTH_HOOK2, 8), "poly", "po_lfo3b",
-               "LFO frame clock tap; replays the stock depth read for all three LFOs on every track",
+        Detour(LFO_DEPTH_HOOK, stock_guard(LFO_DEPTH_HOOK, 8), "poly", "lf_lfo_standalone",
+               "Route module PMTR destinations into safe private LFO output words in the standalone engine",
                kind="jmp", pad_to=8),
+
+        Detour(LFO_DEPTH_HOOK2, stock_guard(LFO_DEPTH_HOOK2, 8), "poly", "po_lfo3b",
+               "LFO frame clock tap and safe module PMTR outputs; stock depth arithmetic for every LFO",
+               kind="jmp", pad_to=8),
+
+        Detour(LFO_PAGE_HOOK, stock_guard(LFO_PAGE_HOOK, 8), "poly", "lf_page",
+               "FM LFO descriptor with appended VOIC and CHRD destinations; all three speeds and depths remain stock",
+               kind="jmp", pad_to=8),
+        Detour(LFD_EDIT_HOOK, stock_guard(LFD_EDIT_HOOK, 8), "poly", "lf_pmtr_edit",
+               "Append PMTR values 30 and 31 on FM tracks without indexing the stock order tables beyond 29",
+               kind="jmp", pad_to=8),
+        Detour(0x40058488, stock_guard(0x40058488, 6), "poly", "lf_stage",
+               "LFO SETUP stages the FM PMTR destination count", kind="jmp"),
+        Detour(0x4003a45c, stock_guard(0x4003a45c, 6), "poly", "lf_move",
+               "LFO SETUP row movement stages the FM PMTR destination count", kind="jmp"),
+        Detour(0x400574cc, stock_guard(0x400574cc, 6), "poly", "lf_draw",
+               "LFO SETUP draws the two appended PMTR labels on FM tracks", kind="jmp"),
+        Detour(0x40039020, stock_guard(0x40039020, 6), "poly", "lf_edit",
+               "LFO SETUP edits the FM PMTR destination count", kind="jmp"),
 
         Detour(LFD_NAME_HOOK, stock_guard(LFD_NAME_HOOK, 8), "poly", "po_lfdname",
                "LFO SETUP PMTR formatter, PLAYBACK names: the page resolver's descriptor (the FM SYNTH page on a synth track) instead of the machine table's; the master track and every other machine stock",

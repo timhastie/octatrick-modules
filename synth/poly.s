@@ -407,6 +407,7 @@ sy_kind_same:
         jsr     sd_trigger:l             | SY DRUM's START (a3 = the track record; every register kept)
         .endif
 sy_cold:                                 | a synth starts -- THE START RULE (plan B, 28 Sep 2026): the engine owns
+        bsr     lf_latch                 | module LFO values latch before this note's mono/poly decision
         move.l  #CV_STRIDE,%d1           | the AMP envelope (the DSP sees ATK 0 / HOLD INF / REL INF: sy_ison), so
         muls.l  %d2,%d1                  | the only question is whether THIS voice still sounds. S_GPREV != 0 (the
         lea     CURVALS,%a0              | gain the last call ended at): WARM -- the SAME oscillator continues
@@ -502,6 +503,7 @@ sy_synth:
         moveq   #1,%d3
         bra     sy_set
 sy_no:
+        bsr     lf_unlatch               | a sample START must not keep a former FM LFO latch
         bsr     po_free                  | not a synth: nothing of ours may sound on this track
         .if     HAVE_SYDRUM
         lea     sy1_kind:l,%a0           | (2.11) a sample: the engine kind is FM's 0 again
@@ -3162,8 +3164,7 @@ po_lfo3b:
         bsr     po_tick
         movea.l (%sp)+,%a0
 po_l3b_depth:
-        mvs.w   0x12(%a2,%d2.l*2),%d0
-        lea     (%a0,%d4.l*2),%a1
+        bsr     lf_apply
         jmp     0x4000d046
 
 | ==== THE LFO DESTINATION LIST (2.10, 6 Oct 2026; three hooks) ======================
@@ -4992,6 +4993,7 @@ po_kill:
         lea     -8(%sp),%sp
         movem.l %d2/%a1,(%sp)
         move.l  %d1,%d2                  | d2 = the track (po_free's argument)
+        bsr     lf_unlatch               | STOP/loaders discard this note's module LFO latch
         move.l  %d1,%d0
         lsl.l   #7,%d0                   | * ST_STRIDE
         lea     sy_state(%pc),%a0

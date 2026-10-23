@@ -258,6 +258,10 @@ builds on the author's unit and were never tagged.
   scene locks in `fmlockNN.work` / `.strd`. The voice cap uses `--1` and mono CHRD uses `----`,
   and legacy voice/chord defaults and locks migrate out of LFO storage at
   project load. Scene selection switches at the crossfader midpoint.
+  The 23 October candidate also appends VOIC/CHRD to FM LFO destinations as
+  native PMTR values 30/31, with private application and note-start latching.
+  PMTR retains native Part-byte storage and is not trig-lockable. Existing
+  VOIC/CHRD step locks feed the LFO offset. See `synth/README.md` and the fix reports.
   The synth owns the shared lock-hook dispatch; SY DRUM keeps its existing
   independent storage and handlers. The quantizer reads effective VOIC
   through the synth's existing published reader. These two small

@@ -54,13 +54,13 @@ po_sd_out:
 | Both use the same step > scene > Part precedence at every reader.
 po_read_voic:
         move.l  %d0,-(%sp)
-        jsr     fl_effective:l
+        jsr     lf_effective:l
         move.l  %d0,%d1
         move.l  (%sp)+,%d0
         rts
 po_read_chrd:
         move.l  %d1,-(%sp)
-        jsr     fl_effective:l
+        jsr     lf_effective:l
         move.l  %d1,%d0
         move.l  (%sp)+,%d1
         rts

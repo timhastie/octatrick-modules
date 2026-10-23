@@ -39,6 +39,22 @@ intact, so removing the limiting SY DRUM track restores the stored voice count a
 An allowed SY DRUM choice beside another FM track shows
 `FM SYNTH -> MONO`. The budget weights and refusal rules remain those of **2.16**.
 
+**Module LFO destinations (23 October candidate).** On an FM track, the PMTR list appends
+`VOIC` and `CHRD` as native destination bytes **30** and **31**. All three LFO speeds and
+depths keep their stock slots. For either new destination, the stock depth calculation
+writes a private module word rather than an out-of-range stock parameter. At the next
+note START, the module adds the resulting offset after step/scene/Part resolution:
+VOIC is clamped to **1..4**, then limited by the existing budget; CHRD moves across shapes
+**0..31**, retaining its inversion. Multiple LFO contributions add. The stored VOIC stays
+**1..4**. A sounding note keeps its latched result until another START.
+
+PMTR retains its native Part-byte storage and cannot be locked on a trig. Per-step
+variation comes from VOIC/CHRD step locks, with the LFO offset applied on top. The
+bounded feature gate checks SAVE, power cycle and reload of PMTR bytes 30/31 and
+continued modulation; see `R/work/r17/REPORT.md` and `VERIFY.md`.
+[Community PR 3](https://github.com/timhastie/octatrick-modules/pull/3) was read as prior art;
+its SPD3/DEP3 storage and 0..127 VOIC representation are not used here.
+
 **Saved values and files.** The Part's PLAYBACK SETUP bytes hold the ordinary VOIC and CHRD
 values. The synth keeps its step locks and scene assignments in **`fmlock01.work` /
 `fmlock01.strd` through `fmlock16.work` / `fmlock16.strd`**, beside the project's bank files.
