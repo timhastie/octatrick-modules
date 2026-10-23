@@ -68,7 +68,8 @@ lf_latch:
         lea     (%a1,%d2.l*4),%a1
         clr.b   (%a1)
         lea     lf_context:l,%a0
-        lea     (%a0,%d2.l*8),%a0
+        lea     (%a0,%d2.l*4),%a0
+        lea     (%a0,%d2.l*4),%a0
         lea     0x8000182a,%a1
         mvz.b   (%a1,%d2.l),%d0
         move.l  %d0,(%a0)
@@ -170,7 +171,8 @@ lf_effective:
         mvz.b   (%a0,%d2.l),%d0
         mvz.b   8(%a0,%d2.l),%d1
         lea     lf_context:l,%a0
-        lea     (%a0,%d2.l*8),%a0
+        lea     (%a0,%d2.l*4),%a0
+        lea     (%a0,%d2.l*4),%a0
         cmp.l   (%a0),%d0
         bne     lf_effective_unlatched
         cmp.l   4(%a0),%d1
