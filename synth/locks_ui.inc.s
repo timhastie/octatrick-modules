@@ -577,34 +577,6 @@ fl_uw_found:
         move.l  %d0,16(%sp)
 fl_uw_draw:
         jsr     fs_widget_overlay:l
-| The native dial ORs its value text into the surface. PLAYBACK SETUP's
-| former SLIC cell does not erase the whole chord-name footprint: the same
-| formatter/buffer/font as the released LFO page leaves old glyph pixels.
-| Clear only CHRD's normal-layout value field before native drawing and
-| lock inversion. Negative frame-only calls bypass this with the branch
-| above; compact layout and the other five controls retain their drawing.
-        move.l  8(%sp),%d0
-        cmpi.l  #1,%d0
-        bne     fl_uw_native
-        move.l  16(%sp),%d0
-        btst    #1,%d0
-        bne     fl_uw_native
-        move.l  (%sp),%d0
-        move.l  4(%sp),%d1
-        movea.l 24(%sp),%a0
-        lea     -24(%sp),%sp
-        move.l  %a0,(%sp)
-        addq.l  #1,%d0
-        addq.l  #1,%d1
-        move.l  %d0,4(%sp)
-        move.l  %d1,8(%sp)
-        addi.l  #16,%d0
-        addq.l  #5,%d1
-        move.l  %d0,12(%sp)
-        move.l  %d1,16(%sp)
-        clr.l   20(%sp)
-        jsr     0x40012254              | solid box, colour 0: clear
-        lea     24(%sp),%sp
 fl_uw_native:
         jsr     0x400479b4
 fl_uw_out:
