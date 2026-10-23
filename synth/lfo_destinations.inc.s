@@ -320,7 +320,11 @@ lf_pmtr_voic:
         move.b  #'I',(%a0)+
         move.b  #'C',(%a0)+
 lf_pmtr_label:
-        clr.b   (%a0)
+        clr.b   (%a0)                    | the stock formatter fills two fields: the name at buffer + 0
+        move.b  #'S',1(%a0)              | and the page tag at buffer + 5 (0x4003c058: buffer + 5 first,
+        move.b  #'R',2(%a0)              | then the slot name); the tag line drew leftover bytes before
+        move.b  #'C',3(%a0)
+        clr.b   4(%a0)
         movem.l (%sp),%d0/%a0
         lea     8(%sp),%sp
         rts
