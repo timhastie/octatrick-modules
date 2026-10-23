@@ -224,7 +224,10 @@ was flashed on the author's MKI (18 Oct 2026) and works there. 2.16
 MKI on 22 Oct 2026. Tim reported that the voice cap was not shown and the
 V/C speed dial could jump past the valid voice range. The 2.17 candidate
 restores LFO 3 and moves VOIC/CHRD to PLAYBACK SETUP with independent step
-and scene locks. Runtime validation is pending; it is not yet on a unit.
+and scene locks. PORT checks confirm the setup detents, restored LFO modulation and
+GRID-lock power-cycle paths; the live-recording test has a tool limitation and the
+emulator cannot establish a physical crossfader sweep. The complete gate status
+is in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. It is not yet on a unit.
 Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
@@ -246,7 +249,7 @@ Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
 
-- 2.17 (local candidate, runtime validation pending): LFO 3 is restored on
+- 2.17 (local candidate; PORT checks with limitations, not yet on a unit): LFO 3 is restored on
   FM SYNTH. VOIC and CHRD move to PLAYBACK SETUP and have separate step and
   scene locks in `fmlockNN.work` / `.strd`. The voice cap is shown with `L`,
   and legacy voice/chord defaults and locks migrate out of LFO storage at
@@ -255,8 +258,14 @@ builds on the author's unit and were never tagged.
   independent storage and handlers. The quantizer reads effective VOIC
   through the synth's existing published reader. These two small
   integration changes are the approved exceptions to the original
-  unchanged-module requirement. Other modules are unchanged. Gate results
-  and hook counts will be recorded from the final candidate's named logs.
+  unchanged-module requirement. Other modules are unchanged.
+  `R/work/r17/logs/hook-inventory.txt` records the detours: synth **119**,
+  SY DRUM **2**, quantizer **24**, tuner **3**, processor-load **4**; synth
+  also has **3** symbol references and **1** source cave, direct-jump **1**
+  source cave. The PORT setup/LFO and GRID-lock persistence checks are
+  emulator-verified; live recording and the physical crossfader retain
+  the limits described in `synth/README.md`. See `R/work/r17/REPORT.md` and
+  `VERIFY.md` for the complete gate status. Nothing has been pushed.
 
 - 2.16 (tag `v2.16`, 18 Oct 2026): THE LOAD BUDGET -- TWO FM SYNTH TRACKS IN
   A PART -- AND THE LFO SETUP PAGE NAMES LFO 3'S COLUMN V/C ON AN FM SYNTH

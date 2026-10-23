@@ -45,7 +45,7 @@ Each FM bank file includes its step locks, its working and saved Part scene assi
 and the migration checkpoint. Keep these companion files with a project when copying or
 backing it up. They are independent of SY DRUM's `sylock` files. Working locks use the
 inherited **1.2 s** write-while-playing rule; SAVE also updates the stored files, and RELOAD
-restores them. Candidate persistence and power-cycle validation is still pending.
+restores them. The PORT power-cycle checks below cover both without-SAVE and SAVE paths.
 
 **Older projects.** On loading a **2.15 / 2.16** project without the migration marker, each
 FM SYNTH track's old SPD3 becomes VOIC when it is **1..4**, otherwise VOIC becomes **1**;
@@ -66,12 +66,33 @@ larger than the migration scratch capacity produces an error instead of being re
 
 ### Measured (2.17 candidate)
 
-**Candidate runtime validation pending; not yet on a unit.** Source assembly is recorded in
-`R/work/r17/logs/scene-assemble.txt` and `R/work/r17/logs/lock-design.txt`; the scene layouts,
-hook contracts and source limitations are recorded in `R/work/r17/logs/scene-research.txt`.
-These checks establish that the candidate sources assemble. They do not establish that the
-page, playback, migration or persistence gates pass. The PORT gate results and the independent
-verification will be recorded separately before release. No hardware result is claimed here.
+**PORT observations; not yet on a unit.** The complete gate status and the independent
+pass are recorded in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. The candidate
+is not a hardware-qualified release. The named evidence below establishes these checks:
+
+- `logs/gate234-c3-eval.json` and `logs/gate3-c3-display.txt`: VOIC moves through **1..4**
+  one click at a time with the corresponding display; CHRD moves one entry and back.
+  `G/logs/gate23_audio_c3.txt` and `G/qual/gate23_audio_c3.json`: the rendered **MA7**
+  shape adds C, B, E and G in the stored voice priority order as VOIC increases.
+- The same gate log records the LFO SETUP window matching FLEX's pixels, LFO edits leaving
+  VOIC/CHRD intact, and a varying engine INDX. The audio log records the modulation in the
+  render. Its INDX destination was seeded into native setup state before ordinary speed
+  and depth edits; that setup step is not evidence of a physical knob gesture.
+- `logs/gate234-c3-eval.json`: GRID locks, page copy/clear/paste, an individual step delete,
+  and the no-SAVE CS1 power-cycle pair preserve and play the independent locks.
+  `logs/gate4-save-c3-eval.json` and `logs/gate4-save-c3-card.json` record the SAVE pair:
+  the boot table matches the saved table and playback applies its locked step.
+- `logs/gate7-eval.json`: the older project's defaults, step locks and scene lock transfer;
+  SAVE and repeated load preserve them; a no-FM project card stays byte-identical.
+  These migration runs used the first candidate; later changes affect setup detents and
+  formatting. The independent pass identifies its own final-image migration evidence.
+
+The builder's live fingered-chord recording check remains unproven: the test controls
+failed to enter CHROMATIC mode after their permitted correction, although LIVE RECORDING
+started. The raw failure remains in `G/logs/gate234_c3.log`; it is not a firmware PASS.
+The pinned emulator also has no physical crossfader input. Tests that seed the native
+weight state establish the switch's state selection, not a physical crossfader sweep.
+The final gate report retains those limitations and any additional failures.
 
 ## Earlier release notes and measurements
 
