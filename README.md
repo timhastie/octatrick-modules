@@ -23,8 +23,8 @@ to watch.
   marker file is a sample like any other, and the machine list is the way in),
   with its own PLAYBACK page (PTCH RATO INDX FINE
   FDBK DEC: PTCH in semitones, -64..+63, FINE in cents -- 0c the moment a
-  track becomes a synth track), and on the LFO
-  page VOIC (1 = mono, 2..4 = paraphonic: the most voices the track sounds
+  track becomes a synth track), and on PLAYBACK SETUP
+  VOIC (1 = mono, 2..4 = paraphonic: the most voices the track sounds
   at once, keys and chords alike) and CHRD (32 chord shapes as four-note
   voicings in priority order, in Syntakt order since 2.8 -- the triads MIN
   MAJ SU2 SU4, the sevenths and adds, the rest, the two-note intervals
@@ -220,9 +220,12 @@ there, the held-chord crackle and the live-key pops gone, by ear; the tuner
 emulator-verified and not yet flashed; so is FM SYNTH in the machine list
 (2.10, 8 Oct 2026). 2.15 (the selection guard, the MIDI tracks' scale)
 was flashed on the author's MKI (18 Oct 2026) and works there. 2.16
-(the load budget -- two FM SYNTH tracks in a Part -- and the LFO SETUP
-page's V/C column on FM SYNTH tracks) is emulator-verified and not yet on a
-unit. Every feature was verified in an
+(the load budget and the former LFO SETUP V/C column) was tested on Tim's
+MKI on 22 Oct 2026. Tim reported that the voice cap was not shown and the
+V/C speed dial could jump past the valid voice range. The 2.17 candidate
+restores LFO 3 and moves VOIC/CHRD to PLAYBACK SETUP with independent step
+and scene locks. Runtime validation is pending; it is not yet on a unit.
+Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
 real-time build of octabam's emulator and a virtual front panel). Read
@@ -242,6 +245,18 @@ everything in the `octatrick` remix.
 Only tagged versions are releases; the numbered builds between two tags
 (2.3 .. 2.7 on the way to 2.8, the 2.9 builds before the tag) were test
 builds on the author's unit and were never tagged.
+
+- 2.17 (local candidate, runtime validation pending): LFO 3 is restored on
+  FM SYNTH. VOIC and CHRD move to PLAYBACK SETUP and have separate step and
+  scene locks in `fmlockNN.work` / `.strd`. The voice cap is shown with `L`,
+  and legacy voice/chord defaults and locks migrate out of LFO storage at
+  project load. Scene selection switches at the crossfader midpoint.
+  The synth owns the shared lock-hook dispatch; SY DRUM keeps its existing
+  independent storage and handlers. The quantizer reads effective VOIC
+  through the synth's existing published reader. These two small
+  integration changes are the approved exceptions to the original
+  unchanged-module requirement. Other modules are unchanged. Gate results
+  and hook counts will be recorded from the final candidate's named logs.
 
 - 2.16 (tag `v2.16`, 18 Oct 2026): THE LOAD BUDGET -- TWO FM SYNTH TRACKS IN
   A PART -- AND THE LFO SETUP PAGE NAMES LFO 3'S COLUMN V/C ON AN FM SYNTH

@@ -43,6 +43,7 @@ def remix_include(modules):
     code, the sequencer / UI / clipboard hooks and the card I/O; LOCKS below)."""
     return "\n".join((".ifndef SD_PASS1", ".set SD_PASS1, 1", ".set HAVE_SYDRUM, 1",
                       _read("..", "synth", "engine_abi.inc"), ".else", _read("engine.inc.s"),
+                      ".global sl_io_dispatch,sl_io_background_request,sl_io_tick_hook",
                       *(_read(name + ".inc.s") for name in LOCKS), ".endif", ""))
 
 
@@ -196,9 +197,7 @@ MODULE = Module(
                "PLAYBACK SETUP editor on SY DRUM's page: held trigs edit the step locks, a default edit "
                "releases the playing step's lock of that control; every other page stock",
                kind="jmp", pad_to=10),
-    ) + tuple(Detour(address, bytes.fromhex(stock), "sydrum", symbol, what, kind="jmp",
-                     pad_to=len(stock) // 2)
-              for address, stock, symbol, what in LOCK_HOOKS),
+    ),  # Shared lock sites are dispatched by SYNTH MACHINE; SY helpers remain local.
     dram_regions=(DramRegion("sl_work_table", LOCK_TABLE_BYTES),),
     conflicts=(("KITS", "both hook the project load / save / reload / clear jobs and the pattern clipboard "
                         "(SY DRUM's step-lock files and clipboard)"),

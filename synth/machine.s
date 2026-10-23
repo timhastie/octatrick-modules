@@ -204,6 +204,7 @@ fm_choose:
         mvz.b   RD_KIND(%a6),%d0         | the machine it plays
         cmp.l   %d3,%d0
         beq     fm_ch_sign               | that machine already: its patch is the user's
+        bsr     ml_warn_mono
         bsr     ml_reset                 | its init (d0 = its kind)
 fm_ch_sign:
         move.b  (%a6),(%a2)              | the row's signature: the Part ...
@@ -232,6 +233,26 @@ fm_ch_out:
         movem.l (%sp),%d0/%d3/%a0-%a6
         lea     36(%sp),%sp
         rts
+| Chosen kind d0, track d2. One popup on choosing SY beside an FM track.
+| This changes no guard or budget decision; every register is preserved.
+ml_warn_mono:
+        cmpi.l  #2,%d0
+        bne     ml_wm_out
+        lea     -60(%sp),%sp
+        movem.l %d0-%d7/%a0-%a6,(%sp)
+        bsr     ml_part
+        bsr     ml_count
+        tst.l   %d0
+        beq     ml_wm_done
+        lea     ml_msg_mono(%pc),%a0
+        move.l  %a0,%d0
+        bsr     ml_toast
+ml_wm_done:
+        movem.l (%sp),%d0-%d7/%a0-%a6
+        lea     60(%sp),%sp
+ml_wm_out:
+        rts
+
 | ml_ident: d2 = track of the current Part -> d0 = the machine it plays: 1 FM (FM SYNTH
 | chosen; until 2.14 also FLEX with an FMSYNTH* / SYNTH* slot), 2 SY DRUM (chosen), 0 a stock machine;
 | tst.l done. Preserves every other register.
@@ -428,16 +449,6 @@ ml_rs_pages:
         moveq   #0,%d1
 ml_rs_lfo:
         mvz.b   (%a4)+,%d0
-        cmpi.l  #1,%d4
-        bne     ml_rs_lfo1               | FM SYNTH: SPD3 = VOIC 1, DEP3 = CHRD off
-        cmpi.l  #2,%d1
-        bne     ml_rs_chrd
-        moveq   #1,%d0
-ml_rs_chrd:
-        cmpi.l  #5,%d1
-        bne     ml_rs_lfo1
-        moveq   #0,%d0
-ml_rs_lfo1:
         bsr     ml_p1byte
         addq.l  #1,%d1
         cmpi.l  #6,%d1
@@ -1329,6 +1340,9 @@ fm_chooser_open:
 | row's Part bytes at row * 6: displaced `movel %dN,%d0; lsll #3,%d0; addl %dN,%dN; subl
 | %dN,%d0` (d2 / d6, the row; d0 / d7 := row * 6). Rows 5.. address FLEX's.
 fm_setup_edit6:
+        jsr     po_setup_edit:l
+        tst.l   %d0
+        bne     fm_e6_handled
         cmpi.l  #FM_ROW,%d2
         blt     fm_e6
         moveq   #FLEX,%d2
@@ -1338,6 +1352,8 @@ fm_e6:
         add.l   %d2,%d2
         sub.l   %d2,%d0
         jmp     EDIT6_RET
+fm_e6_handled:
+        jmp     0x4003a624
 fm_setup_draw6:
         cmpi.l  #FM_ROW,%d6
         blt     fm_d6
@@ -1577,12 +1593,15 @@ ml_msg_sy:
         .ascii  "SY DRUM: "
         .byte   '0' + ML_SY_MAX
         .asciz  " MAX"
+ml_msg_mono:
+        .asciz  "FM SYNTH -> MONO"
+        .balign 2
 ml_msg_both:
         .asciz  "FM+SY DRUM: LIMIT"
         .balign 2
 fm_defaults:
         .byte   64, 12, 32, 64, 0, 40    | PLAYBACK: PTCH 0, RATO 1, INDX 32, FINE 0c, FDBK 0, DEC 40 (Modwerk's)
-        .byte   0, 0, 0, 0, 0, 0         | SETUP: LOOP SLIC LEN RATE TSTR TSNS all 0 (OFF)
+        .byte   1, 0, 0, 0, 0, 0         | SETUP: VOIC 1, CHRD none; other four stock defaults
 fm_name:
         .asciz  "FM SYNTH"
         .balign 4

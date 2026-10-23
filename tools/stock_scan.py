@@ -166,6 +166,14 @@ def remix_variants(path: pathlib.Path):
     if '.include "remix.inc"' not in text:
         return [None]
     abi = (REPO / "synth" / "engine_abi.inc").read_text()
+    if path.parent.name == "synth" and path.name == "poly.s":
+        manifest = ast.parse((path.parent / "manifest.py").read_text())
+        function = next(n for n in manifest.body if isinstance(n, ast.FunctionDef) and n.name == "poly_include")
+        names = next(ast.literal_eval(n.value) for n in function.body
+                     if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "names" for t in n.targets))
+        sources = [(path.parent / (name + ".inc.s")).read_text() for name in names]
+        return ["\n".join((".ifndef FM_PASS1", ".set FM_PASS1, 1", f".set HAVE_SYDRUM, {flag}",
+                           abi, ".else", *sources, ".endif")) for flag in (0, 1)]
     if path.parent.name == "sy-drum":
         engine = (path.parent / "engine.inc.s").read_text()
         locks = [(path.parent / f"{n}.inc.s").read_text() for n in sydrum_locks(path.parent)]

@@ -74,13 +74,11 @@ linked into the platform runtime at the arena reserve's base, appended
 behind the loader, depacked at boot; the unit gives up 10 MB of sample
 memory); the kind table's FLEX entry is pointed at its sy_render by a
 SymbolRef (octabam's 4-byte stock pointer rewritten to a symbol; the fork
-had added a Detour of kind "ptr" for the same job). On a synth track the LFO page is always a clone
-(built from the stock record on first use, a detour at the page resolver's
-LFO-descriptor load) whose slot 2 is VOIC (1..4, default 1; SPD3's byte, a
-stock or out-of-range byte reads 1) and slot 5 CHRD (the chord shape, "----"
-while VOIC is 1); LFO 3 is muted on a synth track (two detours at the LFO
-engine's depth read -- the routine and its copy inlined in the frame
-builder; its default PMTR is PTCH). VOIC is the switch: 1 = the mono synth
+had added a Detour of kind "ptr" for the same job). Since 2.17 VOIC and CHRD occupy the PLAYBACK SETUP LOOP/SLIC
+boxes; the LFO page and LFO SETUP remain stock. Independent FM step and
+scene tables resolve step > selected scene > Part before the existing cap.
+The frame's LFO clock tap remains, replaying the original depth read.
+VOIC is the switch: 1 = the mono synth
 of phase 4, bit for bit (GLIDE legato, the stock lifecycle); 2..4 = that
 many voices playing the chord shape at every trig or live key, per-voice
 release from the AMP REL byte, per-voice glide, live keys held together
@@ -349,7 +347,8 @@ flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 
 import os
 
-from remix.schema import CavePatch, Detour, Kind, Linked, Module, SymbolRef
+from remix.schema import CavePatch, Detour, DramRegion, Kind, Linked, Module, SymbolRef
+import importlib.util
 
 # This module's own directory, relative to the build's cwd (octabam's repo
 # root): "modules/synth" when the module is checked out directly, and
@@ -357,6 +356,44 @@ from remix.schema import CavePatch, Detour, Kind, Linked, Module, SymbolRef
 # timhastie/octatrick-modules. Every source path below is built from it,
 # so one manifest serves both layouts.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
+_guard_spec = importlib.util.spec_from_file_location("fm_stock_guard", os.path.join(_HERE, "stock_guard.py"))
+_guard_module = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(_guard_module)
+stock_guard = _guard_module.stock_guard
+
+
+_hooks_spec = importlib.util.spec_from_file_location("fm_hook_map", os.path.join(_HERE, "hook_map.py"))
+_hooks = importlib.util.module_from_spec(_hooks_spec)
+_hooks_spec.loader.exec_module(_hooks)
+LOCK_HOOKS = _hooks.LOCK_HOOKS
+SCENE_HOOKS = (
+    (0x40053498, "fs_ui_knob_a_hook", "Scene A held: edit the FM setup scene parameter"),
+    (0x40052e98, "fs_ui_knob_b_hook", "Scene B held: edit the FM setup scene parameter"),
+    (0x4005435c, "fs_ui_key_a_hook", "Scene A held: clear the pressed FM setup scene parameter"),
+    (0x40053a68, "fs_ui_key_b_hook", "Scene B held: clear the pressed FM setup scene parameter"),
+    (0x400274cc, "fs_scene_copy_hook", "Capture companion setup scene locks with scene COPY"),
+    (0x400275a0, "fs_scene_undo_hook", "Capture companion setup scene locks with scene undo"),
+    (0x40025b40, "fs_scene_write_hook", "Restore companion setup scene locks with scene paste or undo"),
+    (0x40038c30, "fs_scene_clear_hook", "Clear companion setup scene locks with scene CLEAR"),
+    (0x4004a908, "fs_part_save_hook", "Save the Part's companion scene locks"),
+    (0x4004aab4, "fs_part_reload_hook", "Reload the Part's saved companion scene locks"),
+    (0x4004a9d0, "fs_part_clear_hook", "Clear the Part's companion scene locks"),
+    (0x4002932c, "fs_part_copy_hook", "Capture the Part's companion scene locks with COPY"),
+    (0x400292a0, "fs_part_undo_hook", "Capture the Part's companion scene locks with undo"),
+    (0x40029a4c, "fs_part_write_hook", "Restore companion scene locks after the Part paste guard accepts"),
+)
+
+
+def poly_include(modules):
+    names = ("setup", "locks_store", "locks_scene_store", "scenes_value", "scenes_ui",
+             "scenes_ops", "locks_effective", "locks_seq", "locks_ui", "locks_sparse",
+             "locks_clip", "locks_transform", "locks_delete", "locks_live", "locks_io")
+    sources = []
+    for name in names:
+        with open(os.path.join(_HERE, name + ".inc.s"), encoding="utf-8") as source:
+            sources.append(source.read())
+    return "\n".join((".ifndef FM_PASS1", ".set FM_PASS1, 1", remix_include(modules),
+                       ".else", *sources, ".endif", ""))
 
 
 def engine_abi():
@@ -394,68 +431,68 @@ def machine_include(modules):
 # on a STATIC track, whose voice is always a sample). PICKUP keeps stock's.
 KIND_TABLE_STATIC = 0x400d6434
 KIND_TABLE_FLEX = 0x400d6438
-STOCK_RENDERER = bytes.fromhex("40004008")
+
 # Phase 5 (24 Sep 2026, poly.s): the LFO engine's depth read `mvsw %a2@(0x12,
 # %d2:l:2),%d0; lea %a0@(0,%d4:l:2),%a1` (LFO 3 is muted on a synth track)
 # and the page resolver's LFO-descriptor load `movel #0x400d37f6,%d0; bras
 # 0x40031ed6` (the VOIC/CHRD page for a synth track).
 LFO_DEPTH_HOOK = 0x40003ca4              # the routine 0x40003b90
 LFO_DEPTH_HOOK2 = 0x4000d03e             # its copy inlined in the frame builder (0x4000cf40..)
-LFO_DEPTH_STOCK = bytes.fromhex("71722a12" "43f04a00")
+
 LFO_PAGE_HOOK = 0x40031e62
-LFO_PAGE_STOCK = bytes.fromhex("203c400d37f6" "606c")
+
 # MIDI IN (30 Sep 2026, poly.s "MIDI IN"): the STANDARD map's chromatic block
 # and the note-off, the octave switch of the audio-track note-on, and the 0x41
 # event handler's live recorder (docs/firmware/MIDI.md appendix B).
 MIDI_MAP_HOOK = 0x4000e746               # `moveq #29,%d1; movel %d1,%a5@(0,%d2:l:4)`: the START, posted before the lock byte
-MIDI_MAP_STOCK = bytes.fromhex("721d" "2b812c00")
+
 MIDI_OFF_HOOK = 0x4000dfd4               # `mvsb %a0@,%d1; mvsb %a3@,%d0; cmpl %d1,%d0; bnes 0x4000dff8`
-MIDI_OFF_STOCK = bytes.fromhex("7310" "7113" "b081" "661c")
+
 MIDI_GATE_HOOK = 0x4000e452              # `movel %d6,%d0; subql #2,%d0; moveq #5,%d2; cmpl %d0,%d2`
-MIDI_GATE_STOCK = bytes.fromhex("2006" "5580" "7405" "b480")
+
 RETRIG_HOOK = 0x4000c634                 # the frame builder's per-track copy of the DSP command byte 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t]: `moveal 114(sp),a1; moveb (a0,a1.l),d0` (a0 = 0x46104d15; BUILD 37: po_retrig turns a sequencer START on a sounding synth voice, 0x10 | n, into the key's clean 0x30)
-RETRIG_STOCK = bytes.fromhex("226f0072" "10309800")
+
 KILL_HOOK = 0x4000685c                   # the stock VOICE KILL 0x40006820(t): `clrb %d0; moveb %d0,%a1@(0,%a0:l)`, the CF voice byte 0x800049d8 + 168 t := 0, interrupts masked; d1 = t (BUILD 33: po_kill ends the engine's voices of the track at that instant)
-KILL_STOCK = bytes.fromhex("4200" "13808800")
+
 REL_HOOK = 0x4000b51a                    # `moveal %sp@(114),%a3; movel %a1@(0,%a3:l:4),%d0` (the frame builder's AMP-release consumer, mailbox bit 6: every note-off path)
-REL_STOCK = bytes.fromhex("266f0072" "2031bc00")
+
 MIDI_OFFGATE_HOOK = 0x4000de10           # `subql #2,%d0; moveq #5,%d3; cmpl %d0,%d3` (the note-off's octave switch)
-MIDI_OFFGATE_STOCK = bytes.fromhex("5580" "7605" "b680")
+
 MIDI_REC_HOOK = 0x400625e0               # `movel %a2@(4),%d0; movel %d0,0x46c7e956`
-MIDI_REC_STOCK = bytes.fromhex("202a0004" "23c046c7e956")
+
 MIDI_TRIG_HOOK = 0x4006262a              # `mvsb %a2@(2),%d2; moveal %d2,%a0; lea %a0@(0,%d2:l:4),%a0`
-MIDI_TRIG_STOCK = bytes.fromhex("752a0002" "2042" "41f02c00")
+
 # LEG (2 Oct 2026): the AMP SETUP window (FUNC + AMP) stages, draws and edits
 # the STOCK AMP descriptor by address; five detours hand every audio track the
 # clone with LEG in the sixth box (poly.s po_amp_desc: OFF / MONO / POLY on a
 # synth track, OFF / MONO on any other audio track since 3 Oct 2026; the
 # master track keeps the stock record).
 AMP_STAGE_HOOK = 0x40059d56              # `pea 0x400d3988` (the window's staging of page 2)
-AMP_STAGE_STOCK = bytes.fromhex("4879400d3988")
+
 AMP_DRAW1_HOOK = 0x4003685a              # `lea 0x400d39c2,%a4; lea 0x400d3a6a,%a3` (the drawer: names, formatters)
-AMP_DRAW1_STOCK = bytes.fromhex("49f9400d39c2" "47f9400d3a6a")
+
 AMP_DRAW2_HOOK = 0x400368ac              # `movel 0x400d3b16,%sp@-; movel 0x400d3b12,%sp@-` (the enable pair, the widget pass)
-AMP_DRAW2_STOCK = bytes.fromhex("2f39400d3b16" "2f39400d3b12")
+
 AMP_DRAW3_HOOK = 0x40036946              # the same pair, the name pass
-AMP_DRAW3_STOCK = AMP_DRAW2_STOCK
+
 AMP_EDIT_HOOK = 0x4003ae40               # `addil #0x400d3988,%d0; moveal %d0,%a1; moveal %a1@(298),%a0` (the page-2 editor's handler read)
-AMP_EDIT_STOCK = bytes.fromhex("0680400d3988" "2240" "2069012a")
+
 AMP_LANE_HOOK = 0x4003af0a               # `lea 0x8000083c,%a0; moveb %d2,%a0@(0,%d0:l)` (the page-2 editor's live-lane write)
-AMP_LANE_STOCK = bytes.fromhex("41f98000083c" "11820800")
+
 # Transposing a held step (4 Oct 2026, poly.s po_octave): the FUNC + UP/DOWN
 # handler 0x40051fc4 (the trig-mode selector; both keys' records in the FUNC
 # layer's tables 0x400bf628 / 0x400bf2b4 name it) tests its window here.
 OCT_HOOK = 0x40051fce                    # `tstl 0x400bebae` (the selector window's handle: closed, a press opens it; open, presses step the mode)
-OCT_STOCK = bytes.fromhex("4ab9400bebae")
+
 # FINE defaults to 0c when a track becomes a synth track (28 Sep 2026, poly.s
 # po_assign / po_machwin / po_machlist): the slot assigner's slot-byte write and
 # the two windows' machine-only writes.
 ASSIGN_HOOK = 0x400795ba                 # `addal #0x8f04a,%a0; moveb %d1,%a0@` (the assigner 0x40079424: the Part's slot byte of the new machine)
-ASSIGN_STOCK = bytes.fromhex("d1fc0008f04a" "1081")
+
 MACHWIN_HOOK = 0x40079816                # `addal #0x8eda2,%a0; mvsb %a0@,%d3` (the machine window's apply path 0x400797cc: the machine byte, the slot equal)
-MACHWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7710")
+
 LISTWIN_HOOK = 0x4005a848                # `addal #0x8eda2,%a0; mvsb %a0@,%d4` (the sample-list window's apply path 0x4005a826: the same)
-LISTWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7910")
+
 # The new-project case (Tim, MKI: the FIRST FM machine of a project read +63c;
 # poly.s po_loadsel): the file browser's select 0x40022610 writes the chosen path
 # into the slot's settings record -- the only way a FLEX slot's FILE changes
@@ -463,9 +500,9 @@ LISTWIN_STOCK = bytes.fromhex("d1fc0008eda2" "7910")
 # T8 = slot 8, every slot empty; the assigner then takes its same-slot exit and
 # the sample-list window's LOAD FILE never touches the Part).
 LOADSEL_HOOK = 0x40022686                # `jsr 0x40013a08` (sprintf: record, "%s..", path) in the browser's select 0x40022610
-LOADSEL_STOCK = bytes.fromhex("4eb940013a08")
+
 UNLOAD_HOOK = 0x40022732                 # `jsr 0x40025288` (the slot unload: machine, slot) in the browser's load callback 0x400226f4, before its call of the select
-UNLOAD_STOCK = bytes.fromhex("4eb940025288")
+
 
 # 2.10 (8 Oct 2026): FM SYNTH IN THE MACHINE LIST (machine.s; after Modwerk's FM Synth
 # module, MIT, Modwerk contributors -- its dedicated chooser, Part validation and
@@ -475,63 +512,63 @@ UNLOAD_STOCK = bytes.fromhex("4eb940025288")
 # needs no marker file and no sample. The marker files still select the engine.
 # The machine window's commit shares MACHWIN_HOOK (fm_main_commit, then po_machwin).
 FM_NAME_HOOK = 0x400334d8                # `movel %d2,%sp@-; movel %sp@(8),%d1` (the machine-name formatter name(row))
-FM_NAME_STOCK = bytes.fromhex("2f02" "222f0008")
+
 FM_NAMES_HOOK = 0x4003c928               # `lea 0x400a78c8,%a5` (SRC SETUP's name table: five pointers)
-FM_NAMES_STOCK = bytes.fromhex("4bf9400a78c8")
+
 FM_NAME_A_HOOK = 0x4003d718              # `lea 0x400a78c8,%a0` (a track's machine name, a0 = its machine byte)
-FM_NAME_A_STOCK = bytes.fromhex("41f9400a78c8")
+
 FM_SETUP_ROW_HOOK = 0x4003c980           # `mvsb %a0@,%d0; lea %sp@(24),%sp` (SRC SETUP's row highlight)
-FM_SETUP_ROW_STOCK = bytes.fromhex("7110" "4fef0018")
+
 FM_CHOOSER_ROW_HOOK = 0x400786c8         # `mvsb %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (the machine window's row highlight)
-FM_CHOOSER_ROW_STOCK = bytes.fromhex("7110" "b480" "662e")
+
 FM_SETUP_OPEN_HOOK = 0x400585dc          # `moveb %a0@,%d3; mvsb %d3,%d4; pea 0x400bb704` (SRC SETUP opens on the track's row)
-FM_SETUP_OPEN_STOCK = bytes.fromhex("1610" "7903" "4879400bb704")
+
 FM_CHOOSER_OPEN_HOOK = 0x40078886        # `mvsb %a0@,%d0; movel %d0,%sp@-; pea 0x460e7386` (the machine window opens on it)
-FM_CHOOSER_OPEN_STOCK = bytes.fromhex("7110" "2f00" "4879460e7386")
+
 FM_EDIT6_HOOK = 0x4003a52e               # `movel %d2,%d0; lsll #3,%d0; addl %d2,%d2; subl %d2,%d0` (SRC SETUP's editor: row * 6)
-FM_EDIT6_STOCK = bytes.fromhex("2002" "e788" "d482" "9082")
+
 FM_DRAW6_HOOK = 0x4003cd98               # `movel %d6,%d7; lsll #3,%d7; addl %d6,%d6; subl %d6,%d7` (its drawer: the same)
-FM_DRAW6_STOCK = bytes.fromhex("2e06" "e78f" "dc86" "9e86")
+
 FM_TICK_HOOK = 0x4005221e                # `jsr %pc@(0x4005213c); jsr 0x4007e940` (the UI tick)
-FM_TICK_STOCK = bytes.fromhex("4ebaff1c" "4eb94007e940")
+
 FM_SRC_COMMIT_HOOK = 0x4005a616          # `movel 0x460d5c30,%d1` (SRC SETUP's machine-byte write: the chosen row)
-FM_SRC_COMMIT_STOCK = bytes.fromhex("2239460d5c30")
+
 FM_SRC_COMMIT2_HOOK = 0x4005a850         # the same instruction on its second path (after LISTWIN_HOOK, which returns here)
-FM_SRC_COMMIT2_STOCK = bytes.fromhex("2239460d5c30")
+
 FM_VALIDATE_HOOK = 0x40002318            # `lea %sp@(-96),%sp; moveml %d2-%d7/%a2-%fp,%sp@` (the Part validator's prologue)
-FM_VALIDATE_STOCK = bytes.fromhex("4fefffa0" "48d77cfc")
+
 FM_SOURCE_HOOK = 0x4000d514              # `moveal %a4@+,%a0; movel %a0,%a3@+; pea 0x10` (the frame builder's second supplier call)
-FM_SOURCE_STOCK = bytes.fromhex("205c" "26c8" "48780010")
+
 # 2.11: the machine list's six row-count / row-bound sites (machine.s ml_*; pokes 5 -> 6 until 2.10)
 ML_WIN_COUNT_HOOK = 0x40079248            # `pea 5; pea 6` (the machine window's list init: rows, visible)
-ML_WIN_COUNT_STOCK = bytes.fromhex("48780005" "48780006")
+
 ML_SRC_COUNT_HOOK = 0x400585fa            # `pea 5; pea 5` (SRC SETUP's list init: rows, visible)
-ML_SRC_COUNT_STOCK = bytes.fromhex("48780005" "48780005")
+
 ML_NAME_BOUND_HOOK = 0x4003c950           # `moveq #4,%d1; cmpl %d2,%d1; bcss 0x4003c95a` (SRC SETUP's name lookup)
-ML_NAME_BOUND_STOCK = bytes.fromhex("7204" "b282" "6504")
+
 ML_DRAW_BOUND_HOOK = 0x40078678           # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786a2` (the machine window's drawer)
-ML_DRAW_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d24" "2f02" "2043" "4e90")  # ... movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@ (12 B)
+  # ... movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@ (12 B)
 ML_HI_BOUND_HOOK = 0x400786ce             # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786fc` (its highlight)
-ML_HI_BOUND_STOCK = bytes.fromhex("7004" "b082" "6d28")
+
 ML_CUR_BOUND_HOOK = 0x40079904            # `moveq #4,%d3; cmpl %d4,%d3; bgew 0x400797cc` (its cursor)
-ML_CUR_BOUND_STOCK = bytes.fromhex("7604" "b684" "6c00fec2")
+
 ML_CLAMP_HOOKS = (0x40078c22, 0x40078cb0, 0x40078d2e, 0x40078dee, 0x40078e7c)  # the machine window's row clamp after a list move
-ML_CLAMP_STOCK = bytes.fromhex("7205" "b280" "6c02" "7005")   # `moveq #5,%d1; cmpl %d0,%d1; bges +2; moveq #5,%d0`
+   # `moveq #5,%d1; cmpl %d0,%d1; bges +2; moveq #5,%d0`
 # 2.15: the selection guard's paste guards (machine.s fm_page_store .. fm_preview): stock's copy / paste and
 # undo write the machine byte without the lists -- the SRC page's store, the whole track's and the Part's
 # (each guarded where its paste and its undo call it) -- and the FLEX list's sample preview makes a track FLEX
 PAGE_STORE_HOOK = 0x40027e98              # `moveb %a2@(19),%d3; mvsb %d3,%d6; moveb %a2@(18),%d7` (the SRC page's store 0x40027e4c, page 0)
-PAGE_STORE_STOCK = bytes.fromhex("162a0013" "7d03" "1e2a0012")
+
 TRACK_PASTE_HOOK = 0x4002b99e             # `pea 0x460c8122; jsr %pc@(0x4002b654)` (the whole track's paste calls its store: the clipboard)
-TRACK_PASTE_STOCK = bytes.fromhex("4879460c8122" "4ebafcae")
+
 TRACK_UNDO_HOOK = 0x4002b962              # `pea 0x460bf218; jsr %pc@(0x4002b654)` (... its undo: the undo buffer)
-TRACK_UNDO_STOCK = bytes.fromhex("4879460bf218" "4ebafcea")
+
 PART_PASTE_HOOK = 0x40029b8a              # `pea 0x460c8122; jsr %pc@(0x40029a4c)` (the Part's paste calls its store: the clipboard)
-PART_PASTE_STOCK = bytes.fromhex("4879460c8122" "4ebafeba")
+
 PART_UNDO_HOOK = 0x40029b54               # `pea 0x460bf218; jsr %pc@(0x40029a4c)` (... its undo: the undo buffer)
-PART_UNDO_STOCK = bytes.fromhex("4879460bf218" "4ebafef0")
+
 PREVIEW_HOOK = 0x40096d22                 # `mvsb %a0@,%d3; movel %d3,0x46105424; moveb #1,%a0@` (the FLEX list's sample preview 0x40096c54)
-PREVIEW_STOCK = bytes.fromhex("7710" "23c346105424" "10bc0001")
+
 KIND_TABLE_FLEX_START = 0x400d6458       # the kind table's FLEX START callback (stock 0x4000f450)
 FLEX_START = 0x4000f450
 
@@ -558,38 +595,19 @@ PAGE_AT = 0x400d24d0
 PAGE_LEN = 1752
 PG_RESOLVE_AT = 16                       # pg_resolve's offset in the cave (fm_descriptor, 16 B, is first)
 RESOLVER_HOOK = 0x40031ece
-RESOLVER_STOCK = bytes.fromhex("20300c00" "6002")
+
 # 2.10 (6 Oct 2026, poly.s "THE LFO DESTINATION LIST"): LFO SETUP's PMTR. The
 # formatter 0x4003bf64 (the LFO descriptor's slot-6 formatter) picks the PLAYBACK
 # names from the machine table and the LFO names from the stock descriptor
 # itself, not through the page resolver; the audio edit 0x400392cc walks all 30
 # destinations. On a synth track the names become the FM SYNTH page's and the
-# VOIC / CHRD clone's, and the edit steps over SPD3 / DEP3 (VOIC / CHRD).
+# PLAYBACK clone's. All stock LFO destinations remain available.
 LFD_NAME_HOOK = 0x4003bff2               # `lea 0x400d5f38,%a0; bras 0x4003c054` (page 0: the machine table)
-LFD_NAME_STOCK = bytes.fromhex("41f9400d5f38" "605a")
+
 LFD_LFO_HOOK = 0x4003bffa                # `lea 0x400d37f6,%a2; bras 0x4003c058` (page 1: the LFO descriptor)
-LFD_LFO_STOCK = bytes.fromhex("45f9400d37f6" "6056")
+
 LFD_EDIT_HOOK = 0x400392cc               # `movel %d3,%d0; moveq #6,%d2; remsl %d2,%d7,%d0` (the audio PMTR edit after its branches)
-LFD_EDIT_STOCK = bytes.fromhex("2003" "7406" "4c420807")
-# 2.16 (18 Oct 2026, poly.s "THE LFO SETUP WINDOW'S V/C COLUMN"): the LFO SETUP
-# window (FUNC + LFO) takes the STOCK LFO record by address at four six-byte sites
-# (the LEG pattern), so on an FM SYNTH track its third row read "LFO 3" and its SPD /
-# DEP boxes turned VOIC and CHRD without saying so. Each site hands the window
-# poly.s po_lfs_desc's descriptor: the VOIC / CHRD clone with its setup slots set by
-# the list cursor on an FM SYNTH track, the stock record's address on every other
-# track. The third row's label V/C is drawn by the drawer's detour over the stock's
-# (fix 1, 19 Oct 2026: 2.16 rc1 repointed the row table's third string pointer, a
-# SymbolRef, to a buffer only the audio window's path refilled, and the MIDI track's
-# LFO SETUP window, which reads the same table through its own draw path, showed it --
-# blank at power-on, V/C after an FM track's page; the verifier's D1. No SymbolRef now:
-# every other window reads the stock table).
-LFS_STAGE_HOOK = 0x40058488              # `pea 0x400d37f6` (the window's staging of its six knobs at open; `jsr (%a0)` follows)
-LFS_MOVE_HOOK = 0x4003a45c               # `pea 0x400d37f6` (the staging again at a list move; `jsr (%a0)` follows)
-LFS_PEA_STOCK = bytes.fromhex("4879400d37f6")
-LFS_DRAW_HOOK = 0x400574cc               # `lea 0x400d37f6,%a4` (the drawer: the six boxes' names, formatters, widgets, nibbles)
-LFS_DRAW_STOCK = bytes.fromhex("49f9400d37f6")
-LFS_EDIT_HOOK = 0x40039020               # `lea 0x400d37f6,%a3` (the setup editor: the knob's handler, min and count)
-LFS_EDIT_STOCK = bytes.fromhex("47f9400d37f6")
+
 # Ratified bytes: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT (26 Sep 2026: the
 # runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of the stock descriptor is gone,
 # and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
@@ -666,7 +684,7 @@ def emit_page(addr: int):
     """The source is the only truth for the bytes (b""); the resolver's kind-0
     table load becomes a jmp to pg_resolve (+16, after fm_descriptor)."""
     assert addr == PAGE_AT, "the page cave is pinned"
-    return b"", ((RESOLVER_HOOK, RESOLVER_STOCK,
+    return b"", ((RESOLVER_HOOK, stock_guard(RESOLVER_HOOK, 6),
                   bytes.fromhex("4ef9") + (addr + PG_RESOLVE_AT).to_bytes(4, "big")),)
 
 
@@ -685,18 +703,22 @@ MODULE = Module(
         "and RATE is FINE (cents) on a synth track, 0c the moment a track becomes one. "
         "A FLEX or STATIC sample track with LEG MONO and GLIDE slides its pitch (2.8).",
     linked=(
-        Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True, include=remix_include),
+        Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True, include=poly_include),
         Linked("fmmachine", os.path.join(_HERE, "machine.s"), cpu="5475", dram=True, include=machine_include),
     ),
+    dram_regions=(DramRegion("fl_work_table", 2097152),
+                  DramRegion("fl_scene_table", 32768),
+                  DramRegion("fl_migration_table", 2560),
+                  DramRegion("fl_migration_text", 262144)),
     # The kind table's FLEX entry is a 4-byte data pointer, not an
     # instruction: upstream octabam's SymbolRef (a stock u32 rewritten to a
     # linked symbol, the stock value asserted first) is what the fork's
     # Detour(kind="ptr") did (ported 25 Sep 2026).
     symbol_refs=(
-        SymbolRef(KIND_TABLE_FLEX, int.from_bytes(STOCK_RENDERER, "big"), "poly", "sy_render",
+        SymbolRef(KIND_TABLE_FLEX, 0x40004008, "poly", "sy_render",
                   "kind table FLEX renderer -> the DRAM unit's sy_render (a track chosen as FM SYNTH "
                   "becomes the FM voice; a sample's PTCH slides with LEG MONO + GLIDE)"),
-        SymbolRef(KIND_TABLE_STATIC, int.from_bytes(STOCK_RENDERER, "big"), "poly", "sy_render",
+        SymbolRef(KIND_TABLE_STATIC, 0x40004008, "poly", "sy_render",
                   "kind table STATIC renderer -> sy_render too (2.8: a STATIC sample's PTCH slides "
                   "with LEG MONO + GLIDE; no marker scan, the stock call otherwise)"),
         SymbolRef(KIND_TABLE_FLEX_START, FLEX_START, "poly", "po_fmstart",
@@ -704,198 +726,185 @@ MODULE = Module(
                   "machine list starts its voice without a sample; every other FLEX track the stock callback"),
     ),
     detours=(
-        Detour(LFO_DEPTH_HOOK, LFO_DEPTH_STOCK, "poly", "po_lfo3",
-               "LFO engine (the routine) depth read: LFO 3 reads depth 0 on a synth track",
+
+        Detour(LFO_DEPTH_HOOK2, stock_guard(LFO_DEPTH_HOOK2, 8), "poly", "po_lfo3b",
+               "LFO frame clock tap; replays the stock depth read for all three LFOs on every track",
                kind="jmp", pad_to=8),
-        Detour(LFO_DEPTH_HOOK2, LFO_DEPTH_STOCK, "poly", "po_lfo3b",
-               "LFO engine (the frame builder's inlined copy) depth read: the same",
-               kind="jmp", pad_to=8),
-        Detour(LFO_PAGE_HOOK, LFO_PAGE_STOCK, "poly", "po_lfopage",
-               "page resolver LFO descriptor: a synth track gets the VOIC/CHRD clone",
-               kind="jmp", pad_to=8),
-        Detour(LFD_NAME_HOOK, LFD_NAME_STOCK, "poly", "po_lfdname",
+
+        Detour(LFD_NAME_HOOK, stock_guard(LFD_NAME_HOOK, 8), "poly", "po_lfdname",
                "LFO SETUP PMTR formatter, PLAYBACK names: the page resolver's descriptor (the FM SYNTH page on a synth track) instead of the machine table's; the master track and every other machine stock",
                kind="jmp", pad_to=8),
-        Detour(LFD_LFO_HOOK, LFD_LFO_STOCK, "poly", "po_lfdlfo",
-               "LFO SETUP PMTR formatter, LFO names: the VOIC / CHRD clone on a synth track (a stored SPD3 / DEP3 prints VOIC / CHRD); every other track stock",
-               kind="jmp", pad_to=8),
-        Detour(LFD_EDIT_HOOK, LFD_EDIT_STOCK, "poly", "po_lfdedit",
-               "LFO SETUP PMTR edit (audio tracks): stock's display-order walk, one shown destination a detent, stepping over SPD3 / DEP3 (VOIC / CHRD) on a synth track; the Part byte or the lock as stock stores it",
-               kind="jmp", pad_to=8),
-        Detour(LFS_STAGE_HOOK, LFS_PEA_STOCK, "poly", "po_lfsstage",
-               "LFO SETUP window staging (open, track change): the descriptor is po_lfs_desc's -- the VOIC / CHRD clone with the setup slots by the list cursor on an FM SYNTH track (2.16), the stock record elsewhere",
-               kind="jmp"),
-        Detour(LFS_MOVE_HOOK, LFS_PEA_STOCK, "poly", "po_lfsmove",
-               "LFO SETUP window staging at a list move: the same descriptor (the knobs follow the cursor)",
-               kind="jmp"),
-        Detour(LFS_DRAW_HOOK, LFS_DRAW_STOCK, "poly", "po_lfsdraw",
-               "LFO SETUP window drawer: the six boxes from po_lfs_desc's descriptor (V/C: VOIC and CHRD boxes, the four LFO-only boxes left stock), and on an FM SYNTH track the third row's label V/C drawn over the stock's (the rows and the cursor's bar are drawn before this site)",
-               kind="jmp"),
-        Detour(LFS_EDIT_HOOK, LFS_EDIT_STOCK, "poly", "po_lfsedit",
-               "LFO SETUP window editor: the knob's handler, min and count from po_lfs_desc's descriptor (VOIC 1..4 on V/C)",
-               kind="jmp"),
-        Detour(MIDI_MAP_HOOK, MIDI_MAP_STOCK, "poly", "po_mon",
+
+
+        Detour(MIDI_MAP_HOOK, stock_guard(MIDI_MAP_HOOK, 6), "poly", "po_mon",
                "MIDI IN note-on (the STANDARD map's chromatic block): a synth track's PTCH raw is note - 20 (semitones, 84 = 0), stored before the START, and the note is posted to the engine as a key of its own",
                kind="jmp"),
-        Detour(MIDI_OFF_HOOK, MIDI_OFF_STOCK, "poly", "po_moff",
+        Detour(MIDI_OFF_HOOK, stock_guard(MIDI_OFF_HOOK, 8), "poly", "po_moff",
                "MIDI IN note-off: a paraphonic synth track releases that note's voice alone; the last note's release posts the stock AMP release",
                kind="jmp", pad_to=8),
-        Detour(REL_HOOK, REL_STOCK, "poly", "po_rel",
+        Detour(REL_HOOK, stock_guard(REL_HOOK, 8), "poly", "po_rel",
                "the frame builder's AMP-release consumer (mailbox 0x40, every note-off path): a synth voice takes the released flag -- plan B: the engine's own release starts (po_mono_env)",
                kind="jmp", pad_to=8),
-        Detour(RETRIG_HOOK, RETRIG_STOCK, "poly", "po_retrig",
+        Detour(RETRIG_HOOK, stock_guard(RETRIG_HOOK, 8), "poly", "po_retrig",
                "the frame builder's copy of the DSP command byte into the packer's nibble byte (every START form's funnel): a START posted on a synth track whose engine voice is on (S_ON) becomes the key's clean form 0x30 -- the CF START bit with sub-frame position 0 -- so the DSP does not crossfade its old voice under the engine's one continuous stream (BUILD 37: the +5.6 dB bump at a sequencer trig on a still-sounding note)",
                kind="jmp", pad_to=8),
-        Detour(KILL_HOOK, KILL_STOCK, "poly", "po_kill",
+        Detour(KILL_HOOK, stock_guard(KILL_HOOK, 6), "poly", "po_kill",
                "the stock VOICE KILL's CF voice-byte clear (STOP / pattern change 0x40043c50, the loaders, the sample preview, the frame builder's end mask): the engine's voices of the killed track end at that instant (S_GAIN / S_GPREV / S_HTIM / S_ON := 0, the paraphonic voices freed) -- the DSP voice is dead, the next START is cold (BUILD 33)",
                kind="jmp"),
-        Detour(MIDI_GATE_HOOK, MIDI_GATE_STOCK, "poly", "po_mgate",
+        Detour(MIDI_GATE_HOOK, stock_guard(MIDI_GATE_HOOK, 8), "poly", "po_mgate",
                "MIDI IN note gate: a note outside 72..96 addressed to a synth track plays it chromatically (20..127 = -64..+43 semitones)",
                kind="jmp", pad_to=8),
-        Detour(MIDI_OFFGATE_HOOK, MIDI_OFFGATE_STOCK, "poly", "po_mogate",
+        Detour(MIDI_OFFGATE_HOOK, stock_guard(MIDI_OFFGATE_HOOK, 6), "poly", "po_mogate",
                "MIDI IN note-off gate: a note outside 72..96 addressed to a synth track reaches the chromatic note-off (po_moff)",
                kind="jmp"),
-        Detour(MIDI_REC_HOOK, MIDI_REC_STOCK, "poly", "po_mrec",
+        Detour(MIDI_REC_HOOK, stock_guard(MIDI_REC_HOOK, 10), "poly", "po_mrec",
                "MIDI IN live recorder (the 0x41 event): a synth track's note records through po_keyrec (fingered chords; the PTCH lock in semitones)",
                kind="jmp", pad_to=10),
-        Detour(MIDI_TRIG_HOOK, MIDI_TRIG_STOCK, "poly", "po_mtrig",
+        Detour(MIDI_TRIG_HOOK, stock_guard(MIDI_TRIG_HOOK, 10), "poly", "po_mtrig",
                "MIDI IN with a trig held: a synth track's held trig gets its PTCH lock in semitones",
                kind="jmp", pad_to=10),      # the whole 10-byte displaced span (the lea's extension word included)
-        Detour(OCT_HOOK, OCT_STOCK, "poly", "po_octave",
+        Detour(OCT_HOOK, stock_guard(OCT_HOOK, 6), "poly", "po_octave",
                "FUNC + UP/DOWN (the trig-mode selector): with a trig held on a synth track in GRID RECORDING, any trig mode, "
                "the held steps' PTCH lock moves an octave instead (no trig held, a sample track, GRID RECORDING off: the selector)",
                kind="jmp"),
-        Detour(AMP_STAGE_HOOK, AMP_STAGE_STOCK, "poly", "po_ampstage",
+        Detour(AMP_STAGE_HOOK, stock_guard(AMP_STAGE_HOOK, 6), "poly", "po_ampstage",
                "AMP SETUP window (FUNC + AMP) staging: an audio track stages the AMP clone whose sixth box is LEG (OFF / MONO / POLY on a synth track, OFF / MONO on a sample track; the master track stock)",
                kind="jmp"),
-        Detour(AMP_DRAW1_HOOK, AMP_DRAW1_STOCK, "poly", "po_ampdraw1",
+        Detour(AMP_DRAW1_HOOK, stock_guard(AMP_DRAW1_HOOK, 12), "poly", "po_ampdraw1",
                "AMP SETUP drawer: the page-2 names and formatters from the clone on an audio track",
                kind="jmp", pad_to=12),
-        Detour(AMP_DRAW2_HOOK, AMP_DRAW2_STOCK, "poly", "po_ampdraw2",
+        Detour(AMP_DRAW2_HOOK, stock_guard(AMP_DRAW2_HOOK, 12), "poly", "po_ampdraw2",
                "AMP SETUP drawer: the enable nibbles from the clone (the widget pass)",
                kind="jmp", pad_to=12),
-        Detour(AMP_DRAW3_HOOK, AMP_DRAW3_STOCK, "poly", "po_ampdraw3",
+        Detour(AMP_DRAW3_HOOK, stock_guard(AMP_DRAW3_HOOK, 12), "poly", "po_ampdraw3",
                "AMP SETUP drawer: the enable nibbles from the clone (the name pass)",
                kind="jmp", pad_to=12),
-        Detour(AMP_EDIT_HOOK, AMP_EDIT_STOCK, "poly", "po_ampedit",
+        Detour(AMP_EDIT_HOOK, stock_guard(AMP_EDIT_HOOK, 12), "poly", "po_ampedit",
                "AMP page-2 editor: slot 11 of an audio track steps LEG 0..2 (synth) or 0..1 (sample) (po_legknob); the Part byte and its battery-RAM shadow as stock writes them",
                kind="jmp", pad_to=12),
-        Detour(AMP_LANE_HOOK, AMP_LANE_STOCK, "poly", "po_amplane",
+        Detour(AMP_LANE_HOOK, stock_guard(AMP_LANE_HOOK, 10), "poly", "po_amplane",
                "AMP page-2 editor's live-lane write: a synth track's LEG never reaches the lane (the DSP's copy reads 0)",
                kind="jmp", pad_to=10),
-        Detour(ASSIGN_HOOK, ASSIGN_STOCK, "poly", "po_assign",
+        Detour(ASSIGN_HOOK, stock_guard(ASSIGN_HOOK, 8), "poly", "po_assign",
                "slot assigner (both windows): a track that becomes a synth track by this slot write -- FLEX with an FMSYNTH*/SYNTH* slot, "
                "not one before -- gets FINE 0c (RATE := 64 in the Part, its shadow and the live lane); a synth track already, or a sample track: untouched",
                kind="jmp", pad_to=8),
-        Detour(MACHWIN_HOOK, MACHWIN_STOCK, "fmmachine", "fm_main_commit",
+        Detour(MACHWIN_HOOK, stock_guard(MACHWIN_HOOK, 8), "fmmachine", "fm_main_commit",
                "machine window, the machine-only write (the slot equal): row 5 (FM SYNTH) is stored as FLEX with the Part's \"FM\", 1 (seeded "
                "unless the track plays the FM voice already), any other row clears it (2.10, machine.s); then po_machwin: a track that "
                "becomes a synth track by the machine change gets FINE 0c",
                kind="jmp", pad_to=8),
-        Detour(LISTWIN_HOOK, LISTWIN_STOCK, "poly", "po_machlist",
+        Detour(LISTWIN_HOOK, stock_guard(LISTWIN_HOOK, 8), "poly", "po_machlist",
                "sample-list window, the machine-only write: the same",
                kind="jmp", pad_to=8),
-        Detour(LOADSEL_HOOK, LOADSEL_STOCK, "poly", "po_loadsel",
+        Detour(LOADSEL_HOOK, stock_guard(LOADSEL_HOOK, 6), "poly", "po_loadsel",
                "file browser select: the slot's path write (stock's sprintf, called from the stub) -- a FLEX slot's file going "
                "non-marker -> FMSYNTH*/SYNTH* makes every FLEX track holding that slot a synth track: FINE 0c for each (the new-project case: "
                "T1 = FLEX slot 1, the first marker loaded into slot 1, no machine or slot byte changes)",
                kind="jsr"),
-        Detour(UNLOAD_HOOK, UNLOAD_STOCK, "poly", "po_unload",
+        Detour(UNLOAD_HOOK, stock_guard(UNLOAD_HOOK, 6), "poly", "po_unload",
                "file browser load callback: the slot unload before the select (2.12) -- the FLEX slot's marker state is kept for "
                "po_loadsel (the unload clears the slot's record), then the stock unload",
                kind="jsr"),
         # ---- FM SYNTH in the machine list (2.10, machine.s; MACHWIN_HOOK above) ----
-        Detour(FM_NAME_HOOK, FM_NAME_STOCK, "fmmachine", "fm_machine_name",
+        Detour(FM_NAME_HOOK, stock_guard(FM_NAME_HOOK, 6), "fmmachine", "fm_machine_name",
                "the machine-name formatter: row 5 reads FM SYNTH (the machine window's sixth row)",
                kind="jmp"),
-        Detour(FM_NAMES_HOOK, FM_NAMES_STOCK, "fmmachine", "fm_src_names",
+        Detour(FM_NAMES_HOOK, stock_guard(FM_NAMES_HOOK, 6), "fmmachine", "fm_src_names",
                "SRC SETUP's machine-name table: six rows, the stock five (copied at run time) and FM SYNTH",
                kind="lea"),
-        Detour(FM_NAME_A_HOOK, FM_NAME_A_STOCK, "fmmachine", "fm_name_a",
+        Detour(FM_NAME_A_HOOK, stock_guard(FM_NAME_A_HOOK, 6), "fmmachine", "fm_name_a",
                "a track's machine name: FM SYNTH for a chosen track (FLEX with the Part's \"FM\", 1)",
                kind="jmp"),
-        Detour(FM_SETUP_ROW_HOOK, FM_SETUP_ROW_STOCK, "fmmachine", "fm_setup_row",
+        Detour(FM_SETUP_ROW_HOOK, stock_guard(FM_SETUP_ROW_HOOK, 6), "fmmachine", "fm_setup_row",
                "SRC SETUP's row highlight: a chosen track's row is FM SYNTH",
                kind="jmp"),
-        Detour(FM_CHOOSER_ROW_HOOK, FM_CHOOSER_ROW_STOCK, "fmmachine", "fm_chooser_row",
+        Detour(FM_CHOOSER_ROW_HOOK, stock_guard(FM_CHOOSER_ROW_HOOK, 6), "fmmachine", "fm_chooser_row",
                "the machine window's row highlight: the same",
                kind="jmp"),
-        Detour(FM_SETUP_OPEN_HOOK, FM_SETUP_OPEN_STOCK, "fmmachine", "fm_setup_open",
+        Detour(FM_SETUP_OPEN_HOOK, stock_guard(FM_SETUP_OPEN_HOOK, 10), "fmmachine", "fm_setup_open",
                "SRC SETUP opens on FM SYNTH for a chosen track (its page: the descriptor table's slot 5, fm_tick)",
                kind="jmp", pad_to=10),
-        Detour(FM_CHOOSER_OPEN_HOOK, FM_CHOOSER_OPEN_STOCK, "fmmachine", "fm_chooser_open",
+        Detour(FM_CHOOSER_OPEN_HOOK, stock_guard(FM_CHOOSER_OPEN_HOOK, 10), "fmmachine", "fm_chooser_open",
                "the machine window opens on FM SYNTH for a chosen track",
                kind="jmp", pad_to=10),
-        Detour(FM_EDIT6_HOOK, FM_EDIT6_STOCK, "fmmachine", "fm_setup_edit6",
+        Detour(FM_EDIT6_HOOK, stock_guard(FM_EDIT6_HOOK, 8), "fmmachine", "fm_setup_edit6",
                "SRC SETUP's editor addresses row 5's Part bytes as FLEX's",
                kind="jmp", pad_to=8),
-        Detour(FM_DRAW6_HOOK, FM_DRAW6_STOCK, "fmmachine", "fm_setup_draw6",
+        Detour(FM_DRAW6_HOOK, stock_guard(FM_DRAW6_HOOK, 8), "fmmachine", "fm_setup_draw6",
                "SRC SETUP's drawer: the same",
                kind="jmp", pad_to=8),
-        Detour(FM_TICK_HOOK, FM_TICK_STOCK, "fmmachine", "fm_tick",
+        Detour(FM_TICK_HOOK, stock_guard(FM_TICK_HOOK, 10), "fmmachine", "fm_tick",
                "the UI tick (its two calls replayed): SRC SETUP's six names refreshed and the PLAYBACK descriptor table's "
                "spare slot 5 (0x400d5f4c) := the FM SYNTH page (page.s fm_descriptor)",
                kind="jmp", pad_to=10),
-        Detour(FM_SRC_COMMIT_HOOK, FM_SRC_COMMIT_STOCK, "fmmachine", "fm_src_commit",
+        Detour(FM_SRC_COMMIT_HOOK, stock_guard(FM_SRC_COMMIT_HOOK, 6), "fmmachine", "fm_src_commit",
                "SRC SETUP's machine-byte write: row 5 is stored as FLEX with the signature, any other row clears it",
                kind="jmp"),
-        Detour(FM_SRC_COMMIT2_HOOK, FM_SRC_COMMIT2_STOCK, "fmmachine", "fm_src_commit2",
+        Detour(FM_SRC_COMMIT2_HOOK, stock_guard(FM_SRC_COMMIT2_HOOK, 6), "fmmachine", "fm_src_commit2",
                "the same on SRC SETUP's second path (po_machlist's detour returns to this site)",
                kind="jmp"),
         # ---- 2.15: the selection guard on stock's paste / undo stores and the FLEX preview (machine.s) ----
-        Detour(PAGE_STORE_HOOK, PAGE_STORE_STOCK, "fmmachine", "fm_page_store",
+        Detour(PAGE_STORE_HOOK, stock_guard(PAGE_STORE_HOOK, 10), "fmmachine", "fm_page_store",
                "the SRC page's paste / undo store: FLEX pasted over a track whose signature place names a row is refused past the "
                "selection guard's limits (nothing stored, the popup's message)",
                kind="jmp", pad_to=10),
-        Detour(TRACK_PASTE_HOOK, TRACK_PASTE_STOCK, "fmmachine", "fm_track_paste",
+        Detour(TRACK_PASTE_HOOK, stock_guard(TRACK_PASTE_HOOK, 10), "fmmachine", "fm_track_paste",
                "the whole track's paste: a clip whose machine is a row's (FLEX + signature) is refused past the limits of the Part it "
                "lands in (nothing pasted: the pattern track and SY DRUM's lock rows neither)",
                kind="jmp", pad_to=10),
-        Detour(TRACK_UNDO_HOOK, TRACK_UNDO_STOCK, "fmmachine", "fm_track_undo",
+        Detour(TRACK_UNDO_HOOK, stock_guard(TRACK_UNDO_HOOK, 10), "fmmachine", "fm_track_undo",
                "the whole track's undo: the same test on what it restores",
                kind="jmp", pad_to=10),
-        Detour(PART_PASTE_HOOK, PART_PASTE_STOCK, "fmmachine", "fm_part_paste",
+        Detour(PART_PASTE_HOOK, stock_guard(PART_PASTE_HOOK, 10), "fmmachine", "fm_part_paste",
                "the Part's paste: a Part that holds more than the limits (saved by an older build) is refused whole",
                kind="jmp", pad_to=10),
-        Detour(PART_UNDO_HOOK, PART_UNDO_STOCK, "fmmachine", "fm_part_undo",
+        Detour(PART_UNDO_HOOK, stock_guard(PART_UNDO_HOOK, 10), "fmmachine", "fm_part_undo",
                "the Part's undo: the same test on what it restores",
                kind="jmp", pad_to=10),
-        Detour(PREVIEW_HOOK, PREVIEW_STOCK, "fmmachine", "fm_preview",
+        Detour(PREVIEW_HOOK, stock_guard(PREVIEW_HOOK, 12), "fmmachine", "fm_preview",
                "the FLEX list's sample preview makes a track FLEX while it plays: a track that was not FLEX loses the signature it "
                "kept first, so the preview plays the sample and no row's machine is revived",
                kind="jmp", pad_to=12),
-        Detour(FM_VALIDATE_HOOK, FM_VALIDATE_STOCK, "fmmachine", "fm_validate",
+        Detour(FM_VALIDATE_HOOK, stock_guard(FM_VALIDATE_HOOK, 8), "fmmachine", "fm_validate",
                "the Part validator: a chosen track's twelve FLEX bytes sit out the stock clamps (FLEX's PTCH 4..124; FM SYNTH's is "
                "0..127) -- the stock defaults in their place while it runs, the FM bytes back after",
                kind="jmp", pad_to=8),
-        Detour(FM_SOURCE_HOOK, FM_SOURCE_STOCK, "poly", "po_fmsource",
+        Detour(FM_SOURCE_HOOK, stock_guard(FM_SOURCE_HOOK, 8), "poly", "po_fmsource",
                "the frame builder's second supplier call: a chosen track's supplier is sy_render (an empty FLEX voice gets stock's "
                "silent one)",
                kind="jmp", pad_to=8),
         # ---- the machine list's row count and bounds (2.11, machine.s; 2.10 poked them to 6 rows) ----
-        Detour(ML_WIN_COUNT_HOOK, ML_WIN_COUNT_STOCK, "fmmachine", "ml_win_count",
+        Detour(ML_WIN_COUNT_HOOK, stock_guard(ML_WIN_COUNT_HOOK, 8), "fmmachine", "ml_win_count",
                "the machine window's list init: 5 + the remix's machine-list rows (6 with FM SYNTH, 7 with SY DRUM), six visible",
                kind="jmp", pad_to=8),
-        Detour(ML_SRC_COUNT_HOOK, ML_SRC_COUNT_STOCK, "fmmachine", "ml_src_count",
+        Detour(ML_SRC_COUNT_HOOK, stock_guard(ML_SRC_COUNT_HOOK, 8), "fmmachine", "ml_src_count",
                "SRC SETUP's machine selector: 5 + the machine-list rows, five visible",
                kind="jmp", pad_to=8),
-        Detour(ML_NAME_BOUND_HOOK, ML_NAME_BOUND_STOCK, "fmmachine", "ml_name_bound",
+        Detour(ML_NAME_BOUND_HOOK, stock_guard(ML_NAME_BOUND_HOOK, 6), "fmmachine", "ml_name_bound",
                "SRC SETUP's name lookup admits the machine-list rows",
                kind="jmp"),
-        Detour(ML_DRAW_BOUND_HOOK, ML_DRAW_BOUND_STOCK, "fmmachine", "ml_draw_bound",
+        Detour(ML_DRAW_BOUND_HOOK, stock_guard(ML_DRAW_BOUND_HOOK, 12), "fmmachine", "ml_draw_bound",
                "the machine window's row drawer draws name(row + top) up to the last row: SELECT MACHINE TYPE scrolls like SRC SETUP",
                kind="jmp", pad_to=12),
-        Detour(ML_HI_BOUND_HOOK, ML_HI_BOUND_STOCK, "fmmachine", "ml_hi_bound",
+        Detour(ML_HI_BOUND_HOOK, stock_guard(ML_HI_BOUND_HOOK, 6), "fmmachine", "ml_hi_bound",
                "the machine window highlights the machine-list rows",
                kind="jmp"),
-        Detour(ML_CUR_BOUND_HOOK, ML_CUR_BOUND_STOCK, "fmmachine", "ml_cur_bound",
+        Detour(ML_CUR_BOUND_HOOK, stock_guard(ML_CUR_BOUND_HOOK, 8), "fmmachine", "ml_cur_bound",
                "the machine window applies a machine-list row under its cursor",
                kind="jmp", pad_to=8),
     ) + tuple(
-        Detour(a, ML_CLAMP_STOCK, "fmmachine", f"ml_clamp{i + 1}",
+        Detour(a, stock_guard(a, 8), "fmmachine", f"ml_clamp{i + 1}",
                "the machine window's row clamp after a list move: 0 .. the last row (stock 0..5)",
                kind="jmp", pad_to=8)
-        for i, a in enumerate(ML_CLAMP_HOOKS)) + (
+        for i, a in enumerate(ML_CLAMP_HOOKS)) + tuple(
+        Detour(site, stock_guard(site, length), "poly", symbol, reason,
+               kind="jmp", pad_to=length)
+        for site, length, symbol, reason in LOCK_HOOKS
+    ) + tuple(
+        Detour(site, stock_guard(site, 8), "poly", symbol, reason,
+               kind="jmp", pad_to=8)
+        for site, symbol, reason in SCENE_HOOKS
     ),
     # 2.11: the six row-count / row-bound constants were pokes (5 -> 6) until 2.10; a poke is
     # static, the number of rows is the remix's (FM SYNTH, + SY DRUM): six detours read it.

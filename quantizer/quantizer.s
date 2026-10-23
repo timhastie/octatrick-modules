@@ -243,44 +243,23 @@ qz_glide_of:
 | qz_boot (0x40010212), qz_defaults (0x40025ac2) and qz_scale_mask (the
 | SCALE_AT trampoline's target) are core.s, the ROM core, since 28 Sep 2026.
 
-| qz_polytrack: d0 := 1 (flags NE) when track d2 is a FLEX track whose
-| assigned FLEX slot holds a SYNTH*-named sample AND its Part's VOIC byte
-| (the LFO page's slot 2: Part + 0x8ee9a + track*24 + 2) is 2..4, else 0
-| (EQ). Preserves everything but d0.
+| qz_polytrack: d0 := 1 (flags NE) for an FM track whose effective
+| VOIC (Part, scene, step lock and cap) is paraphonic, else 0 (EQ).
+| Uses the engine's published legato-mode reader; preserves all but d0.
 qz_polytrack:
         .if     HAVE_SYDRUM
-        jbsr    qz_fmtrack              | (2.11) VOIC is FM's: a SY DRUM track stays mono
+        jbsr    qz_fmtrack
         .else
         jbsr    qz_is_synth
         .endif
         jbeq    qz_pt_ret
         move.l  %a0,-(%sp)
-        move.l  %d1,-(%sp)
-        movea.l 0x46c82456,%a0
-        mvz.b   0x100b14cf,%d0
-        move.l  #6322,%d1
-        muls.l  %d1,%d0
-        adda.l  %d0,%a0                 | the Part
-        adda.l  #0x8ee9a,%a0            | its LFO page bytes
-        move.l  %d2,%d1
-        lsl.l   #3,%d1                  | track * 8 ...
-        move.l  %d1,%d0
-        add.l   %d1,%d1                 | ... * 2 = 16 ...
-        add.l   %d0,%d1                 | ... + 8 = track * 24 (27 Sep 2026: a third
-                                        | doubling made it track * 40, so T2..T8 read an
-                                        | unrelated byte for VOIC and their keys stayed mono)
-        mvz.b   2(%a0,%d1.l),%d0        | VOIC
-        subq.l  #2,%d0
-        cmpi.l  #2,%d0                  | 2..4?
-        jbls    qz_pt_yes
-        moveq   #0,%d0
-        jbra    qz_pt_out
-qz_pt_yes:
-        moveq   #1,%d0
-qz_pt_out:
-        move.l  (%sp)+,%d1
+        jbsr    qz_legmode              | engine resolves setup locks and the Part cap
         movea.l (%sp)+,%a0
-        tst.l   %d0
+        subq.l  #2,%d0
+        cmpi.l  #1,%d0                  | modes 2/3 are paraphonic
+        sls     %d0
+        andi.l  #1,%d0
 qz_pt_ret:
         rts
 
