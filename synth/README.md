@@ -30,7 +30,7 @@ scene's lock**, otherwise its **Part value**. The crossfader switches between th
 interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
 The load cap is applied after the locks are resolved.
 
-**Cap display (known initial-draw defect; see Measured).** If the Part's existing load budget permits fewer voices than the
+**Cap display (known CHRD label defect; see Measured).** If the Part's existing load budget permits fewer voices than the
 resolved VOIC value, the box shows the effective count followed by `L`: for example, **`1L`**
 when VOIC is set to **4** but the cap is **1**. CHRD reads **`----L`** while the cap is **1**.
 The marker applies to the inverted locked drawings too. The stored value and its locks stay
@@ -90,10 +90,10 @@ is not ready to flash. The named evidence below establishes these checks:
 - `logs/gate8-b1-c3.txt`, `logs/gate8-b2-c3.txt` and `logs/gate8-b4-c3.txt`: the
   prescribed budget and chooser checks pass. `logs/gate8-sy-preservation.json` records
   unchanged existing SY companion files through migration.
-- `logs/gate6-c4-result.txt`: initial setup drawing still fails to show the required
-  cap labels. Turning a knob and restoring its value draws them correctly. The
+- `logs/gate6-c4-result.txt`: the capped VOIC label reads `1L`, but CHRD remains
+  garbled on initial drawing and after knob edits; `----L` is not demonstrated. The
   compatibility change preserves the native fixed-layout flag and frame-only
-  sentinel, but did not resolve this defect. The engine cap and mono-to-chord audio
+  sentinel, but did not resolve the CHRD defect. The engine cap and mono-to-chord audio
   are separately observed in `G/logs/gate6-b4-audio.txt`.
 
 The builder's live fingered-chord recording check remains unproven: the test controls

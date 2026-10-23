@@ -225,7 +225,7 @@ MKI on 22 Oct 2026. Tim reported that the voice cap was not shown and the
 V/C speed dial could jump past the valid voice range. The 2.17 candidate
 restores LFO 3 and moves VOIC/CHRD to PLAYBACK SETUP with independent step
 and scene locks. PORT checks confirm the setup detents, restored LFO modulation and
-GRID-lock power-cycle paths. Initial cap labels remain defective until a knob redraw
+GRID-lock power-cycle paths. The CHRD cap label remains garbled
 (`R/work/r17/logs/gate6-c4-result.txt`); this candidate is not ready to flash. The
 live-recording test has a tool limitation and the emulator cannot establish a
 physical crossfader sweep. The complete gate status
@@ -265,7 +265,7 @@ builds on the author's unit and were never tagged.
   SY DRUM **2**, quantizer **24**, tuner **3**, processor-load **4**; synth
   also has **3** symbol references and **1** source cave, direct-jump **1**
   source cave. The PORT setup/LFO and GRID-lock persistence checks are
-  emulator-verified; initial cap labels remain defective until a knob redraw
+  emulator-verified; the CHRD cap label remains garbled
   (`R/work/r17/logs/gate6-c4-result.txt`). Live recording and the physical
   crossfader retain the limits described in `synth/README.md`. This candidate
   is not ready to flash. See `R/work/r17/REPORT.md` and
