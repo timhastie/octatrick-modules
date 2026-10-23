@@ -30,7 +30,7 @@ scene's lock**, otherwise its **Part value**. The crossfader switches between th
 interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
 The load cap is applied after the locks are resolved.
 
-**The cap is visible.** If the Part's existing load budget permits fewer voices than the
+**Cap display (known initial-draw defect; see Measured).** If the Part's existing load budget permits fewer voices than the
 resolved VOIC value, the box shows the effective count followed by `L`: for example, **`1L`**
 when VOIC is set to **4** but the cap is **1**. CHRD reads **`----L`** while the cap is **1**.
 The marker applies to the inverted locked drawings too. The stored value and its locks stay
@@ -68,7 +68,7 @@ larger than the migration scratch capacity produces an error instead of being re
 
 **PORT observations; not yet on a unit.** The complete gate status and the independent
 pass are recorded in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. The candidate
-is not a hardware-qualified release. The named evidence below establishes these checks:
+is not ready to flash. The named evidence below establishes these checks:
 
 - `logs/gate234-c3-eval.json` and `logs/gate3-c3-display.txt`: VOIC moves through **1..4**
   one click at a time with the corresponding display; CHRD moves one entry and back.
@@ -85,14 +85,26 @@ is not a hardware-qualified release. The named evidence below establishes these 
 - `logs/gate7-eval.json`: the older project's defaults, step locks and scene lock transfer;
   SAVE and repeated load preserve them; a no-FM project card stays byte-identical.
   These migration runs used the first candidate; later changes affect setup detents and
-  formatting. The independent pass identifies its own final-image migration evidence.
+  formatting and native setup layout compatibility. The independent pass identifies
+  its own final-image migration evidence.
+- `logs/gate8-b1-c3.txt`, `logs/gate8-b2-c3.txt` and `logs/gate8-b4-c3.txt`: the
+  prescribed budget and chooser checks pass. `logs/gate8-sy-preservation.json` records
+  unchanged existing SY companion files through migration.
+- `logs/gate6-c4-result.txt`: initial setup drawing still fails to show the required
+  cap labels. Turning a knob and restoring its value draws them correctly. The
+  compatibility change preserves the native fixed-layout flag and frame-only
+  sentinel, but did not resolve this defect. The engine cap and mono-to-chord audio
+  are separately observed in `G/logs/gate6-b4-audio.txt`.
 
 The builder's live fingered-chord recording check remains unproven: the test controls
 failed to enter CHROMATIC mode after their permitted correction, although LIVE RECORDING
 started. The raw failure remains in `G/logs/gate234_c3.log`; it is not a firmware PASS.
 The pinned emulator also has no physical crossfader input. Tests that seed the native
 weight state establish the switch's state selection, not a physical crossfader sweep.
-The final gate report retains those limitations and any additional failures.
+The scene fixture becomes silent from its injected B endpoint onward despite
+active engine state (`G/logs/gate568_audio_c3.txt`); those later audio checks,
+including snapping, remain unproven. The final gate report retains these
+limitations and any additional failures.
 
 ## Earlier release notes and measurements
 
