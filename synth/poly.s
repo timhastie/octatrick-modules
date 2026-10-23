@@ -3239,6 +3239,21 @@ po_fv_end:
         lea     8(%sp),%sp
         rts
 
+| po_fmt_blank: fmt(buf, value) -> "". The FM SETUP page keeps the stock FLEX
+| page-2 boxes (LEN / RATE / TSTR / TSNS) in slots 8-11 with their stock
+| formatters; fed an FM Part byte those return WITHOUT writing buf, so the stock
+| select widget measures and blits stale stack bytes as a wide string centred in
+| the box, overrunning left over the OR-only SETUP window plane (no inter-cell
+| clear) into the CHRD value cell. A defined empty value keeps the boxes' frames,
+| names and icons and draws no value text, so nothing overruns VOIC / CHRD.
+| Preserves every register.
+po_fmt_blank:
+        move.l  %a0,-(%sp)
+        movea.l 8(%sp),%a0
+        clr.b   (%a0)
+        movea.l (%sp)+,%a0
+        rts
+
 po_fmt_chord:
         lea     -16(%sp),%sp
         movem.l %d1/%d4/%a0-%a1,(%sp)

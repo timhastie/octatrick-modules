@@ -80,6 +80,11 @@ po_setup_patch:
         move.l  %a0,0xca+24(%a1)
         lea     po_fmt_chord(%pc),%a0
         move.l  %a0,0xca+28(%a1)
+        lea     po_fmt_blank(%pc),%a0     | SETUP slots 8-11 (stock FLEX boxes) draw no value text
+        move.l  %a0,0xca+32(%a1)          | so the neighbour LEN box no longer overruns the CHRD cell
+        move.l  %a0,0xca+36(%a1)
+        move.l  %a0,0xca+40(%a1)
+        move.l  %a0,0xca+44(%a1)
         moveq   #1,%d0
         move.l  %d0,0x6a+24(%a1)
         move.b  %d0,0x5e+6(%a1)
