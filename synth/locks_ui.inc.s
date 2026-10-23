@@ -527,6 +527,16 @@ fl_ui_widget:
         move.l  84(%sp),20(%sp)
         move.l  88(%sp),24(%sp)
         move.l  8(%sp),%d4
+| Own both the displayed value and formatter: SETUP's stock staging still
+| supplies its native parameter context. The other four widgets stay stock.
+        bsr     fl_ui_value
+        move.l  %d0,12(%sp)
+        lea     po_fmt_voic:l,%a0
+        tst.l   %d4
+        beq     fl_uw_format
+        lea     po_fmt_chord:l,%a0
+fl_uw_format:
+        move.l  %a0,20(%sp)
         bsr     fl_ui_context
         tst.l   %d0
         beq     fl_uw_draw

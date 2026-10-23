@@ -1341,6 +1341,8 @@ fm_chooser_open:
 | %dN,%d0` (d2 / d6, the row; d0 / d7 := row * 6). Rows 5.. address FLEX's.
 fm_setup_edit6:
         jsr     po_setup_edit:l
+        cmpi.l  #2,%d0
+        beq     fm_e6_one
         tst.l   %d0
         bne     fm_e6_handled
         cmpi.l  #FM_ROW,%d2
@@ -1352,6 +1354,34 @@ fm_e6:
         add.l   %d2,%d2
         sub.l   %d2,%d0
         jmp     EDIT6_RET
+| Ordinary FM A/B default: one detent per value. The stock SETUP editor
+| bypasses descriptor knob handlers and scales short ranges in its accumulator.
+| Follow its established direct-step entry; the stock clamp/store/redraw remains.
+fm_e6_one:
+        moveq   #FLEX*6,%d0
+        lea     (%a3,%d0.l),%a4
+        move.l  %d4,%d2
+        jsr     po_setup_default:l      | one storage reader for the Part's FM defaults
+        cmpa.l  #0,%a3
+        beq     fm_e6_voice
+        move.l  %d1,%d0
+fm_e6_voice:
+        move.l  %d0,%d2
+        move.l  %d3,-(%sp)
+        move.l  %a3,-(%sp)
+        move.l  %a3,%d0
+        mulu.w  #24,%d0
+        lea     0x46c7de2e,%a0
+        tst.l   (%a0,%d0.l)
+        beq     fm_e6_plain
+        move.l  %d3,%d0
+        moveq   #7,%d1
+        divs.l  %d1,%d0
+        bra     fm_e6_delta
+fm_e6_plain:
+        move.l  %d3,%d0
+fm_e6_delta:
+        jmp     0x4003a56c
 fm_e6_handled:
         jmp     0x4003a624
 fm_setup_draw6:

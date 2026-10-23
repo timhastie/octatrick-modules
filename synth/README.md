@@ -1,8 +1,89 @@
-# Synth machine (phase 5: paraphonic chords, the engine in DRAM; phase 4: glide; phase 3: the page; phase 2: the FM voice; phase 1: the hollow voice)
+# FM SYNTH
 
-**Octatrick 2.16 (in preparation): the load budget, and the LFO SETUP page's V/C column.** 2.16 replaces 2.15's three counting rules with one load budget per Part, so two FM SYNTH tracks fit (the FM voices capped to the budget beside SY DRUM tracks); and on an FM SYNTH track the LFO SETUP page's third column now reads V/C with VOIC / CHRD boxes instead of LFO 3 with SPD / DEP. Details: "The load budget (2.16)" and "The LFO SETUP page's V/C column (2.16)" below.
+**Octatrick 2.17 candidate: LFO 3 is back, with VOIC and CHRD on PLAYBACK SETUP.**
+Hold **FUNC + PLAYBACK** on an FM SYNTH track. The two leftmost boxes, formerly LOOP and SLIC,
+are **VOIC** and **CHRD**. VOIC selects **1..4 voices**, starting at **1**; CHRD selects the
+**32 shapes with 4 inversions**, with `----` for no chord. Each knob click changes one value.
+The other four setup boxes stay stock. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
+again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate a destination
+such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
+The design values in this section are recorded in the author's workspace log
+`R/work/r17/logs/design-contract.txt`; they are not runtime measurements.
 
-**Octatrick 2.15 (in preparation): a selection guard.** FM SYNTH and SY DRUM run on the unit's
+## VOIC and CHRD on PLAYBACK SETUP (2.17)
+
+**Step locks.** In GRID RECORDING, hold a trig and turn VOIC or CHRD. The held step's locked
+value is drawn inverted. In LIVE RECORDING, the fingered-chord recogniser records CHRD and
+VOIC in the synth's own step-lock table; PTCH remains a stock pitch lock. Step copy, paste,
+clear and undo carry the FM locks, and a full track copy or paste carries that track's scene
+assignments to the destination Part. A machine change keeps locks, as before.
+
+**Scene locks.** Hold SCENE A or SCENE B and turn either knob to assign it to the scene
+selected on that side. Its assigned value is drawn inverted while the scene key is held.
+To remove an existing assignment, keep the scene key held and press and release that knob
+without turning it. Pressing an unassigned knob assigns its Part value. A held trig takes
+precedence over a held scene key.
+
+At every note START, each control takes its **step lock first**, otherwise the **selected
+scene's lock**, otherwise its **Part value**. The crossfader switches between the sides:
+**A below the midpoint; B at and above it**. Neither voice count nor chord shape is
+interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
+The load cap is applied after the locks are resolved.
+
+**The cap is visible.** If the Part's existing load budget permits fewer voices than the
+resolved VOIC value, the box shows the effective count followed by `L`: for example, **`1L`**
+when VOIC is set to **4** but the cap is **1**. CHRD reads **`----L`** while the cap is **1**.
+The marker applies to the inverted locked drawings too. The stored value and its locks stay
+intact, so removing the limiting SY DRUM track restores the stored voice count and shape.
+An allowed SY DRUM choice beside another FM track shows
+`FM SYNTH -> MONO`. The budget weights and refusal rules remain those of **2.16**.
+
+**Saved values and files.** The Part's PLAYBACK SETUP bytes hold the ordinary VOIC and CHRD
+values. The synth keeps its step locks and scene assignments in **`fmlock01.work` /
+`fmlock01.strd` through `fmlock16.work` / `fmlock16.strd`**, beside the project's bank files.
+Each FM bank file includes its step locks, its working and saved Part scene assignments,
+and the migration checkpoint. Keep these companion files with a project when copying or
+backing it up. They are independent of SY DRUM's `sylock` files. Working locks use the
+inherited **1.2 s** write-while-playing rule; SAVE also updates the stored files, and RELOAD
+restores them. Candidate persistence and power-cycle validation is still pending.
+
+**Older projects.** On loading a **2.15 / 2.16** project without the migration marker, each
+FM SYNTH track's old SPD3 becomes VOIC when it is **1..4**, otherwise VOIC becomes **1**;
+old DEP3 becomes CHRD. Its SPD3 and DEP3 step locks move to VOIC and CHRD step locks, and
+its corresponding scene assignments move to the synth's scene table. The old native lock
+entries are cleared, and SPD3 / DEP3 return to the stock LFO defaults, so an old chord lock
+cannot become pitch modulation from LFO 3. Non-FM tracks, including SY DRUM, keep their data.
+A project with no FM SYNTH tracks is left alone on load.
+
+The project comment **`#SYNTH_VC_SETUP=1`** marks completion. Per-bank checkpoints make normal
+repeated loads idempotent and distinguish an old saved bank restored later from a migrated
+one. A newly chosen FM track uses the new setup bytes from the outset. No musical data loss
+is intended: the existing voice choice, chord shape, step locks and scene locks move to the
+new locations. Older releases do not read these FM companion files; the migration does not
+maintain a second copy in the old SPD3 / DEP3 locations. The migration is not a filesystem
+transaction, and interruption during a save has not been qualified. A project text file
+larger than the migration scratch capacity produces an error instead of being rewritten.
+
+### Measured (2.17 candidate)
+
+**Candidate runtime validation pending; not yet on a unit.** Source assembly is recorded in
+`R/work/r17/logs/scene-assemble.txt` and `R/work/r17/logs/lock-design.txt`; the scene layouts,
+hook contracts and source limitations are recorded in `R/work/r17/logs/scene-research.txt`.
+These checks establish that the candidate sources assemble. They do not establish that the
+page, playback, migration or persistence gates pass. The PORT gate results and the independent
+verification will be recorded separately before release. No hardware result is claimed here.
+
+## Earlier release notes and measurements
+
+The dated sections below preserve the implementation history and its measurements. Their
+LFO-page VOIC / CHRD storage, muted LFO 3, and V/C setup column describe releases **before
+2.17**; the PLAYBACK SETUP section above defines the current candidate's controls. The
+**2.16 load budget** remains in use, with the cap display described above.
+
+
+**Historical Octatrick 2.16: the load budget, and the LFO SETUP page's V/C column.** 2.16 replaces 2.15's three counting rules with one load budget per Part, so two FM SYNTH tracks fit (the FM voices capped to the budget beside SY DRUM tracks); and on an FM SYNTH track the LFO SETUP page's third column now reads V/C with VOIC / CHRD boxes instead of LFO 3 with SPD / DEP. Details: "The load budget (2.16)" and "The LFO SETUP page's V/C column (2.16)" below.
+
+**Historical Octatrick 2.15: a selection guard.** FM SYNTH and SY DRUM run on the unit's
 main processor, and too many tracks of them freeze the unit. Both machine lists (SELECT MACHINE TYPE
 and SRC SETUP) now refuse a choice that would put more than **2 SY DRUM tracks**, more than **1 FM
 SYNTH track**, or **FM SYNTH together with more than 1 SY DRUM track** into the active Part; the track
@@ -713,6 +794,8 @@ else changed" were run again on the 2.15 release image (with the MIDI-track scal
 
 ## The load budget (2.16)
 
+**Current display update:** 2.17 keeps this budget and adds the PLAYBACK SETUP cap markers described above. The statement below that the LFO page keeps showing the stored VOIC value describes the earlier display.
+
 2.15's selection guard counted tracks: at most 1 FM SYNTH track, 2 SY DRUM tracks, FM SYNTH beside at most
 1 SY DRUM track. 2.16 replaces the three counting rules with **one price per Part**, so that two FM SYNTH
 tracks fit, and SY DRUM tracks beside them cost FM voices instead of being refused.
@@ -860,6 +943,8 @@ its own row without a site of its own, and the two modules never write the same 
   conflict so octabam names the reason.
 
 ## A machine change resets the track's machine parameters (2.12, 10 Oct 2026)
+
+**Current setup placement:** in 2.17, FM VOIC / CHRD initialise in PLAYBACK SETUP. All LFO controls initialise as stock LFO controls. The dated LFO-byte description below is historical.
 
 The author's request: "if i change that track to be another machine, like from FM synth to SY DRUM, all the
 parameters, including any LFO settings, should be set to init. They should not inherit any parameters from the
@@ -1928,6 +2013,8 @@ period; cap 2,600); VOIC 4 mean 3,910 -> 4,028 -> 4,060, peak 5,348 -> 5,568
 
 ## The LFO destination list (2.10, 6 Oct 2026)
 
+**Historical, before 2.17:** the SPD3 / DEP3 exclusions below are removed in the current candidate. The FM destination names remain.
+
 Tim (6 Oct): "get rid of the parameters that don't exist for granular, and put
 the parameters for granular in as destinations. Do that for FM and [SY DRUM]
 machine too." On this line: FM.
@@ -1994,6 +2081,8 @@ The DRAM unit grows 18,896 -> 19,200 B (the three hooks and the step-over); the
 page cave (`page.s`) is unchanged.
 
 ## The LFO SETUP page's V/C column (2.16, 18 Oct 2026)
+
+**Historical, removed in 2.17:** the whole V/C column is gone. LFO SETUP is stock again; VOIC and CHRD are on PLAYBACK SETUP.
 
 Tim (18 Oct): on an FM SYNTH track the LFO page shows VOIC in LFO 3's speed box and CHRD in its
 depth box (SPD3 / DEP3 are their storage; LFO 3 is muted on an FM track, `po_lfo3`), and that is
@@ -3326,6 +3415,8 @@ tables at `0x400d7480..0x400d7594`.
 
 ### VOIC, CHRD, and the mono voice
 
+**Historical storage and knob behaviour:** the LFO-slot locations and stepping below predate 2.17. The chord shapes and engine discussion remain the historical record; current controls and lock precedence are described above.
+
 - **VOIC** is the LFO page's slot 2 on a synth track (SPD3's byte, free
   because LFO 3 is muted there): range 1..4, default 1, the stock enum
   stepper as its knob handler (handler 0, PMTR/WAVE's: about four detents a
@@ -3861,6 +3952,8 @@ release + press show the first voice's 30 ms release tail (a 3-6 dB step),
 one sounding voice.
 
 ### Recording fingered chords (26 Sep 2026; the second pass the same day, after 50 takes on 2.4)
+
+**Storage update in 2.17:** the recogniser now writes the synth's dedicated VOIC / CHRD step locks. References below to SPD3 / DEP3 p-locks describe the earlier storage; the recognition rules are unchanged.
 
 With VOIC 2..4 and CHRD "----", a chord played on the CHROMATIC keys (or
 over MIDI IN) during LIVE RECORDING is recognised and the first key's step

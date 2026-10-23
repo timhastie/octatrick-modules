@@ -3301,7 +3301,7 @@ po_fc_end:
 | into the pinned page cave, the enable nibbles. page.s owns the layout;
 | this routine only copies. The built flag and the buffer are runtime data,
 | depacked as zeros by the loader at every boot, so a power cycle rebuilds
-| the clone (the LFO page's po_lfodesc works the same way). The repository
+| the clone. The repository
 | carries none of the record's stock bytes. Clobbers d0/d1/a0/a1 only.
 po_pgdesc:
         lea     -8(%sp),%sp

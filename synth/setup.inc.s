@@ -80,9 +80,6 @@ po_setup_patch:
         move.l  %a0,0xca+24(%a1)
         lea     po_fmt_chord(%pc),%a0
         move.l  %a0,0xca+28(%a1)
-        lea     po_setup_knob(%pc),%a0
-        move.l  %a0,0x12a+24(%a1)
-        move.l  %a0,0x12a+28(%a1)
         moveq   #1,%d0
         move.l  %d0,0x6a+24(%a1)
         move.b  %d0,0x5e+6(%a1)
@@ -102,29 +99,9 @@ po_setup_patch:
         lea     12(%sp),%sp
         rts
 
-| (slot, detents, value): one raw increment per click. The setup editor has
-| already applied pressed acceleration; remove it for these discrete controls.
-po_setup_knob:
-        move.l  4(%sp),%d0
-        subi.l  #6,%d0
-        cmpi.l  #1,%d0
-        bls     po_sk_index
-        move.l  4(%sp),%d0
-po_sk_index:
-        mulu.w  #24,%d0
-        lea     0x46c7de2e,%a0
-        move.l  8(%sp),%d1
-        tst.l   (%a0,%d0.l)
-        beq     po_sk_add
-        moveq   #7,%d0
-        divs.l  %d0,%d1
-po_sk_add:
-        move.l  12(%sp),%d0
-        add.l   %d1,%d0
-        rts
-
 | Called at synth's existing SETUP edit site, after descriptor resolution.
-| a5 descriptor, a3 control, d3 delta, d4 track. d0 handled, others preserved.
+| a5 descriptor, a3 control, d3 delta, d4 track. d0: 0 stock, 1 handled,
+| 2 ordinary FM default (caller bypasses the range-scaled accumulator).
 po_setup_edit:
         move.l  %a0,-(%sp)
         lea     po_pgdesc_buf(%pc),%a0
@@ -146,6 +123,8 @@ po_setup_edit:
         jsr     fl_seq_release_control:l
         movem.l (%sp),%d2/%d4
         lea     8(%sp),%sp
+        moveq   #2,%d0
+        rts
 po_se_no:
         moveq   #0,%d0
 po_se_out:
