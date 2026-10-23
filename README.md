@@ -225,8 +225,10 @@ MKI on 22 Oct 2026. Tim reported that the voice cap was not shown and the
 V/C speed dial could jump past the valid voice range. The 2.17 candidate
 restores LFO 3 and moves VOIC/CHRD to PLAYBACK SETUP with independent step
 and scene locks. PORT checks confirm the setup detents, restored LFO modulation and
-GRID-lock power-cycle paths. The CHRD cap label remains garbled
-(`R/work/r17/logs/gate6-c4-result.txt`); this candidate is not ready to flash. The
+GRID-lock power-cycle paths. The first candidate had a garbled CHRD label
+(`R/work/r17/logs/gate6-c4-result.txt`). The 23 October bounded fix preserves the formatter
+callback context and replaces the cap letter with dashes; its current disposition is
+in the gate reports. The
 live-recording test has a tool limitation and the emulator cannot establish a
 physical crossfader sweep. The complete gate status
 is in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. It is not yet on a unit.
@@ -253,7 +255,7 @@ builds on the author's unit and were never tagged.
 
 - 2.17 (local candidate; PORT checks with limitations, not yet on a unit): LFO 3 is restored on
   FM SYNTH. VOIC and CHRD move to PLAYBACK SETUP and have separate step and
-  scene locks in `fmlockNN.work` / `.strd`. The voice cap uses `L`,
+  scene locks in `fmlockNN.work` / `.strd`. The voice cap uses `--1` and mono CHRD uses `----`,
   and legacy voice/chord defaults and locks migrate out of LFO storage at
   project load. Scene selection switches at the crossfader midpoint.
   The synth owns the shared lock-hook dispatch; SY DRUM keeps its existing
@@ -265,8 +267,8 @@ builds on the author's unit and were never tagged.
   SY DRUM **2**, quantizer **24**, tuner **3**, processor-load **4**; synth
   also has **3** symbol references and **1** source cave, direct-jump **1**
   source cave. The PORT setup/LFO and GRID-lock persistence checks are
-  emulator-verified; the CHRD cap label remains garbled
-  (`R/work/r17/logs/gate6-c4-result.txt`). Live recording and the physical
+  emulator-verified; the first candidate's garbled CHRD label
+  (`R/work/r17/logs/gate6-c4-result.txt`) is addressed by the 23 October formatter fix. Live recording and the physical
   crossfader retain the limits described in `synth/README.md`. This candidate
   is not ready to flash. See `R/work/r17/REPORT.md` and
   `VERIFY.md` for the complete gate status. Nothing has been pushed.

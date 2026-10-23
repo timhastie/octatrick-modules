@@ -30,10 +30,11 @@ scene's lock**, otherwise its **Part value**. The crossfader switches between th
 interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
 The load cap is applied after the locks are resolved.
 
-**Cap display (known CHRD label defect; see Measured).** If the Part's existing load budget permits fewer voices than the
-resolved VOIC value, the box shows the effective count followed by `L`: for example, **`1L`**
-when VOIC is set to **4** but the cap is **1**. CHRD reads **`----L`** while the cap is **1**.
-The marker applies to the inverted locked drawings too. The stored value and its locks stay
+**Cap display (23 October fix).** If the Part's existing load budget permits fewer voices than the
+resolved VOIC value, the box prefixes the effective count with two dashes: **`--1`**
+when VOIC is set to **4** but the cap is **1**. CHRD reads **`----`** whenever the effective
+voice count is **1**, and its chord type when two or more voices can play. The same display
+applies to inverted scene values. The stored value and its locks stay
 intact, so removing the limiting SY DRUM track restores the stored voice count and shape.
 An allowed SY DRUM choice beside another FM track shows
 `FM SYNTH -> MONO`. The budget weights and refusal rules remain those of **2.16**.
@@ -68,7 +69,10 @@ larger than the migration scratch capacity produces an error instead of being re
 
 **PORT observations; not yet on a unit.** The complete gate status and the independent
 pass are recorded in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. The candidate
-is not ready to flash. The named evidence below establishes these checks:
+is not ready to flash. The named evidence below records the first candidate. The bounded 23 October fix round
+preserves the formatter callback context and changes the cap display as described above.
+Its current screenshots and disposition are in `R/work/r17/REPORT.md` and `VERIFY.md`;
+the first-candidate findings below remain historical evidence:
 
 - `logs/gate234-c3-eval.json` and `logs/gate3-c3-display.txt`: VOIC moves through **1..4**
   one click at a time with the corresponding display; CHRD moves one entry and back.

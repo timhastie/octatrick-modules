@@ -3224,9 +3224,10 @@ po_fv_valid:
         jsr     ml_cap_now
         cmp.l   %d0,%d2
         bls     po_fv_plain
+        move.b  #'-',(%a2)+
+        move.b  #'-',(%a2)+
         addi.l  #'0',%d0
         move.b  %d0,(%a2)+
-        move.b  #'L',(%a2)+
         bra     po_fv_end
 po_fv_plain:
         addi.l  #'0',%d2
@@ -3238,29 +3239,22 @@ po_fv_end:
         rts
 
 po_fmt_chord:
+        lea     -16(%sp),%sp
+        movem.l %d1/%d4/%a0-%a1,(%sp)
         jsr     ml_cap_now
         cmpi.l  #1,%d0
-        bne     po_fc_voice
-        movea.l 4(%sp),%a0
-        move.b  #'-',(%a0)+
-        move.b  #'-',(%a0)+
-        move.b  #'-',(%a0)+
-        move.b  #'-',(%a0)+
-        move.b  #'L',(%a0)+
-        clr.b   (%a0)
-        rts
+        beq     po_fc_mono
 po_fc_voice:
-        move.l  %d4,-(%sp)
         moveq   #0,%d4
         jsr     fl_ui_value:l
-        move.l  (%sp)+,%d4
         cmpi.l  #2,%d0
         bcc     po_fc_shape
+po_fc_mono:
         moveq   #0,%d0
         moveq   #0,%d1
         bra     po_fc_name
 po_fc_shape:
-        move.l  8(%sp),%d0
+        move.l  24(%sp),%d0
         move.l  %d0,%d1
         andi.l  #3,%d1
         lsr.l   #2,%d0
@@ -3271,7 +3265,7 @@ po_fc_name:
         lsl.l   #2,%d0
         lea     po_names(%pc),%a0
         lea     (%a0,%d0.l),%a0
-        movea.l 4(%sp),%a1
+        movea.l 20(%sp),%a1
         moveq   #4,%d0
 po_fc_cp:
         tst.b   (%a0)
@@ -3286,6 +3280,8 @@ po_fc_inv:
         move.b  %d1,(%a1)+
 po_fc_end:
         clr.b   (%a1)
+        movem.l (%sp),%d1/%d4/%a0-%a1
+        lea     16(%sp),%sp
         rts
 
 | ==== po_pgdesc(a1 = page.s's patch list) -> d0 = the FM SYNTH PLAYBACK descriptor ==
