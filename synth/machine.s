@@ -110,6 +110,9 @@
         .set    PART_OFF, 0x8ed80        | the Part's own +0 (what the validator is handed)
         .set    FLEX_PB, 0x8edb0         | + 30 * track: the FLEX PLAYBACK bytes (PTCH STRT LEN RATE RTRG RTIM)
         .set    SETUP_GAP, 0x1b0         | ... their FLEX SETUP bytes this far on (blob + 0x8ef60 + 30 * track)
+        .set    LFO_PMTR, 0x8f072        | + 30 * track: the LFO SETUP column's three PMTR bytes (stock Part bytes)
+        .set    LFD_MODULE_FIRST, 30     | the module's LFO destinations VOIC (30) and CHRD (31): past the stock
+        .set    LFD_MODULE_LAST, 31      | descriptor's count, so the stock Part validator would clamp or reject them
         .set    CV_SETUP, 32             | + lane: the PLAYBACK page's SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
         .set    SRC_CURSOR, 0x460d5c30   | SRC SETUP's machine row (the sample-list window's)
         .set    NAMES, 0x400a78c8        | the stock machine-name table, five pointers (STATIC .. PICKUP)
@@ -1515,9 +1518,9 @@ ml_cb_out:
 | are swapped for the stock FLEX defaults (read from the descriptor), the stock
 | validator runs, and the row's bytes are put back. d0 = the stock result.
 fm_validate:
-        lea     -116(%sp),%sp            | 96 B: 8 tracks x 12 saved bytes; 20 B: d2-d4/a2-a3
-        movem.l %d2-%d4/%a2-%a3,96(%sp)
-        movea.l 120(%sp),%a2
+        lea     -140(%sp),%sp            | 96 B: 8 tracks x 12 saved FLEX bytes; 24 B: 8 tracks x 3 saved
+        movem.l %d2-%d4/%a2-%a3,120(%sp) | LFO PMTR bytes; 20 B: d2-d4/a2-a3
+        movea.l 144(%sp),%a2
         suba.l  #PART_OFF,%a2            | blob-relative: + MACH_OFF / SIG_OFF / FLEX_PB
         moveq   #0,%d3                   | the signed tracks
         moveq   #0,%d2
@@ -1547,21 +1550,33 @@ fm_vd_s1:
         addq.l  #1,%a3
         subq.l  #1,%d4
         bne     fm_vd_s1
+        bsr     fm_vd_lptrs              | a0 = its three LFO PMTR bytes, a1 = their save area
+        moveq   #3,%d4
+fm_vd_s2:                                | VOIC / CHRD (30 / 31) sit the stock clamp out too: the
+        mvz.b   (%a0),%d0                | power-up battery-RAM check (0x40025770) rejects the whole
+        move.b  %d0,(%a1)+               | restored state on any correction, and the project load
+        subi.l  #LFD_MODULE_FIRST,%d0    | would clamp them to 29; PTCH (0) stands in meanwhile
+        cmpi.l  #LFD_MODULE_LAST-LFD_MODULE_FIRST,%d0
+        bhi     fm_vd_s2n                | a stock destination keeps the stock clamp
+        clr.b   (%a0)
+fm_vd_s2n:
+        addq.l  #1,%a0
+        subq.l  #1,%d4
+        bne     fm_vd_s2
 fm_vd_snext:
         addq.l  #1,%d2
         moveq   #8,%d0
         cmp.l   %d0,%d2
         bne     fm_vd_save
-        move.l  120(%sp),-(%sp)
+        move.l  144(%sp),-(%sp)
         bsr     fm_stock_validate
         addq.l  #4,%sp
         moveq   #0,%d2
 fm_vd_rest:
         btst    %d2,%d3
         beq     fm_vd_rnext
-        move.l  %d0,-(%sp)
+        move.l  %d0,-(%sp)               | the validator's correction count, kept over both loops
         bsr     fm_vd_ptrs4              | (the stack is 4 deeper here)
-        move.l  (%sp)+,%d0
         moveq   #6,%d4
 fm_vd_r1:
         move.b  (%a1),(%a0)
@@ -1570,13 +1585,27 @@ fm_vd_r1:
         addq.l  #1,%a1
         subq.l  #1,%d4
         bne     fm_vd_r1
+        bsr     fm_vd_lptrs4
+        moveq   #3,%d4
+fm_vd_r2:
+        mvz.b   (%a1)+,%d1
+        move.l  %d1,%d0
+        subi.l  #LFD_MODULE_FIRST,%d0
+        cmpi.l  #LFD_MODULE_LAST-LFD_MODULE_FIRST,%d0
+        bhi     fm_vd_r2n                | a stock destination stays as the stock clamp left it
+        move.b  %d1,(%a0)                | VOIC / CHRD back
+fm_vd_r2n:
+        addq.l  #1,%a0
+        subq.l  #1,%d4
+        bne     fm_vd_r2
+        move.l  (%sp)+,%d0
 fm_vd_rnext:
         addq.l  #1,%d2
         moveq   #8,%d4
         cmp.l   %d4,%d2
         bne     fm_vd_rest
-        movem.l 96(%sp),%d2-%d4/%a2-%a3
-        lea     116(%sp),%sp
+        movem.l 120(%sp),%d2-%d4/%a2-%a3
+        lea     140(%sp),%sp
         rts
 | fm_vd_ptrs: d2 = the track -> a0 = blob-relative Part a2 + FLEX_PB + 30 * track, a1 =
 | the caller's save area + 12 * track, a3 = the stock FLEX defaults (d0 clobbered).
@@ -1595,6 +1624,25 @@ fm_vd_p:
         adda.l  %d0,%a0
         adda.l  #FLEX_PB,%a0
         lea     FLEX_DEF,%a3
+        rts
+| fm_vd_lptrs: d2 = the track -> a0 = blob-relative Part a2 + LFO_PMTR + 30 * track (its three
+| LFO PMTR bytes), a1 = the caller's PMTR save area (after the 96 FLEX bytes) + 3 * track
+| (d0 clobbered).
+fm_vd_lptrs:
+        lea     4+96(%sp),%a1
+        bra     fm_vd_lp
+fm_vd_lptrs4:
+        lea     8+96(%sp),%a1
+fm_vd_lp:
+        move.l  %d2,%d0
+        add.l   %d0,%d0
+        add.l   %d2,%d0
+        adda.l  %d0,%a1
+        move.l  %d2,%d0
+        mulu.w  #30,%d0
+        movea.l %a2,%a0
+        adda.l  %d0,%a0
+        adda.l  #LFO_PMTR,%a0
         rts
 fm_stock_validate:
         lea     -96(%sp),%sp             | displaced
