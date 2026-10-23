@@ -1,7 +1,13 @@
 | Module LFO destinations, 2.17. PMTR 30/31 store in the native Part PMTR byte.
-| Stock DEP arithmetic writes a zeroed private word, never a stock parameter
-| past destination 29. The next real START samples these words after the
-| existing step > scene > Part resolver, then the caller applies its budget cap.
+| Stock DEP arithmetic writes a private word, never a stock parameter past
+| destination 29. The word is preset to the parameter midpoint (63.5 in the
+| stock's value << 8 form) before the stock adds its signed, DEP-scaled output
+| and clamps 0..127 << 8, so it holds midpoint + offset exactly as a stock
+| parameter sitting at its midpoint would, both halves of the waveform kept.
+| The next real START samples these words after the existing step > scene >
+| Part resolver, subtracts the midpoint and applies the signed offset, then
+| the caller applies its budget cap.
+        .set    LF_MID, 16256            | 63.5 << 8: the private word's base for the stock arithmetic
         .text
         .global lf_apply, lf_lfo_standalone, lf_latch, lf_effective, lf_unlatch
         .global lf_page, lf_stage, lf_move, lf_draw, lf_edit, lf_pmtr_edit
@@ -41,11 +47,11 @@ lf_apply_sink:
         lea     lf_scratch:l,%a1
         adda.l  %d0,%a1
         adda.l  %d0,%a1
-        bra     lf_apply_zero
+        bra     lf_apply_mid
 lf_apply_discard:
         lea     lf_discard:l,%a1
-lf_apply_zero:
-        clr.w   (%a1)
+lf_apply_mid:
+        move.w  #LF_MID,(%a1)            | the base the stock adds to: a negative output now reads below it
         movem.l (%sp),%d0-%d3/%a0
         lea     20(%sp),%sp
 lf_apply_out:
@@ -57,8 +63,10 @@ lf_lfo_standalone:
 
 | d2 track, all registers preserved. Called once at the engine's real START,
 | before the warm/cold and mono/poly decision. Multiple LFOs on a destination
-| add. One voice step is 32 raw output units; one shape step is four units.
-| Signed division truncates toward zero, so tiny negative output stays neutral.
+| add. Each word less the midpoint is a signed offset of -63.5..+63.5 value
+| units (<< 8): 16 units a voice (-3..+3, the sum clamped 1..4) and two units
+| a shape (-31..+31, the sum clamped 0..31, no wrap). Signed division
+| truncates toward zero, so tiny output either side of zero stays neutral.
 lf_latch:
         lea     -40(%sp),%sp
         movem.l %d0-%d7/%a0-%a1,(%sp)
@@ -108,6 +116,7 @@ lf_latch_each:
         move.b  #1,(%a1)
         lea     lf_scratch:l,%a0
         mvs.w   (%a0,%d3.l*2),%d1
+        subi.l  #LF_MID,%d1              | midpoint + offset -> the signed offset
         cmpi.l  #30,%d0
         bne     lf_latch_chord
         add.l   %d1,%d4
@@ -124,7 +133,7 @@ lf_latch_next:
         tst.b   (%a1)
         beq     lf_latch_out
         jsr     fl_effective:l
-        move.l  #8192,%d6
+        move.l  #4096,%d6
         divs.l  %d6,%d4
         add.l   %d4,%d0
         cmpi.l  #1,%d0
@@ -139,7 +148,7 @@ lf_latch_vstore:
         move.l  %d1,%d7
         andi.l  #3,%d7
         lsr.l   #2,%d1
-        move.l  #1024,%d6
+        move.l  #512,%d6
         divs.l  %d6,%d5
         add.l   %d5,%d1
         bpl     lf_latch_cmax

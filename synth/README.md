@@ -45,8 +45,11 @@ depths keep their stock slots. For either new destination, the stock depth calcu
 writes a private module word rather than an out-of-range stock parameter. At the next
 note START, the module adds the resulting offset after step/scene/Part resolution:
 VOIC is clamped to **1..4**, then limited by the existing budget; CHRD moves across shapes
-**0..31**, retaining its inversion. Multiple LFO contributions add. The stored VOIC stays
-**1..4**. A sounding note keeps its latched result until another START.
+**0..31**, retaining its inversion. The offset is bipolar, as for every stock destination:
+the LFO's signed output, scaled by DEP, lowers or raises the resolved value (VOIC by up to
+three voices, CHRD by up to 31 shapes), and the sum is clamped, never wrapped. Multiple LFO
+contributions add. The stored VOIC stays **1..4**. A sounding note keeps its latched result
+until another START.
 
 PMTR retains its native Part-byte storage and cannot be locked on a trig. Per-step
 variation comes from VOIC/CHRD step locks, with the LFO offset applied on top. The
