@@ -127,6 +127,7 @@
         .set    CHOOSER_OPEN_RET, 0x40078890
         .set    EDIT6_RET, 0x4003a536
         .set    DRAW6_RET, 0x4003cda0
+        .set    FILL_RECT, 0x40012254    | the stock rectangle fill (window, x0, y0, x1, y1, mode)
         .set    SRC_COMMIT_RET, 0x4005a61c
         .set    SRC_COMMIT2_RET, 0x4005a856
         .set    TICK_A, 0x4005213c       | the UI tick's two calls fm_tick replays (the first is PC-relative
@@ -1357,9 +1358,9 @@ fm_e6:
         add.l   %d2,%d2
         sub.l   %d2,%d0
         jmp     EDIT6_RET
-| Ordinary FM A/B default: one detent per value. The stock SETUP editor
-| bypasses descriptor knob handlers and scales short ranges in its accumulator.
-| Follow its established direct-step entry; the stock clamp/store/redraw remains.
+| Ordinary FM A/B default. The stock SETUP editor bypasses descriptor knob handlers.
+| CHRD (128 values): one raw unit a value. VOIC (4 values): the stock stepper, as the
+| stock few-valued boxes step (2.18). The stock clamp/store/redraw remains.
 fm_e6_one:
         moveq   #FLEX*6,%d0
         lea     (%a3,%d0.l),%a4
@@ -1372,6 +1373,11 @@ fm_e6_voice:
         move.l  %d0,%d2
         move.l  %d3,-(%sp)
         move.l  %a3,-(%sp)
+        cmpa.l  #0,%a3
+        bne     fm_e6_chord
+        jsr     0x4003249c               | VOIC: the stock stepper (knob A's accumulator) -> steps
+        jmp     0x4003a56c
+fm_e6_chord:
         move.l  %a3,%d0
         mulu.w  #24,%d0
         lea     0x46c7de2e,%a0
@@ -1390,6 +1396,9 @@ fm_e6_handled:
 fm_setup_draw6:
         cmpi.l  #FM_ROW,%d6
         blt     fm_d6
+        bne     fm_d6_flex
+        bsr     fm_d6_frame              | the FM SYNTH page: only VOIC and CHRD keep a frame
+fm_d6_flex:
         moveq   #FLEX,%d6
 fm_d6:
         move.l  %d6,%d7
@@ -1397,6 +1406,40 @@ fm_d6:
         add.l   %d6,%d6
         sub.l   %d6,%d7
         jmp     DRAW6_RET
+| The stock drawer has just drawn the right panel's dotted dividers (window x 72 and 92
+| from y 2 to 54, y 28 from x 52; y grows upward). The FM page has no boxes in slots
+| 8-11 (LEN RATE TSTR TSNS, setup.inc.s), so the segments that only frame them are
+| cleared with the stock rectangle fill (window, x0, y0, x1, y1, 0 = clear): the
+| bottom row's two dividers and the line under the right column. The divider between
+| VOIC and CHRD and the line under them stay. d4 = the window; C scratch only.
+fm_d6_frame:
+        lea     fm_d6_rects(%pc),%a0
+fm_d6_rect:
+        mvs.w   (%a0)+,%d0               | x0; negative ends the list
+        bmi     fm_d6_done
+        move.l  %a0,-(%sp)
+        clr.l   -(%sp)                   | clear
+        mvs.w   4(%a0),%d1
+        move.l  %d1,-(%sp)               | y1
+        mvs.w   2(%a0),%d1
+        move.l  %d1,-(%sp)               | x1
+        mvs.w   (%a0),%d1
+        move.l  %d1,-(%sp)               | y0
+        move.l  %d0,-(%sp)               | x0
+        move.l  %d4,-(%sp)               | the window
+        jsr     FILL_RECT
+        lea     24(%sp),%sp
+        movea.l (%sp)+,%a0
+        addq.l  #6,%a0
+        bra     fm_d6_rect
+fm_d6_done:
+        rts
+fm_d6_rects:                             | x0, y0, x1, y1
+        .short  72, 2, 72, 27            | RATE | TSTR
+        .short  92, 2, 92, 27            | TSTR | TSNS
+        .short  93, 28, 111, 28          | under LEN
+        .short  -1
+        .balign 2
 
 | ---- 0x4005221e (jmp, 10 B): the UI tick: displaced `jsr 0x4005213c; jsr 0x4007e940`,
 | replayed; then SRC SETUP's name table is filled from the stock one and the rows' names,

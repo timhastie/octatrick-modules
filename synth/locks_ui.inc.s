@@ -159,6 +159,7 @@ fl_ui_edit:
         moveq   #7,%d0
         divs.l  %d0,%d1
 fl_ue_delta:
+        jsr     po_voic_steps:l          | VOIC: one step a stock threshold (setup.inc.s)
         move.l  %d1,%a4
         suba.l  %a5,%a5
         lea     fl_ui_moved(%pc),%a0
@@ -577,6 +578,9 @@ fl_uw_found:
         move.l  %d0,16(%sp)
 fl_uw_draw:
         jsr     fs_widget_overlay:l
+        tst.l   %d4
+        bne     fl_uw_native
+        jsr     po_voic_dial:l           | VOIC: 1..4 spread over the dial's arc
 fl_uw_native:
         jsr     0x400479b4
 fl_uw_out:

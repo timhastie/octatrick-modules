@@ -3,8 +3,11 @@
 **Octatrick 2.17 candidate: LFO 3 is back, with VOIC and CHRD on PLAYBACK SETUP.**
 Hold **FUNC + PLAYBACK** on an FM SYNTH track. The two leftmost boxes, formerly LOOP and SLIC,
 are **VOIC** and **CHRD**. VOIC selects **1..4 voices**, starting at **1**; CHRD selects the
-**32 shapes with 4 inversions**, with `----` for no chord. Each knob click changes one value.
-The other four setup boxes stay stock. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
+**32 shapes with 4 inversions**, with `----` for no chord. CHRD changes one value a knob click. VOIC steps like the stock
+few-valued boxes (LOOP, SLIC): one step per stock threshold of knob travel, and its dial spreads
+1..4 evenly over the arc (2.18; the same stepping for its step and scene locks).
+The other four setup boxes (LEN, RATE, TSTR, TSNS) are not on an FM SYNTH track's page (2.18):
+no frame, name or icon, and knobs C-F edit nothing there. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
 again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate a destination
 such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
 The design values in this section are recorded in the author's workspace log
@@ -25,9 +28,11 @@ without turning it. Pressing an unassigned knob assigns its Part value. A held t
 precedence over a held scene key.
 
 At every note START, each control takes its **step lock first**, otherwise the **selected
-scene's lock**, otherwise its **Part value**. The crossfader switches between the sides:
-**A below the midpoint; B at and above it**. Neither voice count nor chord shape is
-interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
+scene's lock**, otherwise its **Part value**. The crossfader morphs between the sides as it
+does for stock parameters (2.18; 2.17 switched at the midpoint): the value is the two sides'
+values weighted by the crossfader position and rounded to the control's step, so a sweep from
+a CHRD minimum on A to a maximum on B passes every shape between, and VOIC passes 1..4.
+A side without an assignment, or a disabled scene side, uses the Part value.
 The load cap is applied after the locks are resolved.
 
 **Cap display (23 October fix).** If the Part's existing load budget permits fewer voices than the
@@ -329,7 +334,8 @@ MONO is the trigless key legato of 2.6 -- instant pitch, no retrigger),
 everywhere (it no longer switches legato on for a sample track), and **LEG
 OFF = no glide at all on a synth track** (sequenced trigless trigs step
 too). POLY at VOIC 2..4 slides the sounding chord to a new key -- **"LEG"**
-below.
+below. The F knob steps LEG as the stock few-valued boxes step (2.18: one value
+a stock threshold of knob travel, no longer one a raw unit).
 **The marker (30 Sep 2026)**: the marker file is `FMSYNTH.wav` -- a FLEX
 slot whose file name (after the last `/`) starts with `FMSYNTH` or `SYNTH`
 makes its track a synth (`sy_scanned` / `po_lp_scanned` in `poly.s`, the
@@ -3935,7 +3941,9 @@ of it live here. `po_tick` is the clock it reads: ticked once a frame from
 `po_lfo3b` (the frame builder's LFO pass runs for every track from boot,
 `sy_render` only once a FLEX voice has started), it counts frames and the
 changes of the sequencer's (step, tick) pair, keeps ticks a step and the
-frames a step measured between step changes, and publishes its address at
+frames a step measured between step changes (2.18: not the first change after
+the sequencer was stopped or paused, which spans the stopped time and gated the
+first trig of every PLAY for that long), and publishes its address at
 `qz_clock` (`KEYS_AT + 40`). And a **sequencer-started paraphonic voice is
 gated for the step's HOLD**: `po_start` reads the current HOLD byte
 (`0x80000810 + t*72 + 13`, the lock else the Part's byte), converts it
