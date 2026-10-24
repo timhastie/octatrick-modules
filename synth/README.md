@@ -334,7 +334,8 @@ MONO is the trigless key legato of 2.6 -- instant pitch, no retrigger),
 everywhere (it no longer switches legato on for a sample track), and **LEG
 OFF = no glide at all on a synth track** (sequenced trigless trigs step
 too). POLY at VOIC 2..4 slides the sounding chord to a new key -- **"LEG"**
-below.
+below. The F knob steps LEG as the stock few-valued boxes step (2.18: one value
+a stock threshold of knob travel, no longer one a raw unit).
 **The marker (30 Sep 2026)**: the marker file is `FMSYNTH.wav` -- a FLEX
 slot whose file name (after the last `/`) starts with `FMSYNTH` or `SYNTH`
 makes its track a synth (`sy_scanned` / `po_lp_scanned` in `poly.s`, the

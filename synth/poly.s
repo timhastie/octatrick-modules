@@ -5437,8 +5437,9 @@ po_part_ptch:
 |     clone's names, formatter, widget and nibbles;
 |   * po_ampedit at 0x4003ae40, the page-2 editor's handler read (it reads
 |     the STOCK record's handler, min and count -- count 5): slot 11 of an
-|     audio track gets po_legknob, one value a detent, clamped 0..2 (synth)
-|     or 0..1 (sample) by the handler itself (the editor's own clamp is 0..4).
+|     audio track gets po_legknob, the stock stepper's steps (2.18), clamped
+|     0..2 (synth) or 0..1 (sample) by the handler itself (the editor's own
+|     clamp is 0..4).
 | The clone (po_ampdesc_buf, built on first use from the stock record in the
 | image, as po_lfodesc): slot 11 named LEG, formatter po_fmt_leg (OFF / MONO
 | / POLY), widget LEG_WIDGET, default 0, nibble 1; its count is written on
@@ -5540,18 +5541,28 @@ po_fl_cp:
         bne     po_fl_cp
         rts
 
-| ---- po_legknob(slot, detents, value) -> d0 = the value stepped one a detent, 0..2
-| on a synth track, 0..1 on a sample track (po_legmax) ------------------------------
+| ---- po_legknob(knob, detents, value) -> d0 = the value stepped, 0..2 on a synth
+| track, 0..1 on a sample track (po_legmax) ------------------------------------------
+| 2.18: the stepping is the stock default stepper's (0x4003240c: the knob's
+| accumulator, one step per threshold of encoder units, seven times the units with
+| the encoder pressed), as a stock parameter with few values steps; until 2.18 the
+| raw units were added, so one nudge crossed OFF / MONO / POLY. The page-2 editor
+| clamps to the stock record's count (0..4), so the track's top is applied here.
+        .set    LEG_STEP, 0x4003240c     | the stock default stepper (knob, detents, value) -> d0
 po_legknob:
-        bsr     po_legmax
-        move.l  %d0,%d1
-        move.l  12(%sp),%d0
-        add.l   8(%sp),%d0
+        move.l  12(%sp),-(%sp)           | value
+        move.l  12(%sp),-(%sp)           | detents
+        move.l  12(%sp),-(%sp)           | knob (F: 5)
+        jsr     LEG_STEP
+        lea     12(%sp),%sp
+        move.l  %d0,%d1                  | the stepped value
+        bsr     po_legmax                | d0 := the track's top; d1 kept
+        tst.l   %d1
         bpl     po_lk1
-        moveq   #0,%d0
+        moveq   #0,%d1
 po_lk1:
-        cmp.l   %d1,%d0
-        ble     po_lk2
+        cmp.l   %d0,%d1
+        bgt     po_lk2                   | above the top: the top
         move.l  %d1,%d0
 po_lk2:
         rts
