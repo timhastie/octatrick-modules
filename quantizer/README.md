@@ -1,6 +1,9 @@
 # Scale quantizer
 
-(24 Oct 2026, Octatrick 2.18: an audio track's CHROMATIC keyboard marks the note a key sounds
+(24 Oct 2026, Octatrick 2.19: what an audio track's sequencer plays follows the scale -- a
+recorded pattern changes key with SCALE / ROOT, nothing stored changes -- and AUDIO 1..8 SCALE take an
+audio track out of it -- "Audio tracks: what they play, and AUDIO n SCALE (2.19)" below.
+24 Oct 2026, Octatrick 2.18: an audio track's CHROMATIC keyboard marks the note a key sounds
 with a scale on, not the key's own place, and a MIDI track's NOT2..4 step through the scale as
 NOTE does -- "2.18" below.
 15 Oct 2026, Octatrick 2.15: what a MIDI track plays follows the scale -- chords, TRAN, the
@@ -83,6 +86,107 @@ held (`qz_mplock`, from the step's NOTE lock or the Part's NOTE) alike; an
 offset stored before stays as it is until it is turned, and is still
 snapped on the way out. The offsets remain semitones in the Part; SCALE OFF
 and MIDI n SCALE OFF are stock.
+
+## Audio tracks: what they play, and AUDIO n SCALE (2.19)
+
+With a scale on, **what an audio track's sequencer plays follows the
+scale**, not only what you dial (Modwerk #439: "something that's major
+instantly becomes minor, rather than re-editing per-step pitch info"). A
+pattern recorded in C MAJOR with E, A and B plays Eb, Ab and Bb after a
+switch to C MINOR, and as recorded again after the switch back: nothing
+stored is changed, the snap is on the way out only (the rule of the whole
+module). And **each audio track has a switch, AUDIO 1 SCALE .. AUDIO 8
+SCALE**, that takes it out of the scale -- for a drum track whose PTCH
+locks are tunings, not notes.
+
+**What is snapped, and where.** One stage: the trig. When a trig of a
+STATIC or FLEX track (FM SYNTH and SY DRUM are FLEX machines) fires, the
+frame builder first restores the slots the previous trig locked from the
+Part, then applies this trig's locks to the track's parameters; right
+after that, `qz_atrig` takes PLAYBACK PTCH as the trig resolved it -- the
+step's PTCH lock, or the Part's PTCH when the step has none -- and moves it
+to the nearest degree of the scale built on ROOT, the lower one on a tie
+(the keys' rule). When that moves it, the snapped value is applied exactly
+as a stock PTCH lock of that value would be (the parameter, its base value
+and the trig's "locked" bit for the slot), so the next trig restores the
+Part's own PTCH first, as it does after a lock.
+
+- **A sample track (STATIC, FLEX):** PTCH in semitones around the sample's
+  own pitch (raw 64 = the sample's pitch, which counts as C, 5 raw a
+  semitone: the knob's and the keys' convention), within stock's -12..+12
+  st. A value between semitones (set with the scale off) goes to the
+  nearest degree.
+- **FM SYNTH:** PTCH in semitones (raw 64 + n, -64..+63, the synth's tuning
+  system). The root note moves; the chord the synth builds on it (CHRD, VOIC)
+  is the engine's, built on the snapped root as it is on a played one.
+- **SY DRUM:** its PTCH is semitones too and takes the same path.
+- **Not snapped:** PICKUP, THRU and NEIGHBOR tracks; RATE (FINE on a synth
+  track); the stored PTCH locks (they stay as recorded). **LFOs and scenes
+  on PTCH are not snapped by this stage:** the snap is of the value the
+  trig's lock application resolves (the step's lock or the Part's PTCH);
+  an LFO and the crossfader's scene morph act on PTCH after that stage, as
+  stock, so their contribution is not pulled onto the scale (open: the
+  work order asks for the resolved value including them).
+
+**AUDIO 1 SCALE .. AUDIO 8 SCALE.** PROJECT > CONTROL > SEQUENCER, rows 15
+to 22 under MIDI 8 SCALE: **ON** (the default) or **OFF**, one row per audio
+track, stepped and toggled as the MIDI rows are. An audio track set to OFF
+is a track with SCALE OFF in every path of this module: its sequencer plays
+the PTCH it stores, its PTCH knob and PTCH locks step raw units, its
+CHROMATIC keys play stock's notes, their mark is stock's and the number
+beside the keyboard reads stock's. (Not covered: an FM SYNTH track's chord
+notes are snapped by the synth engine through the one SCALE mask, which
+knows no track: with AUDIO n SCALE OFF on an FM SYNTH track the chord notes
+above the root still follow SCALE.) With SCALE OFF the rows do nothing.
+
+**Where it lives.** One battery-RAM byte, **`0x100b14eb`** (bit t = audio
+track t+1 is OFF; 0 = every track follows), in the same padding as SCALE,
+GLIDE, ROOT and the MIDI switches, so a power cycle keeps it; saved in
+`project.work` as **`#SEQUENCER_AUDIO_SCALE_OFF=n`** after the MIDI line;
+a project saved without the line (2.18 and older) loads with every audio
+track ON; the project defaults clear it with the others (`core.s`, 196 ->
+204 bytes; the DRAM unit 4,728 -> 5,508 B as assembled).
+
+**Hooks (2.19).** One more detour, `qz_atrig`, a `jmp` at `0x4000c614` in
+the frame builder's trig path, right after the lock application loop and
+before the synth's and SY DRUM's lock publication (`0x4000c62e`, 26 bytes
+later; no overlap); the two displaced instructions are replayed and their
+flags reach the branch that follows. Its displaced bytes are read from the
+build's own MAIN OS section (`stock_guard.py`). The SEQUENCER tables grow
+from 3 + 11 to 3 + 19 entries (the count poke 22). With SCALE OFF the hook
+is the displaced instructions and a test; with the track's switch OFF, two
+tests more.
+
+**Measured** (2.19 candidate, 24 Oct 2026; the pinned emulator, the
+octatrick remix on octabam 6e4aeb76; the reference is the 2.18 image
+running the same scripts; emulator counts, nothing here ran on a unit; the
+scripts and logs are in the author's workspace, not in this repository):
+
+- **Every trig the stage sees** (the PC watch on the hook, 4 s of PLAY a
+  pass; a FLEX track with PTCH locks C D E F G A B on seven steps, raw 64
+  74 84 89 99 109 119, and the project's FM SYNTH track): 22 trigs a pass.
+  C MAJOR: every PTCH already on the scale, nothing moved. C MINOR: the
+  FLEX track's E, A and B play as Eb, Ab and Bb (84 -> 79, 109 -> 104,
+  119 -> 114), its C D F G unchanged, each value the nearest degree.
+  SCALE OFF: the stage moves nothing. C MINOR with AUDIO 2 SCALE OFF: the
+  FLEX track is not snapped, the FM SYNTH track still goes through the
+  snap. The stored locks
+  read the same before and after every pass.
+- **FM SYNTH:** an A lock (raw 73) sounds as Ab (72) in C MINOR, and as A
+  in C MAJOR, with SCALE OFF and with AUDIO 1 SCALE OFF; the 2.18 image
+  sounds A in every pass.
+- **MIDI tracks unchanged:** the 2.18 round's MIDI walk (NOTE and NOT2..4
+  under E MAJOR, seven PLAYs) sends the same MIDI as the 2.18 image, event
+  for event (7 x 10 events), and leaves the same Part and lock bytes.
+- **Saved and restored:** a 2.18 project (no line) loads with every audio
+  track ON (`0x100b14eb` = 00); AUDIO 1 and 3 OFF (05) with SCALE MINOR,
+  PROJECT > SAVE: `#SEQUENCER_AUDIO_SCALE_OFF=5` after the MIDI line in
+  `project.work` and `project.strd`; the power cut and the power-up from
+  the battery RAM: 05; the saved project loaded through the loader: 05.
+- **Not measured:** the pitch a FLEX track sounds (the test card's FLEX
+  track sounded only a click per trig, whatever its locks), the rows on
+  the screen (drawn, stepped, toggled), STATIC and SY DRUM tracks, an LFO
+  or a scene on PTCH.
 
 ## MIDI tracks (2.13)
 

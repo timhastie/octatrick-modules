@@ -44,6 +44,7 @@
         .set    NV_GLIDE, 0x100b14ed
         .set    NV_ROOT,  0x100b14ee
         .set    NV_MOFF,  0x100b14ef
+        .set    NV_AOFF,  0x100b14eb      | (2.19) bit t: audio track t+1 has the scale OFF
 
 qz_boot:
         mvz.b   NV_SCALE,%d0
@@ -69,6 +70,7 @@ qz_defaults:
         clr.b   NV_GLIDE
         clr.b   NV_ROOT
         clr.b   NV_MOFF
+        clr.b   NV_AOFF                 | (2.19) every audio track follows
         clr.l   0x100b14d4              | displaced
         rts
 

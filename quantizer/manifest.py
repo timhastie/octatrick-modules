@@ -251,6 +251,9 @@ GLIDE_AT = 0x100b14ed
 ROOT_NV = 0x100b14ee
 # (2.15) the MIDI tracks whose scale is OFF, one bit a track (core.s / quantizer.s NV_MOFF).
 MOFF_NV = 0x100b14ef
+# (2.19) the audio tracks whose scale is OFF, one bit a track (core.s / quantizer.s NV_AOFF):
+# the padding byte below SCALE (no reference to 0x100b14e2..ef in the OS).
+AOFF_NV = 0x100b14eb
 # The paraphonic key mailbox's fixed address (keys.s): 40 bytes above the GLIDE
 # byte, below the synth page cave's end (0x400d2c6c). modules/synth/poly.s
 # reads it as KEYS_AT -- keep the two constants equal.
@@ -279,7 +282,9 @@ MODULE = Module(
         "PTCH is semitones (-64..+63) and the CHROMATIC octave runs -4..+4; on a MIDI track "
         "(2.13) the NOTE knob, NOTE locks and the CHROMATIC keys follow the scale and root; "
         "(2.15) so does what it plays -- chords, TRAN, the arpeggiator -- and > MIDI 1..8 SCALE "
-        "takes a MIDI track out of the scale (OFF = stock).",
+        "takes a MIDI track out of the scale (OFF = stock); (2.19) what an audio track plays follows the scale "
+        "(STATIC / FLEX / FM SYNTH / SY DRUM: PTCH as the trig resolves it), and > AUDIO 1..8 SCALE takes an audio "
+        "track out of it (OFF = stock).",
     linked=(                                   # ROM link order: qzs names core.s's qz_scale_mask
         Linked("qzk", os.path.join(_HERE, "keys.s"), cpu="5475", cave_addr=KEYS_AT),
         Linked("qzc", os.path.join(_HERE, "core.s"), cpu="5475"),
@@ -308,6 +313,11 @@ MODULE = Module(
                "the sequencer's MIDI note stage, after TRAN and ARP SETUP KEY, before the active-note test: a note of a "
                "following MIDI track snapped to the nearest scale note -- chords, TRAN, the arpeggiator; the note-on and "
                "its stored note-off carry it (2.15)",
+               kind="jmp"),
+        Detour(0x4000c614, stock_guard(0x4000c614, 6), "qz", "qz_atrig",
+               "the frame builder's trig path, after a trig's locks are applied: with a scale on and the track's AUDIO n "
+               "SCALE ON, a STATIC / FLEX track's PTCH as the trig resolved it (lock or Part) snapped to the nearest degree "
+               "and applied as a lock of that value is (2.19)",
                kind="jmp"),
         Detour(0x400439d6, H("4aaf0028" "67000140"), "qz", "qz_mprev",
                "GRID RECORDING, a held [TRIG] key's chord preview on a MIDI track: its four notes snapped, press and "
@@ -374,20 +384,23 @@ MODULE = Module(
     tables=(
         TableGrow("SEQUENCER labels", old=0x400b27d0, count=3,
                   symbols=(("qz", "qz_lbl_scale"), ("qz", "qz_lbl_root"), ("qz", "qz_lbl_glide"))
-                  + tuple(("qz", f"qz_lbl_m{t}") for t in range(1, 9)),
+                  + tuple(("qz", f"qz_lbl_m{t}") for t in range(1, 9))
+                  + tuple(("qz", f"qz_lbl_a{t}") for t in range(1, 9)),
                   refs=((0x40065bd8, 0x400b27d0),)),
         TableGrow("SEQUENCER getters", old=0x400b27dc, count=3,
                   symbols=(("qz", "qz_get"), ("qz", "qz_get_root"), ("qz", "qz_get_glide"))
-                  + tuple(("qz", f"qz_get_m{t}") for t in range(1, 9)),
+                  + tuple(("qz", f"qz_get_m{t}") for t in range(1, 9))
+                  + tuple(("qz", f"qz_get_a{t}") for t in range(1, 9)),
                   refs=((0x40065bde, 0x400b27dc),)),
         TableGrow("SEQUENCER setters", old=0x400b282c, count=3,
                   symbols=(("qz", "qz_set"), ("qz", "qz_set_root"), ("qz", "qz_set_glide"))
-                  + tuple(("qz", f"qz_set_m{t}") for t in range(1, 9)),
+                  + tuple(("qz", f"qz_set_m{t}") for t in range(1, 9))
+                  + tuple(("qz", f"qz_set_a{t}") for t in range(1, 9)),
                   refs=((0x40065cc4, 0x400b282c), (0x40065d3e, 0x400b282c),
                         (0x40065d58, 0x400b282c), (0x40065d72, 0x400b282c))),
     ),
     pokes=(
-        Poke(0x40065c7c, expect=H("48780003"), write=H("4878000e"),
-             note="SEQUENCER window: 3 -> 14 rows (SCALE, ROOT, GLIDE, MIDI 1..8 SCALE; 3 visible, scrolls)"),
+        Poke(0x40065c7c, expect=H("48780003"), write=H("48780016"),
+             note="SEQUENCER window: 3 -> 22 rows (SCALE, ROOT, GLIDE, MIDI 1..8 SCALE, AUDIO 1..8 SCALE (2.19); 3 visible, scrolls)"),
     ),
 )

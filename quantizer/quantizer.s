@@ -1,5 +1,24 @@
 | SCALE QUANTIZER -- the DRAM unit (13 Sep 2026; a DRAM unit since 28 Sep 2026). GNU as.
 |
+| OCTATRICK 2.19 (24 Oct 2026): what an AUDIO track plays follows the scale.
+|   * qz_atrig, a jmp at 0x4000c614 in the frame builder's trig path, right
+|     after a trig's locks are applied to the track's parameter words: with
+|     a scale on and the track's AUDIO n SCALE ON, the PLAYBACK PTCH word
+|     the trig resolved (its PTCH lock, or the Part's PTCH) is snapped to
+|     the nearest scale degree (qz_asnap: ties down; a sample track's PTCH
+|     in fifths of raw around the sample's own pitch, a synth track's in
+|     semitones) and applied the way a stock PTCH lock is (the word and its
+|     base byte, the slot's bit in the trig's lock mask, so the next trig
+|     restores the Part's value first). Nothing stored changes: a pattern
+|     recorded in C MAJOR plays its E, A, B as Eb, Ab, Bb in C MINOR and
+|     as recorded again in C MAJOR.
+|   * THE PER-TRACK SWITCH: SEQUENCER rows 15..22, "AUDIO 1 SCALE" ..
+|     "AUDIO 8 SCALE", ON (default) / OFF, one battery-RAM byte NV_AOFF
+|     0x100b14eb (bit t = audio track t+1 is OFF), saved as
+|     "#SEQUENCER_AUDIO_SCALE_OFF=n" after the MIDI line. OFF = SCALE OFF
+|     for that track's sequencer, PTCH knob, PTCH locks, CHROMATIC keys,
+|     their mark and readout.
+|
 | OCTATRICK 2.15 (15 Oct 2026): the MIDI tracks, part two.
 |   * WHAT A MIDI TRACK PLAYS follows the scale: qz_mnote, a jmp at
 |     0x4009fb80 in the sequencer's MIDI note stage (0x4009f794), after
@@ -185,6 +204,10 @@
         .global qz_lbl_m1, qz_lbl_m2, qz_lbl_m3, qz_lbl_m4, qz_lbl_m5, qz_lbl_m6, qz_lbl_m7, qz_lbl_m8
         .global qz_get_m1, qz_get_m2, qz_get_m3, qz_get_m4, qz_get_m5, qz_get_m6, qz_get_m7, qz_get_m8
         .global qz_set_m1, qz_set_m2, qz_set_m3, qz_set_m4, qz_set_m5, qz_set_m6, qz_set_m7, qz_set_m8
+        .global qz_atrig
+        .global qz_lbl_a1, qz_lbl_a2, qz_lbl_a3, qz_lbl_a4, qz_lbl_a5, qz_lbl_a6, qz_lbl_a7, qz_lbl_a8
+        .global qz_get_a1, qz_get_a2, qz_get_a3, qz_get_a4, qz_get_a5, qz_get_a6, qz_get_a7, qz_get_a8
+        .global qz_set_a1, qz_set_a2, qz_set_a3, qz_set_a4, qz_set_a5, qz_set_a6, qz_set_a7, qz_set_a8
         .set    OCT_WORD, 0x460d16fc      | stock's CHROMATIC octave word: 0 or 1 (FUNC + LEFT/RIGHT eor it)
         .set    KEYS_AT, 0x400d2cb0       | keys.s, pinned (manifest KEYS_AT): the paraphonic key mailbox
         .set    qz_pkey, KEYS_AT          |   the live key (index + 1) per track, 8 bytes
@@ -229,6 +252,9 @@
         .set    NV_GLIDE, 0x100b14ed
         .set    NV_ROOT,  0x100b14ee
         .set    NV_MOFF,  0x100b14ef      | (2.15) bit t: MIDI track t+1 has the scale OFF (0 = every MIDI track follows)
+        .set    NV_AOFF,  0x100b14eb      | (2.19) bit t: audio track t+1 has the scale OFF (0 = every audio track follows)
+        .set    PWORDS,   0x80000a50      | (2.19) the frame builder's parameter words, 64 B a track (slot k at + 2 k, raw << 8)
+        .set    PBYTES,   0x80000810      | (2.19) their base bytes, 72 B a track (slot k at + k)
         .set    qz_scale, NV_SCALE      | 0 = OFF, 1..24 = index into core.s qz_masks / qz_names
         .set    qz_glide, NV_GLIDE      | 0 = OFF, 1..127 (modules/synth GLIDE_AT: keep equal)
         .set    qz_root,  NV_ROOT       | 0..11 = C .. B (28 Sep 2026; core.s clamps and defaults it with the others)
@@ -348,6 +374,9 @@ qz_knob:
         lea     qz_scale,%a0
         mvz.b   (%a0),%d0
         jbeq     qz_k_store              | OFF: stock
+        mvz.b   UI_TRACK,%d1            | (2.19) the track's AUDIO n SCALE OFF: stock
+        btst    %d1,NV_AOFF
+        jbne     qz_k_store
         tst.l   %d5                     | slot A only
         jbne     qz_k_store
         tst.l   0x460d1684              | page kind 0 = PLAYBACK
@@ -378,6 +407,9 @@ qz_plock:
         lea     qz_scale,%a2
         mvz.b   (%a2),%d0
         jbeq     qz_p_done
+        mvz.b   UI_TRACK,%d1            | (2.19) the track's AUDIO n SCALE OFF: stock
+        btst    %d1,NV_AOFF
+        jbne     qz_p_done
         tst.l   %d5                     | slot A only
         jbne     qz_p_done
         tst.l   0x460d1684              | PLAYBACK page only
@@ -769,6 +801,8 @@ qz_chrom:
         lea     qz_scale,%a0
         mvz.b   (%a0),%d0
         jbeq     qz_c_replay
+        btst    %d2,NV_AOFF             | (2.19) the track's AUDIO n SCALE OFF: stock
+        jbne     qz_c_replay
         move.l  %d2,-(%sp)
         move.l  %d3,-(%sp)
         move.l  %d4,-(%sp)
@@ -841,6 +875,8 @@ qz_c_synth:
         lea     qz_scale,%a0
         tst.b   (%a0)
         jbeq    qz_cs_raw               | SCALE OFF: ROOT ignored, 2.8's raw
+        btst    %d2,NV_AOFF             | (2.19) the track's AUDIO n SCALE OFF: as SCALE OFF
+        jbne    qz_cs_raw
         mvz.b   NV_ROOT,%d0
         add.l   %d0,%d1                 | ... + ROOT: key 1 sounds the root (28 Sep 2026), -60..+62
         move.l  %d1,%d0
@@ -999,6 +1035,9 @@ qz_on_stock:
         lea     qz_scale,%a0
         tst.b   (%a0)
         jbeq    qz_on_out               | SCALE OFF: stock's 1
+        mvz.b   UI_TRACK,%d1            | (2.19) the track's AUDIO n SCALE OFF: stock's 1
+        btst    %d1,NV_AOFF
+        jbne    qz_on_out
         mvz.b   NV_ROOT,%d1
         subq.l  #7,%d1
         jbmi    qz_on_out               | ROOT C..F#: the other position is the octave above, 1
@@ -1009,9 +1048,14 @@ qz_on_out:
         tst.b   (%a0)
         jbeq    qz_on_fmt               | SCALE OFF: stock's "%d" (ROOT ignored)
         tst.l   MIDI_MODE               | (2.15) a MIDI track whose switch is OFF: stock's "%d"
-        jbeq    qz_on_root
+        jbeq    qz_on_audio
         mvz.b   UI_TRACK,%d1
         btst    %d1,NV_MOFF
+        jbne    qz_on_fmt
+        jbra    qz_on_root
+qz_on_audio:                            | (2.19) an audio track whose AUDIO n SCALE is OFF: stock's "%d"
+        mvz.b   UI_TRACK,%d1
+        btst    %d1,NV_AOFF
         jbne    qz_on_fmt
 qz_on_root:
         lea     qz_ofmt(%pc),%a0        | ROOT's name, then " %d": "A -1" where stock printed "-1"
@@ -1055,6 +1099,10 @@ qz_heldmark:
         mvz.b   (%a2),%d1               | displaced: the track's held key + 1 (0 = none)
         tst.b   NV_SCALE
         jbeq    qz_hm_word              | SCALE OFF: stock
+        move.l  %a2,%d0                 | (2.19) the track's AUDIO n SCALE OFF: stock
+        subi.l  #HELD,%d0
+        btst    %d0,NV_AOFF
+        jbne    qz_hm_word
         tst.l   %d1
         jbeq    qz_hm_word              | no key held on this track
         lea     -8(%sp),%sp
@@ -1219,6 +1267,149 @@ qz_mn_replay:
         jmp     0x4009fb86
 qz_mn_skip:
         jmp     0x4009fd2a
+
+| ---- (2.19) WHAT AN AUDIO TRACK PLAYS: jmp planted at 0x4000c614 -----------------
+| The frame builder's trig path (the track at 114(sp), the trig's lock mask at
+| (184(sp)): bit k = slot k was locked) has restored the slots the previous
+| trig locked from the Part and applied this trig's locks: each lock byte b
+| went into the track's base byte PBYTES + 72 t + k and, as b << 8, into its
+| parameter word PWORDS + 64 t + 2 k, with bit k set in the mask. Here, with
+| a scale on and the track's AUDIO n SCALE ON, on a STATIC or FLEX track (the
+| synth machines are FLEX), slot 0 (PLAYBACK PTCH) is taken as the trig
+| resolved it -- the word -- and snapped (qz_asnap); when that moves it, the
+| snapped value is applied as a lock of that value is (byte, word, mask bit),
+| so the next trig restores the Part's own PTCH first: nothing stored changes,
+| and a scale switched back plays the pattern as recorded. Then the displaced
+| instructions (move.l a4,d1; btst #1,d1; the beq after reads their flags).
+| d1 is the displaced code's; everything else used is saved.
+qz_atrig:
+        tst.b   NV_SCALE
+        jbeq    qz_at_replay            | SCALE OFF: stock
+        lea     -28(%sp),%sp
+        movem.l %d0/%d2-%d4/%a0-%a2,(%sp)
+        move.l  28+114(%sp),%d2         | the track
+        moveq   #7,%d0
+        cmp.l   %d0,%d2
+        jbhi    qz_at_pop
+        btst    %d2,NV_AOFF             | the track's AUDIO n SCALE OFF: stock
+        jbne    qz_at_pop
+        movea.l PARTS,%a0
+        mvz.b   0x100b14cf,%d0
+        move.l  #6322,%d1
+        muls.l  %d1,%d0
+        adda.l  %d0,%a0
+        adda.l  #0x8eda2,%a0            | the Part's machine bytes
+        mvz.b   (%a0,%d2.l),%d0
+        moveq   #5,%d3                  | STATIC: a sample track, 5 raw a semitone
+        tst.l   %d0
+        jbeq    qz_at_go
+        subq.l  #1,%d0
+        jbne    qz_at_pop               | THRU / NEIGHBOR / PICKUP: stock
+        jbsr    qz_is_synth             | FLEX: FM SYNTH / SY DRUM -- semitones; a sample: fifths
+        jbeq    qz_at_go
+        moveq   #1,%d3
+qz_at_go:
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        movea.l %d0,%a1
+        adda.l  #PWORDS,%a1             | the track's PTCH word
+        mvs.w   (%a1),%d4
+        move.l  %d4,%d0
+        asr.l   #8,%d0                  | the raw the trig resolved
+        jbsr    qz_asnap                | d0 := the snapped raw (d3 = raw per semitone)
+        move.l  %d0,%d1
+        lsl.l   #8,%d1
+        cmp.l   %d1,%d4
+        jbeq    qz_at_pop               | on the scale already: nothing to do
+        move.w  %d1,(%a1)               | the word, as a lock writes it
+        move.l  %d2,%d1
+        lsl.l   #3,%d1
+        lsl.l   #6,%d2
+        add.l   %d1,%d2                 | 72 t
+        movea.l %d2,%a2
+        adda.l  #PBYTES,%a2
+        move.b  %d0,(%a2)               | the base byte
+        movea.l 28+184(%sp),%a2
+        moveq   #1,%d1
+        or.l    %d1,(%a2)               | slot 0 locked by this trig: the next one restores the Part's PTCH
+qz_at_pop:
+        movem.l (%sp),%d0/%d2-%d4/%a0-%a2
+        lea     28(%sp),%sp
+qz_at_replay:
+        move.l  %a4,%d1                 | displaced
+        btst    #1,%d1                  | displaced
+        jmp     0x4000c61a
+
+| qz_asnap: d0 := the raw nearest to raw d0 (0..127) that sits on a degree of the
+| ROOT-rotated scale (SCALE_AT), ties to the lower (the keys' rule). d3 = raw a
+| semitone: 5 on a sample track (raw = 64 + 5 n, n = -12..+12 semitones from
+| the sample's own pitch, which counts as C, the keys' and the knob's
+| convention), 1 on a synth track (raw = 64 + n, n = -64..+63). The search
+| runs over the degrees within 7 semitones of the raw's own semitone. SCALE
+| is on. Preserves everything but d0 (a0 is saved: SCALE_AT clobbers it).
+qz_asnap:
+        lea     -32(%sp),%sp
+        movem.l %d1-%d7/%a0,(%sp)
+        move.l  %d0,%d2                 | r
+        jsr     SCALE_AT                | the mask
+        move.l  %d0,%d7
+        move.l  %d2,%d0
+        subi.l  #64,%d0
+        divs.l  %d3,%d0                 | n0 = (r - 64) / u, toward 0
+        move.l  %d0,%d4
+        subq.l  #7,%d4                  | n = n0 - 7 ..
+        move.l  %d0,%d5
+        addq.l  #7,%d5                  | .. n0 + 7
+        moveq   #-12,%d0                | clamped to the track's range
+        moveq   #12,%d1
+        cmpi.l  #5,%d3
+        jbeq    qz_as_clamp
+        moveq   #-64,%d0
+        moveq   #63,%d1
+qz_as_clamp:
+        cmp.l   %d0,%d4
+        jbge    qz_as_lo_ok
+        move.l  %d0,%d4
+qz_as_lo_ok:
+        cmp.l   %d1,%d5
+        jble    qz_as_hi_ok
+        move.l  %d1,%d5
+qz_as_hi_ok:
+        move.l  %d2,%a0                 | the best raw so far: r itself (none found)
+        move.l  #0x7fff,%d6             | its distance
+qz_as_loop:
+        cmp.l   %d5,%d4
+        jbgt    qz_as_done
+        move.l  %d4,%d0
+        addi.l  #120,%d0
+        moveq   #12,%d1
+        divu.l  %d1,%d0                 | (n + 120) / 12 ...
+        mulu.l  %d1,%d0
+        move.l  %d4,%d1
+        addi.l  #120,%d1
+        sub.l   %d0,%d1                 | ... pc = (n + 120) mod 12
+        btst    %d1,%d7
+        jbeq    qz_as_next
+        move.l  %d4,%d0
+        muls.l  %d3,%d0
+        addi.l  #64,%d0                 | c = 64 + u n
+        move.l  %d0,%d1
+        sub.l   %d2,%d1
+        jbpl    qz_as_abs
+        neg.l   %d1
+qz_as_abs:
+        cmp.l   %d6,%d1
+        jbge    qz_as_next              | not nearer (a tie keeps the lower, found first)
+        move.l  %d1,%d6
+        movea.l %d0,%a0
+qz_as_next:
+        addq.l  #1,%d4
+        jbra    qz_as_loop
+qz_as_done:
+        move.l  %a0,%d0
+        movem.l (%sp),%d1-%d7/%a0
+        lea     32(%sp),%sp
+        rts
 
 | ---- (2.15) the chord a held [TRIG] key previews: jmp planted at 0x400439d6 ------
 | 0x400438fc(_, press) plays the UI MIDI track's step under a [TRIG] key in
@@ -1891,6 +2082,78 @@ qz_sm_store:
         move.l  (%sp)+,%d2
         rts
 
+| (2.19) rows 15..22, "AUDIO 1 SCALE" .. "AUDIO 8 SCALE": as the MIDI rows, on
+| NV_AOFF (bit t set = audio track t+1 is OFF).
+qz_get_a1:      moveq   #0,%d0
+                jbra    qz_get_a
+qz_get_a2:      moveq   #1,%d0
+                jbra    qz_get_a
+qz_get_a3:      moveq   #2,%d0
+                jbra    qz_get_a
+qz_get_a4:      moveq   #3,%d0
+                jbra    qz_get_a
+qz_get_a5:      moveq   #4,%d0
+                jbra    qz_get_a
+qz_get_a6:      moveq   #5,%d0
+                jbra    qz_get_a
+qz_get_a7:      moveq   #6,%d0
+                jbra    qz_get_a
+qz_get_a8:      moveq   #7,%d0
+qz_get_a:
+        mvz.b   NV_AOFF,%d1
+        btst    %d0,%d1
+        jbne    qz_gm_off
+        lea     qz_s_on(%pc),%a0
+        move.l  %a0,%d0
+        rts
+qz_set_a1:      moveq   #0,%d0
+                jbra    qz_set_a
+qz_set_a2:      moveq   #1,%d0
+                jbra    qz_set_a
+qz_set_a3:      moveq   #2,%d0
+                jbra    qz_set_a
+qz_set_a4:      moveq   #3,%d0
+                jbra    qz_set_a
+qz_set_a5:      moveq   #4,%d0
+                jbra    qz_set_a
+qz_set_a6:      moveq   #5,%d0
+                jbra    qz_set_a
+qz_set_a7:      moveq   #6,%d0
+                jbra    qz_set_a
+qz_set_a8:      moveq   #7,%d0
+qz_set_a:                               | d0 = the track; (delta, wrap) at 4(sp) / 8(sp)
+        move.l  %d2,-(%sp)              | (8(sp) / 12(sp) now)
+        move.l  %d0,%d2
+        mvz.b   NV_AOFF,%d1
+        moveq   #0,%d0                  | the row's value: 0 = OFF ...
+        btst    %d2,%d1
+        jbne    qz_sa_add
+        moveq   #1,%d0                  | ... 1 = ON
+qz_sa_add:
+        add.l   8(%sp),%d0
+        tst.l   12(%sp)
+        jbeq    qz_sa_clamp
+        moveq   #1,%d1                  | [YES]: wrap -- a toggle
+        and.l   %d1,%d0
+        jbra    qz_sa_put
+qz_sa_clamp:
+        tst.l   %d0
+        jble    qz_sa_off
+        moveq   #1,%d0
+        jbra    qz_sa_put
+qz_sa_off:
+        moveq   #0,%d0
+qz_sa_put:
+        mvz.b   NV_AOFF,%d1
+        bclr    %d2,%d1
+        tst.l   %d0
+        jbne    qz_sa_store
+        bset    %d2,%d1                 | OFF
+qz_sa_store:
+        move.b  %d1,NV_AOFF
+        move.l  (%sp)+,%d2
+        rts
+
 | ---- the project file ------------------------------------------------------------
 | The loader 0x400866c4 reads project.work line by line; a line starting
 | with '#' is skipped at 0x400867a2 before any key is compared, on stock
@@ -1911,6 +2174,7 @@ qz_ld_entry:
         lea     qz_root,%a0
         clr.b   (%a0)
         clr.b   NV_MOFF                 | (2.15) every MIDI track follows
+        clr.b   NV_AOFF                 | (2.19) every audio track follows
 qz_e_back:
         jmp     0x400866d4
 
@@ -1936,6 +2200,10 @@ qz_ld_line:
         lea     qz_key4(%pc),%a1
         jbsr     qz_l_cmp
         jbeq     qz_l_moff
+        move.l  %d3,%a0
+        lea     qz_key5(%pc),%a1
+        jbsr     qz_l_cmp
+        jbeq     qz_l_aoff
         moveq   #35,%d5                 | another comment: stock skips it
         mvs.b   %d1,%d0
 qz_l_back:
@@ -1979,6 +2247,14 @@ qz_l_moff:                              | (2.15) the MIDI tracks with the scale 
         moveq   #0,%d0                  | out of range: every track follows
 qz_l_mok:
         lea     NV_MOFF,%a0
+        jbra    qz_l_store
+qz_l_aoff:                              | (2.19) the audio tracks with the scale OFF, a mask 0..255
+        jbsr     qz_l_dec
+        cmpi.l  #255,%d0
+        jbls     qz_l_aok
+        moveq   #0,%d0                  | out of range: every track follows
+qz_l_aok:
+        lea     NV_AOFF,%a0
 qz_l_store:
         tst.l   58(%sp)                 | parse-only pass: nothing is stored
         jbne     qz_l_next
@@ -2018,6 +2294,9 @@ qz_wr:
         mvz.b   NV_MOFF,%d0             | (2.15)
         lea     qz_fmt4(%pc),%a0
         jbsr     qz_wr_line
+        mvz.b   NV_AOFF,%d0             | (2.19)
+        lea     qz_fmt5(%pc),%a0
+        jbsr     qz_wr_line
         mvs.b   0x8000004f,%d1          | displaced
         move.l  %d1,-(%sp)              | displaced
         jmp     0x400888b2
@@ -2044,6 +2323,16 @@ qz_key3:        .asciz  "#SEQUENCER_ROOT="
 qz_fmt3:        .asciz  "#SEQUENCER_ROOT=%d\r\n"
 qz_key4:        .asciz  "#SEQUENCER_MIDI_SCALE_OFF="
 qz_fmt4:        .asciz  "#SEQUENCER_MIDI_SCALE_OFF=%d\r\n"
+qz_key5:        .asciz  "#SEQUENCER_AUDIO_SCALE_OFF="
+qz_fmt5:        .asciz  "#SEQUENCER_AUDIO_SCALE_OFF=%d\r\n"
+qz_lbl_a1:      .asciz  "AUDIO 1 SCALE"
+qz_lbl_a2:      .asciz  "AUDIO 2 SCALE"
+qz_lbl_a3:      .asciz  "AUDIO 3 SCALE"
+qz_lbl_a4:      .asciz  "AUDIO 4 SCALE"
+qz_lbl_a5:      .asciz  "AUDIO 5 SCALE"
+qz_lbl_a6:      .asciz  "AUDIO 6 SCALE"
+qz_lbl_a7:      .asciz  "AUDIO 7 SCALE"
+qz_lbl_a8:      .asciz  "AUDIO 8 SCALE"
 qz_lbl_m1:      .asciz  "MIDI 1 SCALE"
 qz_lbl_m2:      .asciz  "MIDI 2 SCALE"
 qz_lbl_m3:      .asciz  "MIDI 3 SCALE"
