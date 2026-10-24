@@ -179,7 +179,7 @@
         .global qz_get_glide, qz_set_glide, qz_lbl_glide, qz_leg1, qz_leg2
         .global qz_leg0, qz_leg3, qz_leg4, qz_leg5
         .global qz_get_root, qz_set_root, qz_lbl_root
-        .global qz_keyidx, qz_octkey, qz_octdraw, qz_octnum
+        .global qz_keyidx, qz_octkey, qz_octdraw, qz_octnum, qz_heldmark
         .global qz_mknob, qz_mplock, qz_mkey
         .global qz_mnote, qz_mprev
         .global qz_lbl_m1, qz_lbl_m2, qz_lbl_m3, qz_lbl_m4, qz_lbl_m5, qz_lbl_m6, qz_lbl_m7, qz_lbl_m8
@@ -929,6 +929,68 @@ qz_on_copied:
 qz_on_fmt:
         pea     FMT_D                   | displaced: stock's "%d"
         jmp     0x400449c6
+
+| ---- (2.18) the held key's mark on an audio track's keyboard: jmp planted at 0x40044abc
+| The drawer's audio branch (MIDI_MODE 0) walks the eight tracks' held keys, a2 =
+| HELD + track (the key index the handler saw + 1, 0 = none), and marks the
+| picture's key at held - 1 - 12 * OCT_WORD (0x40044ac4..: the range check, the
+| key's x, the draw through a3). That is the PHYSICAL key, but with a scale on the
+| key sounds qz_chrom's note -- key 1 the root, every key snapped -- so with ROOT E
+| key 1 played E while the mark sat on C (a MIDI track's mark is its held note,
+| which qz_mkey already made the sounding one: that branch is not touched). Here
+| the held key goes through qz_chrom itself, the press path's own rule, and d1
+| becomes the sounding note's place in the picture (+ 1 + 12 * OCT_WORD, which the
+| stock arithmetic takes off again): a sample track's index s (raw = 5 * s + 4)
+| sits at s - 12 * N, N = the number beside the keyboard (qz_octnum: 0 at word 0;
+| 1 at word 1 with ROOT C..F#; -1 at word 1 with ROOT G..B, the dropped keyboard);
+| a synth track's n (raw = 64 + n) sits at n + 12 - 12 * qz_oct. A note outside the
+| picture fails the stock range check, as a key off the picture does. SCALE OFF or
+| no key held: the displaced instructions. d0 / d1 / d2 / a0 are loaded by the
+| stock code that follows, a1 / a2 are saved; qz_chrom keeps d2..d4.
+qz_heldmark:
+        mvz.b   (%a2),%d1               | displaced: the track's held key + 1 (0 = none)
+        tst.b   NV_SCALE
+        jbeq    qz_hm_word              | SCALE OFF: stock
+        tst.l   %d1
+        jbeq    qz_hm_word              | no key held on this track
+        lea     -8(%sp),%sp
+        movem.l %a1-%a2,(%sp)
+        move.l  %a2,%d2
+        subi.l  #HELD,%d2               | the track, 0..7
+        subq.l  #1,%d1
+        movea.l %d1,%a2                 | the key index the handler saw
+        jbsr    qz_chrom                | a2 := the raw the key sounds (the press path's rule)
+        move.l  %a2,%d1
+        jbsr    qz_is_synth             | (track d2)
+        jbne    qz_hm_synth
+        subq.l  #4,%d1
+        moveq   #5,%d0
+        divu.l  %d0,%d1                 | s = (raw - 4) / 5: the index that sounds, 0..24
+        tst.l   OCT_WORD
+        jbeq    qz_hm_place             | position 0: the picture starts at index 0
+        mvz.b   NV_ROOT,%d0
+        subq.l  #7,%d0
+        jbmi    qz_hm_place             | ROOT C..F#, position 1: it starts at index 12 (the stock 12 * word)
+        addi.l  #24,%d1                 | ROOT G..B, position 1 ("-1"): it starts at index -12
+        jbra    qz_hm_place
+qz_hm_synth:
+        subi.l  #52,%d1                 | raw - 64 + 12: n + 12, key 1 of the picture is n = -12 at octave 0
+        mvs.b   qz_oct,%d0
+        move.l  %d0,%d2
+        lsl.l   #2,%d0
+        lsl.l   #3,%d2
+        add.l   %d2,%d0                 | 12 * qz_oct
+        sub.l   %d0,%d1                 | the place, n + 12 - 12 * qz_oct
+        tst.l   OCT_WORD
+        jbeq    qz_hm_place
+        addi.l  #12,%d1                 | (+ 12 * word: the stock arithmetic takes it off)
+qz_hm_place:
+        addq.l  #1,%d1                  | + 1: the stock arithmetic takes held - 1
+        movem.l (%sp),%a1-%a2
+        lea     8(%sp),%sp
+qz_hm_word:
+        move.l  OCT_WORD,%d0            | displaced
+        jmp     0x40044ac4
 
 | ---- (2.13) the CHROMATIC keys of a MIDI track: jmp planted at 0x400436a8 ---------
 | 0x40043664(track, note, press) plays a MIDI track's CHROMATIC key: its caller
