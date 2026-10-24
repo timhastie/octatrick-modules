@@ -63,6 +63,7 @@ sl_clip_full_capture_hook:
  moveq #4,%d4
  moveq #0,%d5
  jsr sl_clip_xfer:l
+ jsr sc_track_xfer:l              | (2.18) the track's setup scene rows (scenes_ops.inc.s)
  movem.l (%sp),%d0-%d7/%a0-%a6
  lea 60(%sp),%sp
  lea -28(%sp),%sp
@@ -79,6 +80,7 @@ sl_clip_full_store_hook:
  moveq #4,%d4
  moveq #1,%d5
  jsr sl_clip_xfer:l
+ jsr sc_track_xfer:l              | (2.18) the track's setup scene rows (scenes_ops.inc.s)
  movem.l (%sp),%d0-%d7/%a0-%a6
  lea 60(%sp),%sp
  lea -68(%sp),%sp

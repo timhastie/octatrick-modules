@@ -7,7 +7,13 @@
 | The next real START samples these words after the existing step > scene >
 | Part resolver, subtracts the midpoint and applies the signed offset, then
 | the caller applies its budget cap.
+| (2.18) With SY DRUM in the remix a SY DRUM track has four such destinations
+| of its own, PMTR 30..33 = LSPD LDEP WAVE S&H (its PLAYBACK SETUP controls):
+| the same private words and lf_targets record them; SY DRUM's setup stage
+| (sy-drum/setup_stage.inc.s ss_lfo_stage) applies the offsets every frame.
         .set    LF_MID, 16256            | 63.5 << 8: the private word's base for the stock arithmetic
+        .set    LF_FM_LAST, 31           | the last module destination on an FM SYNTH track (VOIC 30, CHRD 31)
+        .set    LF_SY_LAST, 33           | (2.18) on a SY DRUM track (LSPD 30, LDEP 31, WAVE 32, S&H 33)
         .text
         .global lf_apply, lf_lfo_standalone, lf_latch, lf_effective, lf_unlatch
         .global lf_page, lf_stage, lf_move, lf_draw, lf_edit, lf_pmtr_edit
@@ -30,7 +36,7 @@ lf_apply:
         lsr.l   #3,%d2
         cmpi.l  #8,%d2
         bcc     lf_apply_discard
-        bsr     po_fm_kind
+        bsr     lf_kind_last             | d0 = the track's last module destination (0: none)
         move.l  %d0,%d1
         move.l  %d2,%d0
         add.l   %d0,%d0
@@ -38,10 +44,8 @@ lf_apply:
         add.l   %d3,%d0
         lea     lf_targets:l,%a0
         clr.b   (%a0,%d0.l)
-        tst.l   %d1
-        beq     lf_apply_sink
-        cmpi.l  #31,%d4
-        bhi     lf_apply_sink
+        cmp.l   %d1,%d4
+        bhi     lf_apply_sink            | not a destination of this track's machine
         move.b  %d4,(%a0,%d0.l)
 lf_apply_sink:
         lea     lf_scratch:l,%a1
@@ -217,11 +221,17 @@ lf_ui_desc:
         tst.b   0x80000012
         bne     lf_ui_out
         mvz.b   UI_TRACK,%d2
-        bsr     po_fm_kind
+        bsr     lf_kind_last
         tst.l   %d0
         beq     lf_ui_stock
         bsr     lf_build_desc
         lea     lf_desc:l,%a0
+        .if HAVE_SYDRUM
+        cmpi.l  #LF_SY_LAST,%d0
+        bne     lf_ui_fm
+        lea     lf_desc_sy:l,%a0         | SY DRUM: PMTR counts 34
+lf_ui_fm:
+        .endif
         move.l  %a0,%d0
         bra     lf_ui_out
 lf_ui_stock:
@@ -248,6 +258,18 @@ lf_build_copy:
         move.l  %d0,0x9a+24(%a1)
         lea     lf_pmtr_fmt:l,%a0
         move.l  %a0,0xca+24(%a1)
+        .if HAVE_SYDRUM
+        lea     lf_desc:l,%a0            | SY DRUM's copy: the same, with PMTR counting 34
+        lea     lf_desc_sy:l,%a1
+        move.l  #LFO_DESC_LEN,%d0
+lf_build_sy:
+        move.b  (%a0)+,(%a1)+
+        subq.l  #1,%d0
+        bne     lf_build_sy
+        lea     lf_desc_sy:l,%a1
+        moveq   #LF_SY_LAST+1,%d0
+        move.l  %d0,0x9a+24(%a1)
+        .endif
         lea     lf_built:l,%a0
         move.b  #1,(%a0)
 lf_build_out:
@@ -313,9 +335,19 @@ lf_pmtr_fmt:
         move.l  16(%sp),%d0
         cmpi.l  #30,%d0
         bcs     lf_pmtr_stock
+        .if HAVE_SYDRUM
+        cmpi.l  #LF_SY_LAST,%d0
+        bhi     lf_pmtr_stock
+        movea.l 12(%sp),%a0
+        bsr     lf_pmtr_sy               | a SY DRUM track (the UI's): LSPD LDEP WAVE S&H; an FM track's 32 / 33: ----
+        tst.l   %d0
+        bne     lf_pmtr_label
+        move.l  16(%sp),%d0
+        .else
         cmpi.l  #31,%d0
         bhi     lf_pmtr_stock
         movea.l 12(%sp),%a0
+        .endif
         cmpi.l  #30,%d0
         beq     lf_pmtr_voic
         move.b  #'C',(%a0)+
@@ -350,10 +382,10 @@ lf_pmtr_edit:
         movem.l %d4/%d6/%a2,(%sp)
         moveq   #29,%d6
         mvz.b   UI_TRACK,%d2
-        bsr     po_fm_kind
+        bsr     lf_kind_last             | 31 FM SYNTH, 33 SY DRUM, 0 any other track
         tst.l   %d0
         beq     lf_pmtr_bound
-        moveq   #31,%d6
+        move.l  %d0,%d6
 lf_pmtr_bound:
         move.l  %d3,%d0
         cmp.l   %d6,%d0
@@ -381,6 +413,66 @@ lf_pmtr_value:
         movem.l (%sp),%d4/%d6/%a2
         lea     12(%sp),%sp
         jmp     LFD_STORE
+| d2 = track -> d0 = the last module destination of its machine: 31 on FM SYNTH (VOIC 30,
+| CHRD 31), 33 on SY DRUM (LSPD 30 .. S&H 33; only with SY DRUM in the remix), 0 on any other
+| track (the stock 30). po_signed reads the current Part. Every other register kept.
+lf_kind_last:
+        jsr     po_signed:l              | 1 FM SYNTH, 2 SY DRUM, 0 other
+        cmpi.l  #1,%d0
+        bne     lf_kl_sy
+        moveq   #LF_FM_LAST,%d0
+        rts
+lf_kl_sy:
+        .if HAVE_SYDRUM
+        cmpi.l  #2,%d0
+        bne     lf_kl_none
+        moveq   #LF_SY_LAST,%d0
+        rts
+lf_kl_none:
+        .endif
+        moveq   #0,%d0
+        rts
+        .if HAVE_SYDRUM
+| a0 = the formatter's buffer, d0 = PMTR 30..33. On the UI's SY DRUM track the name of
+| control d0 - 30; on another track PMTR 32 / 33 (no destination there) prints ----.
+| d0 = 1 when written (the caller adds the page tag), 0 for the FM names. a0 advanced.
+lf_pmtr_sy:
+        lea     -12(%sp),%sp
+        movem.l %d1-%d2/%a1,(%sp)
+        move.l  %d0,%d1
+        mvz.b   UI_TRACK,%d2
+        bsr     lf_kind_last
+        cmpi.l  #LF_SY_LAST,%d0
+        beq     lf_ps_name
+        cmpi.l  #31,%d1
+        bls     lf_ps_fm
+        lea     lf_ps_none:l,%a1         | 32 / 33 off a SY DRUM track: no destination
+        bra     lf_ps_copy
+lf_ps_name:
+        subi.l  #30,%d1
+        lsl.l   #2,%d1
+        lea     lf_ps_names:l,%a1
+        adda.l  %d1,%a1
+lf_ps_copy:
+        moveq   #4,%d1
+lf_ps_byte:
+        move.b  (%a1)+,(%a0)+
+        subq.l  #1,%d1
+        bne     lf_ps_byte
+        moveq   #1,%d0
+        bra     lf_ps_out
+lf_ps_fm:
+        moveq   #0,%d0
+lf_ps_out:
+        movem.l (%sp),%d1-%d2/%a1
+        lea     12(%sp),%sp
+        rts
+        .data
+lf_ps_names:    .ascii  "LSPDLDEPWAVES&H\0"
+lf_ps_none:     .ascii  "----"
+        .text
+        .endif
+
 lf_pmtr_map:
         cmpi.l  #6,%d0
         bcs     lf_pmtr_map_out
@@ -412,3 +504,8 @@ lf_built:
 lf_desc:
         .fill   LFO_DESC_LEN,1,0
         .balign 4
+        .if HAVE_SYDRUM
+lf_desc_sy:                              | (2.18) SY DRUM's: lf_desc with PMTR counting 34
+        .fill   LFO_DESC_LEN,1,0
+        .balign 4
+        .endif

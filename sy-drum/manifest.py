@@ -49,7 +49,8 @@ def remix_include(modules):
 
 # The step locks' sources, in the unit after the engine (pass 2 of remix.inc).
 LOCKS = ("setup_stage", "locks_store", "locks_seq", "locks_ui", "locks_sparse", "locks_clip",
-         "locks_transform", "locks_delete", "locks_live", "locks_io")
+         "locks_transform", "locks_delete", "locks_live", "scenes_store", "scenes_ui", "scenes_ops",
+         "locks_io")
 
 
 PAGE_HOOK = 0x40031ed6                  # `moveml %sp@,%d2-%d5; lea %sp@(16),%sp` (the page resolver's epilogue)
@@ -169,6 +170,11 @@ LOCK_HOOKS = (
 # platform's arena reserve (locks_store.inc.s; sl_reset fills it before any reader).
 LOCK_TABLE_BYTES = 16 * 8192 * 16
 
+# (2.18) The setup scene table: 16 banks x (working + Part-saved) x 4 Parts x 16 scenes x 8 tracks
+# x 4 controls, uninitialised DRAM beside the lock table (scenes_store.inc.s; sc_reset and the
+# project load fill it before sc_ready_mask lets a reader in).
+SCENE_TABLE_BYTES = 16 * 2 * 4 * 16 * 8 * 4
+
 MODULE = Module(
     name="sy-drum",
     key="SY DRUM",
@@ -198,7 +204,8 @@ MODULE = Module(
                "releases the playing step's lock of that control; every other page stock",
                kind="jmp", pad_to=10),
     ),  # Shared lock sites are dispatched by SYNTH MACHINE; SY helpers remain local.
-    dram_regions=(DramRegion("sl_work_table", LOCK_TABLE_BYTES),),
+    dram_regions=(DramRegion("sl_work_table", LOCK_TABLE_BYTES),
+                  DramRegion("sc_table", SCENE_TABLE_BYTES)),
     conflicts=(("KITS", "both hook the project load / save / reload / clear jobs and the pattern clipboard "
                         "(SY DRUM's step-lock files and clipboard)"),
                ("PLOCKS P2", "both hook the sequencer's lock queue and clear paths and the held-trig encoder "

@@ -112,7 +112,11 @@
         .set    SETUP_GAP, 0x1b0         | ... their FLEX SETUP bytes this far on (blob + 0x8ef60 + 30 * track)
         .set    LFO_PMTR, 0x8f072        | + 30 * track: the LFO SETUP column's three PMTR bytes (stock Part bytes)
         .set    LFD_MODULE_FIRST, 30     | the module's LFO destinations VOIC (30) and CHRD (31): past the stock
-        .set    LFD_MODULE_LAST, 31      | descriptor's count, so the stock Part validator would clamp or reject them
+        .if     HAVE_SYDRUM              | descriptor's count, so the stock Part validator would clamp or reject them
+        .set    LFD_MODULE_LAST, 33      | (2.18) and SY DRUM's LSPD LDEP WAVE S&H (30..33, lfo_destinations.inc.s)
+        .else
+        .set    LFD_MODULE_LAST, 31
+        .endif
         .set    CV_SETUP, 32             | + lane: the PLAYBACK page's SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
         .set    SRC_CURSOR, 0x460d5c30   | SRC SETUP's machine row (the sample-list window's)
         .set    NAMES, 0x400a78c8        | the stock machine-name table, five pointers (STATIC .. PICKUP)

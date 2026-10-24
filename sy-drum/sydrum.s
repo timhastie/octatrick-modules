@@ -10,7 +10,8 @@
 | reach them -- and the dedicated LFO / S&H on the PLAYBACK SETUP page: LSPD (0.40 ..
 | 200 Hz), LDEP, WAVE (OFF TRI SQR RND), S&H (OFF ON) -- the FLEX SETUP bytes, the Part's
 | defaults, each lockable per step (the dedicated step locks: locks_*.inc.s, kept in
-| companion files beside the project's banks; no scenes or LFO destinations for them).
+| companion files beside the project's banks), and since 2.18 scene targets (scenes_*.inc.s,
+| syscenNN files) and LFO destinations (PMTR 30..33, setup_stage.inc.s ss_lfo_stage).
 | The DSP shapes and effects the voice as a sample (filter, FX, level, pan); the engine
 | owns the AMP envelope (ATK / HOLD / REL from the AMP page, as FM SYNTH's).
 |
@@ -27,9 +28,9 @@
 | From the development line (Octatrick 3.0, 8 Oct 2026): the engine, sy1_pgdesc and its
 | formatters, widgets and knob handler, the SETUP page's formatters, the LEG MONO
 | recharge, the SETUP shield, the LFO's phase-only frames, the per-step SETUP locks and
-| their card files (locks_*.inc.s, setup_stage.inc.s). Not here: the development line's SETUP
-| scenes, the SETUP controls as LFO destinations, the marker files. No stock firmware
-| bytes are embedded: OS addresses only.
+| their card files (locks_*.inc.s, setup_stage.inc.s); since 2.18 its SETUP scenes
+| (scenes_*.inc.s) and the SETUP controls as LFO destinations. Not here: the marker files.
+| No stock firmware bytes are embedded: OS addresses only.
         .text
         .include "remix.inc"             | pass 1: the remix's flags and synth/engine_abi.inc (manifest.py)
         .global sy1_kind, sy1_leg_pending, sy1_mono_trigger, sy1_mono_frame, sy1_mono_key_frame
@@ -122,6 +123,7 @@ sd_tk_idle1:
         bra     sd_tk_out
 sd_tk_work:
         bsr     sy1_setup_tick           | 1.
+        jsr     sc_refresh:l             | (2.18) this frame's selected scene rows (scenes_store.inc.s)
         jsr     sl_seq_tick:l            | 2. (locks_seq.inc.s; every register kept)
         movea.l PART_PTR,%a0
         cmpa.l  #0x40000000,%a0          | (a boot pointer that is no Part yet: nothing to read)
@@ -621,6 +623,9 @@ sd_setup_edit:
         cmpa.l  #4,%a3
         bcc     sd_se_hidden
         jsr     sl_ui_edit:l
+        tst.l   %d0
+        bne     sd_se_hidden
+        jsr     sc_ui_edit:l             | (2.18) a held scene: the turn is the scene's (scenes_ui.inc.s)
         tst.l   %d0
         bne     sd_se_hidden
         lea     -8(%sp),%sp
