@@ -15,6 +15,7 @@ and adds the row; without it, SYNTH MACHINE is byte for byte the FM-only engine.
 
 - **SELECT MACHINE TYPE**: press the track key twice (QUICK ASSIGN), LEFT (`<< MACHINE`), DOWN to `SY DRUM` (the
   seventh row: STATIC FLEX THRU NEIGHBOR PICKUP FM SYNTH SY DRUM; the window shows six rows and scrolls), YES.
+  Since 2.18 the track key pressed twice on a SY DRUM (or FM SYNTH) track opens this list directly, not the slot list.
 - **SRC SETUP**: hold FUNC and press the PLAYBACK (SRC) key, DOWN to `SY DRUM`, YES.
 
 **At most two SY DRUM tracks in a Part** (2.15): SY DRUM is drawn on the unit's main processor, and too many
