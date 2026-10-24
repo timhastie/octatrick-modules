@@ -172,8 +172,13 @@ def remix_variants(path: pathlib.Path):
         names = next(ast.literal_eval(n.value) for n in function.body
                      if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "names" for t in n.targets))
         sources = [(path.parent / (name + ".inc.s")).read_text() for name in names]
-        return ["\n".join((".ifndef FM_PASS1", ".set FM_PASS1, 1", f".set HAVE_SYDRUM, {flag}",
-                           abi, ".else", *sources, ".endif")) for flag in (0, 1)]
+        # 2.19: HAVE_MUTE_MODES (synth/manifest.py reads MM_MODE / MM_STATE from Mute Modes' source in a
+        # remix that has it); the scan assembles the engine without it, and once with it (and HAVE_MM_KEY)
+        # at Mute Modes' published words (patch_softmute.s GATE / MUTE_STATE), so its code is scanned too
+        mm = (".set HAVE_MUTE_MODES, 0\n.set HAVE_MM_KEY, 0",
+              ".set HAVE_MUTE_MODES, 1\n.set MM_MODE, 0x800000dc\n.set MM_STATE, 0x80000008\n.set HAVE_MM_KEY, 1")
+        return ["\n".join((".ifndef FM_PASS1", ".set FM_PASS1, 1", f".set HAVE_SYDRUM, {flag}", mm[m],
+                           abi, ".else", *sources, ".endif")) for flag, m in ((0, 0), (1, 0), (1, 1))]
     if path.parent.name == "sy-drum":
         engine = (path.parent / "engine.inc.s").read_text()
         locks = [(path.parent / f"{n}.inc.s").read_text() for n in sydrum_locks(path.parent)]
