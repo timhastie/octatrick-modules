@@ -639,6 +639,11 @@ sd_se_hidden:
 | value (the stock knob routine clamps it): one unit a detent, seven with the encoder
 | pressed, FUNC held: PTCH 12 (an octave), MODE 1, WDTH 16, SWEP 12, SPED 16, DEC 16. The
 | development line's sy1_knob with FM SYNTH's po_knob paths written out (another unit's labels).
+| 2.18: MODE (six values) turned without FUNC goes to the stock default stepper, as a stock
+| parameter with few values does: the page's knob map gives knob B the threshold of MODE's
+| count (6), so a turn steps MODE as far as it would step any stock few-valued parameter
+| (one unit a detent moved MODE A to F in five units, the six modes in a small part of a turn).
+        .set    KN_STOCK, 0x4003240c     | the stock default stepper (slot, detents, value) -> d0
 sy1_knob:
         lea     -12(%sp),%sp
         movem.l %d2-%d4,(%sp)
@@ -655,6 +660,8 @@ sy1_knob:
         add.l   %d1,%d0
         bra     sd_kn_out
 sd_kn_plain:
+        cmpi.l  #1,%d2                   | 2.18: MODE -> the stock stepper (its own x7 when pressed)
+        beq     sd_kn_stock
         move.l  %d2,%d3
         addi.l  #PUSH_CODE,%d3           | the push switch's key code ...
         move.l  %d3,%a0
@@ -673,6 +680,10 @@ sd_kn_out:
         movem.l (%sp),%d2-%d4
         lea     12(%sp),%sp
         rts
+sd_kn_stock:
+        movem.l (%sp),%d2-%d4
+        lea     12(%sp),%sp
+        jmp     KN_STOCK                 | the same three arguments on the stack; it returns to our caller
 sy1_kn_jump:
         .byte   12, 1, 16, 12, 16, 16
         .align  4

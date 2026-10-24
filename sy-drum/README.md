@@ -61,8 +61,9 @@ such a build.
 
 These are the FLEX PLAYBACK bytes, so stock p-locks, the three LFOs and scenes reach them as on any FLEX track. An
 encoder pressed gives steps of seven; with FUNCTION held a detent moves PTCH 12, MODE 1, WDTH 16, SWEP 12, SPED 16,
-DEC 16. The AMP page (ATK, HOLD, REL, VOL, BAL) works as on FM SYNTH: the engine runs the envelope; a CHROMATIC key
-sustains while held, sequencer trigs use HOLD.
+DEC 16. Since 2.18 MODE turned without FUNCTION steps as a stock parameter with few values does (the stock stepper
+with MODE's count of six), no longer one mode per encoder unit. The AMP page (ATK, HOLD, REL, VOL, BAL) works as on
+FM SYNTH: the engine runs the envelope; a CHROMATIC key sustains while held, sequencer trigs use HOLD.
 
 ## The LFO (PLAYBACK SETUP: FUNC + PLAYBACK)
 
