@@ -95,7 +95,8 @@ SWEP SPED DEC on a SY DRUM track).
 Open PLAYBACK SETUP (FUNC + PLAYBACK), hold SCENE A or SCENE B and turn A..D (LSPD LDEP WAVE S&H): the scene
 selected on that side stores a value for that control. The turn starts from the scene's value, or from the Part's
 value when the control is not assigned yet, and steps as the Part value's edit does (WAVE and S&H one value a
-detent). While the scene key is held an assigned control is drawn inverted with the scene's value. Keep the scene
+detent). While the scene key is held an assigned control is drawn inverted with the scene's value (since 2.19 the page
+redraws on the SCENE press and release, as stock pages do, so no knob turn is needed to show it). Keep the scene
 key held and press and release the encoder without turning it to remove an assignment; pressing an unassigned
 control assigns it at the Part's value. A held trig wins: with a trig held the turn is a step lock.
 

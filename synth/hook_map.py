@@ -31,6 +31,8 @@ LOCK_HOOKS = (
     (0x4005040c, 8, 'fl_ui_key_hook', 'Dedicated setup encoder press/release on held audio trigs'),
     (0x40050fd6, 6, 'fl_ui_trig_press_hook', 'a trig press changed the held mask -- redraw an open FM SYNTH PLAYBACK SETUP window, then the stock call'),
     (0x4005fbd2, 6, 'fl_ui_trig_rel_hook', 'a trig release changed the held mask -- redraw an open FM SYNTH PLAYBACK SETUP window, then the stock call'),
+    (0x400434c4, 6, 'fl_ui_scene_press_hook', '(2.19) a SCENE A / B press set the held side -- redraw an open FM SYNTH / SY DRUM PLAYBACK SETUP window, then the displaced instruction'),
+    (0x40054cca, 6, 'fl_ui_scene_rel_hook', '(2.19) a SCENE A / B release cleared the held side -- redraw an open FM SYNTH / SY DRUM PLAYBACK SETUP window, then the stock call'),
     (0x400508e4, 8, 'fl_ui_held_knob_hook', 'Handle FM SYNTH dedicated setup held-trig knob map before native modal-window rejection'),
     (0x400603f2, 6, 'fl_grid_delete_hook', 'Clear companion row after ordinary GRID tap-delete clears the native audio lock row inline.'),
     (0x4008485e, 6, 'fl_io_dispatch', 'engine dispatch preflush/context'),

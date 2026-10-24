@@ -71,7 +71,8 @@ clear and undo carry the FM locks, and a full track copy or paste carries that t
 assignments to the destination Part. A machine change keeps locks, as before.
 
 **Scene locks.** Hold SCENE A or SCENE B and turn either knob to assign it to the scene
-selected on that side. Its assigned value is drawn inverted while the scene key is held.
+selected on that side. Its assigned value is drawn inverted while the scene key is held (since 2.19
+the page redraws on the SCENE press and release, as stock pages do, without a knob turn).
 To remove an existing assignment, keep the scene key held and press and release that knob
 without turning it. Pressing an unassigned knob assigns its Part value. A held trig takes
 precedence over a held scene key.

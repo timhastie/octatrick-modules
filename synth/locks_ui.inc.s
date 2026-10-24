@@ -273,6 +273,29 @@ fl_ui_trig_rel_hook:
         jmp     0x4005fbd8
         .endif
 
+| (2.19) SCENE A / B: the press handler (0x4004348c) sets the held side 0x460d169c and the
+| release handler (0x40054ca4) clears it; stock redraws its parameter pages there but not an
+| open PLAYBACK SETUP window, so a held scene's VOIC / CHRD were not shown inverted until a
+| knob turned, nor the Part's back on release. The same redraw as the trig hooks', then the
+| displaced instruction (SY DRUM's hook replays it when SY DRUM is in the remix).
+        .global fl_ui_scene_press_hook,fl_ui_scene_rel_hook
+fl_ui_scene_press_hook:
+        bsr     fl_ui_setup_redraw
+        .if HAVE_SYDRUM
+        jmp sl_ui_scene_press_hook:l
+        .else
+        clr.l   0x460d1698
+        jmp     0x400434ca
+        .endif
+fl_ui_scene_rel_hook:
+        bsr     fl_ui_setup_redraw
+        .if HAVE_SYDRUM
+        jmp sl_ui_scene_rel_hook:l
+        .else
+        jsr     0x400418e0
+        jmp     0x40054cd0
+        .endif
+
 fl_ui_setup_redraw:
         lea     -60(%sp),%sp
         movem.l %d0-%d7/%a0-%a6,(%sp)
