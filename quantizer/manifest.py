@@ -223,6 +223,7 @@ Verified in ot_emu through the virtual panel (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 """
 
+import importlib.util
 import os
 
 from remix.schema import Detour, Kind, Linked, Module, Poke, TableGrow
@@ -233,6 +234,12 @@ from remix.schema import Detour, Kind, Linked, Module, Poke, TableGrow
 # timhastie/octatrick-modules. Every source path below is built from it,
 # so one manifest serves both layouts.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
+# (2.18) a new detour's displaced bytes are read from the build's own MAIN OS section
+# (stock_guard.py, the synth module's reader): no stock bytes in this file.
+_guard_spec = importlib.util.spec_from_file_location("qz_stock_guard", os.path.join(_HERE, "stock_guard.py"))
+_guard_module = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(_guard_module)
+stock_guard = _guard_module.stock_guard
 
 H = bytes.fromhex
 
@@ -340,6 +347,10 @@ MODULE = Module(
                "CHROMATIC drawer, the common push of the octave number both branches reach (2.13, Modwerk #264: the MIDI branch "
                "jumps here, so the push is never skipped): a MIDI track keeps stock's number, a synth track prints qz_oct, a sample "
                "track the position 0 / 1 / -1, with ROOT's name before it when a scale is on",
+               kind="jmp", pad_to=8),
+        Detour(0x40044abc, stock_guard(0x40044abc, 8), "qz", "qz_heldmark",
+               "CHROMATIC drawer, an audio track's held-key mark (the byte load and the octave word load): with a scale on "
+               "the mark goes on the note the key sounds (qz_chrom's rule), not the physical key (2.18)",
                kind="jmp", pad_to=8),
         Detour(0x40065bca, H("4282" "4fef0020"), "qz", "qz_draw",
                "SEQUENCER window draw loop: index the row tables from the scroll offset",
