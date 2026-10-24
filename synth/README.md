@@ -28,9 +28,11 @@ without turning it. Pressing an unassigned knob assigns its Part value. A held t
 precedence over a held scene key.
 
 At every note START, each control takes its **step lock first**, otherwise the **selected
-scene's lock**, otherwise its **Part value**. The crossfader switches between the sides:
-**A below the midpoint; B at and above it**. Neither voice count nor chord shape is
-interpolated. A side without an assignment, or a disabled scene side, uses the Part value.
+scene's lock**, otherwise its **Part value**. The crossfader morphs between the sides as it
+does for stock parameters (2.18; 2.17 switched at the midpoint): the value is the two sides'
+values weighted by the crossfader position and rounded to the control's step, so a sweep from
+a CHRD minimum on A to a maximum on B passes every shape between, and VOIC passes 1..4.
+A side without an assignment, or a disabled scene side, uses the Part value.
 The load cap is applied after the locks are resolved.
 
 **Cap display (23 October fix).** If the Part's existing load budget permits fewer voices than the
