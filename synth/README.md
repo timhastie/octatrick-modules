@@ -13,6 +13,36 @@ such as INDX while the chord plays, and SPD3 / DEP3 are available in the destina
 The design values in this section are recorded in the author's workspace log
 `R/work/r17/logs/design-contract.txt`; they are not runtime measurements.
 
+## Mute Modes' trig mutes (2.19)
+
+With Mute Modes (octabam's `mute-modes`, PERSONALIZE > MUTE MODE) in the image, an FM SYNTH or
+SY DRUM track obeys its trig-mute modes as a sample track does (Modwerk #777, the Mute Modes
+author's analysis):
+
+| MUTE MODE | a muted (or soloed-out) FM SYNTH / SY DRUM track |
+|---|---|
+| OT, OTFX | as before: the trigs play, Mute Modes cuts the sound |
+| DT-T | new trigs make no note; the note already sounding plays out on its own envelope |
+| OTFX-T | new trigs make no note; the sounding note is treated as Mute Modes treats a sample voice |
+
+Every START is dropped on such a track, whatever posted it (a sequencer trig, a CHROMATIC key,
+a MIDI note-on), because Mute Modes' own trig gates test the track's mute and solo state and not
+where the trig came from (read from its source; a live key on a muted stock track was not
+measured). STOP ends the voices of a muted track in DT-T and OTFX-T too (Mute Modes skips the
+stock voice kill for such a track, and with it the engine's), so a HOLD INF note does not ring on
+after STOP. Beside SIDECHAIN COMPRESSOR, a track a COMPRESSOR uses as its KEY keeps its trigs in
+every mode, as Mute Modes lets a KEY track's trigs through.
+
+How: `synth/manifest.py` sees Mute Modes in the remix (`MUTE_MODES`) and reads the two words it
+consults from its source (the MUTE MODE word and the per-track solo / mute long, `patch_softmute.s`
+`GATE` / `MUTE_STATE`) into `remix.inc` (`HAVE_MUTE_MODES`, `MM_MODE`, `MM_STATE`, and
+`HAVE_MM_KEY` from Mute Modes' SC_KEY). `poly.s` asks `po_mm_silenced` at the two places the
+engine acts on a START (`sy_render`'s resolve, before `sy_cold`; `po_frame`, before `po_start`):
+MUTE MODE 1 (OTFX-T) or 2 (DT-T), and the track muted, or not soloed while another track is.
+`po_mm_tick` (from `po_tick`, once a frame) ends those tracks' engine voices at the frame the
+sequencer stops, as `po_kill` would have. Without Mute Modes none of it is assembled: the engine
+is byte for byte 2.18's.
+
 ## VOIC and CHRD on PLAYBACK SETUP (2.17)
 
 **Step locks.** In GRID RECORDING, hold a trig and turn VOIC or CHRD. The held step's locked

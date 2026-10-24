@@ -407,12 +407,49 @@ def engine_abi():
         return source.read()
 
 
+MUTE_MODES_KEY = "MUTE_MODES"            # octabam's Mute Modes module (modules/mute-modes, Zac-Kyoti)
+MUTE_MODES_UNIT = "mm_softmute"          # its mute-behaviour unit (patch_softmute.s)
+
+
+def _mute_modes_equates(modules):
+    """(2.19) The Mute Modes words the engine consults, read from that module's own source in
+    the remix (its `mm_softmute` unit, patch_softmute.s: `.equ GATE` = the MUTE MODE word,
+    `.equ MUTE_STATE` = the per-track solo / mute / cue long), never written here; a source that
+    does not name each exactly once refuses the build. SC_KEY is the unit's own remix.inc answer
+    (SIDECHAIN COMPRESSOR in the remix: a COMPRESSOR's KEY track keeps its trigs)."""
+    import re
+    mm = modules[MUTE_MODES_KEY]
+    units = [u for u in getattr(mm, "linked", ()) if u.label == MUTE_MODES_UNIT]
+    if len(units) != 1:
+        raise SystemExit(f"synth: {MUTE_MODES_KEY} has no single '{MUTE_MODES_UNIT}' unit")
+    with open(units[0].source, encoding="utf-8") as source:
+        text = source.read()
+    found = {}
+    for name in ("GATE", "MUTE_STATE"):
+        hits = re.findall(r"^\s*\.equ\s+" + name + r"\s*,\s*(0x[0-9a-fA-F]+)\b", text, re.M)
+        if len(hits) != 1:
+            raise SystemExit(f"synth: {units[0].source} names .equ {name} {len(hits)} times")
+        found[name] = int(hits[0], 16)
+    sc_key = units[0].include is not None and "SC_KEY,1" in units[0].include(modules).replace(" ", "")
+    return (f".set MM_MODE, {found['GATE']:#010x}\n"
+            f".set MM_STATE, {found['MUTE_STATE']:#010x}\n"
+            f".set HAVE_MM_KEY, {int(sc_key)}\n")
+
+
 def remix_include(modules):
     """The `remix.inc` each unit of this module includes (octabam's Linked.include, written
     per remix): HAVE_SYDRUM -- 1 when SY DRUM (sy-drum/) is in the remix: its machine-list row
     and the engine's calls into its unit are assembled; 0 assembles nothing of it, byte for
-    byte the 2.10 engine (poly.s) -- then the shared equates."""
-    return f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n" + engine_abi()
+    byte the 2.10 engine (poly.s) -- HAVE_MUTE_MODES (2.19) -- 1 when Mute Modes is in the
+    remix: the engine drops a START on a track Mute Modes' trig-mute modes silence and ends a
+    silenced track's voices at STOP (poly.s po_mm_*), with the words it consults read from
+    Mute Modes' source (_mute_modes_equates); 0 assembles nothing of it -- then the shared
+    equates."""
+    mm = MUTE_MODES_KEY in modules
+    return (f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
+            f".set HAVE_MUTE_MODES, {int(mm)}\n"
+            + (_mute_modes_equates(modules) if mm else ".set HAVE_MM_KEY, 0\n")
+            + engine_abi())
 
 
 def machine_limits():

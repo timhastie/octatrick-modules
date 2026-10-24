@@ -372,6 +372,10 @@ sy_render:
         lea     (%a0,%d2.l),%a0
         btst    #4,(%a0)                 | a voice starts this frame: resolve the marker
         beq     sy_ison
+        .if     HAVE_MUTE_MODES
+        bsr     po_mm_silenced           | (2.19) Mute Modes silences this track's trigs (DT-T / OTFX-T, muted or
+        bne     po_mm_drop               | soloed out): the START is dropped, what sounds plays on (po_mm_drop)
+        .endif
         .if     HAVE_SYDRUM
         lea     sy1_leg_pending:l,%a0    | (SY DRUM) a real START supersedes any queued mono key recharge
         clr.b   (%a0,%d2.l)
@@ -641,6 +645,151 @@ sy_voice:
         add.l   %d1,%a0
         lea     V_POS(%a0),%a0
         rts
+
+        .if     HAVE_MUTE_MODES
+| ---- (2.19) MUTE MODES (Modwerk #777): the trig-mute modes reach this engine ---------
+| Every sequencer trig ORs the START bit into the live byte and the packer's NIBBLE; Mute
+| Modes' DT-T and OTFX-T leave the bit alone and block what stock does with it later in the
+| frame (the trig dispatch, the fresh voice bind, the DSP trig flags). sy_render runs before
+| that dispatch and reads the bit itself, so without this a muted FM SYNTH (or SY DRUM) track
+| played every trig. Mute Modes' rule, asked here at the two places the engine acts on a
+| START (sy_render's resolve, po_frame's chord): po_mm_silenced. A START it answers yes to is
+| dropped -- no note, what sounds plays on (DT-T: on its own envelope; OTFX-T: as Mute Modes
+| treats the voice) -- whatever posted it: a sequencer trig, a panel key, a MIDI note-on, as
+| Mute Modes' gates test the track and never the trig's origin. The words are Mute Modes'
+| own, read from its source by synth/manifest.py (MM_MODE, MM_STATE).
+
+| po_mm_silenced: d2 = the track. NE = Mute Modes silences its trigs now: MUTE MODE 1 (OTFX-T)
+| or 2 (DT-T) -- its mt_trig / dt_trig / fresh_bind range test -- and the track muted (MM_STATE
+| bit 8 + t) or, while any track is soloed (bits 0..7), not soloed itself. OT (0) and OTFX (3)
+| answer EQ. With SIDECHAIN COMPRESSOR in the remix (HAVE_MM_KEY, Mute Modes' SC_KEY), a
+| track a COMPRESSOR uses as its KEY keeps its trigs, as Mute Modes' KEYMASK passes them: the
+| KEY read as its p1_key reads it (this frame's DSP record, half 0: FX1 id at +55, its KEY at
+| +38; FX2 id +57, KEY +50; COMPRESSOR 0x18; KEY 1..8 = T1..T8). Every register kept.
+        .set    MM_COMP, 0x18            | the COMPRESSOR's FX id (DSP_REC: the DSP voice records, half 0 at ping 0)
+po_mm_silenced:
+        lea     -12(%sp),%sp
+        movem.l %d0-%d1/%a0,(%sp)
+        move.l  MM_MODE,%d0
+        subq.l  #1,%d0
+        cmpi.l  #1,%d0
+        bhi     po_mms_no                | OT, OTFX (or a value Mute Modes does not define): the trig passes
+        move.l  MM_STATE,%d1
+        move.l  %d2,%d0
+        addq.l  #8,%d0
+        btst    %d0,%d1
+        bne     po_mms_yes               | muted
+        tst.b   %d1
+        beq     po_mms_no                | nothing soloed
+        btst    %d2,%d1
+        bne     po_mms_no                | soloed itself
+po_mms_yes:
+        .if     HAVE_MM_KEY
+        lea     DSP_REC,%a0
+        moveq   #8,%d0
+po_mms_k:
+        mvz.b   55(%a0),%d1              | FX1
+        cmpi.l  #MM_COMP,%d1
+        bne     po_mms_k2
+        mvz.b   38(%a0),%d1
+        subq.l  #1,%d1
+        cmp.l   %d2,%d1
+        beq     po_mms_no                | this track is that COMPRESSOR's KEY: its trigs pass
+po_mms_k2:
+        mvz.b   57(%a0),%d1              | FX2
+        cmpi.l  #MM_COMP,%d1
+        bne     po_mms_k3
+        mvz.b   50(%a0),%d1
+        subq.l  #1,%d1
+        cmp.l   %d2,%d1
+        beq     po_mms_no
+po_mms_k3:
+        lea     64(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_mms_k
+        .endif
+        moveq   #1,%d0                   | NE: silenced
+        bra     po_mms_out
+po_mms_no:
+        moveq   #0,%d0                   | EQ
+po_mms_out:
+        movem.l (%sp),%d0-%d1/%a0        | (movem and lea leave the condition codes)
+        lea     12(%sp),%sp
+        rts
+
+| po_mm_drop: sy_render's resolve, a START dropped (d2 = the track): the identity the quantizer
+| posted for it is consumed, as sy_no consumes it, and so are the MIDI note-ons waiting for it
+| (po_mring), so no later START plays them; the sounding voice goes on (sy_ison).
+po_mm_drop:
+        lea     KEYS_AT,%a0
+        clr.b   (%a0,%d2.l)
+        bsr     po_mring_reset           | (clobbers d0, a0, a1)
+        bra     sy_ison
+
+| po_mm_tick: from po_tick, once a frame (every register kept). At STOP the sequencer kills
+| each track's voice through the stock VOICE KILL, whose per-track body po_kill detours; Mute
+| Modes' fresh_bind gate skips that body for a track it silences (the same rule), so po_kill
+| never ran and a HOLD INF note rang on. At the frame the sequencer stops playing (po_tick's
+| own test: SEQ_STATE 0 or 2), every track po_mm_silenced answers yes for ends its engine
+| voices as po_kill ends them (po_mm_kill). Other tracks were killed by stock already.
+po_mm_tick:
+        lea     -16(%sp),%sp
+        movem.l %d0-%d2/%a0,(%sp)
+        moveq   #0,%d1                   | d1 := 1 while the sequencer plays
+        move.l  SEQ_STATE,%d0
+        beq     po_mmt_st
+        cmpi.l  #2,%d0
+        beq     po_mmt_st
+        moveq   #1,%d1
+po_mmt_st:
+        lea     po_mm_play:l,%a0
+        mvz.b   (%a0),%d0                | the last frame's
+        move.b  %d1,(%a0)
+        tst.l   %d1
+        bne     po_mmt_out               | playing
+        tst.l   %d0
+        beq     po_mmt_out               | stopped before too: no STOP this frame
+        moveq   #0,%d2
+po_mmt_t:
+        bsr     po_mm_silenced
+        beq     po_mmt_n
+        bsr     po_mm_kill
+po_mmt_n:
+        addq.l  #1,%d2
+        moveq   #8,%d0
+        cmp.l   %d0,%d2
+        bne     po_mmt_t
+po_mmt_out:
+        movem.l (%sp),%d0-%d2/%a0
+        lea     16(%sp),%sp
+        rts
+
+| po_mm_kill: d2 = the track: po_kill's engine part (the mono voice silent, S_ON 0, the four
+| voices freed, no key or gate owns them; the next START is cold). Clobbers d0, a0.
+po_mm_kill:
+        jsr     lf_unlatch:l
+        move.l  %d2,%d0
+        lsl.l   #7,%d0                   | * ST_STRIDE
+        lea     sy_state(%pc),%a0
+        add.l   %d0,%a0
+        clr.b   S_ON(%a0)
+        clr.l   S_GAIN(%a0)
+        clr.w   S_GPREV(%a0)
+        clr.l   S_HTIM(%a0)
+        bsr     po_free
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0
+        add.l   %d0,%a0
+        moveq   #4,%d0
+po_mmk_v:
+        clr.b   V_KEY(%a0)
+        clr.l   V_HOLD(%a0)
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     po_mmk_v
+        rts
+        .endif
 
 | ---- sy_machine: d0 := track d2's machine (the Part's byte: 0 STATIC, 1 FLEX, 2
 | THRU, 3 NEIGHBOR, 4 PICKUP; po_is_synth's read). Clobbers d0, d1, a0. ---------
@@ -1151,6 +1300,9 @@ po_tick:
         jsr     sd_tick:l                | (2.11) SY DRUM, once a frame: its SETUP controls to the engine, the CF
                                          | records' SETUP bytes neutral on its tracks, its LFOs (every register kept)
         .endif
+        .if     HAVE_MUTE_MODES
+        bsr     po_mm_tick               | (2.19) STOP ends the voices of a track whose stock kill Mute Modes skips
+        .endif
         move.l  SEQ_STATE,%d1            | 2.18: not playing (0 or 2) -> the next step change is no measurement
         beq     po_tk_idle
         moveq   #2,%d3
@@ -1498,6 +1650,10 @@ po_fr_nolh:
         lea     (%a0,%d2.l),%a0
         btst    #4,(%a0)
         beq     po_fr_params
+        .if     HAVE_MUTE_MODES
+        bsr     po_mm_silenced           | (2.19) a START sy_render dropped for Mute Modes: no chord either
+        bne     po_fr_params
+        .endif
         bsr     po_start
 po_fr_params:
 | ---- the track's parameters this frame ----------------------------------------
@@ -6219,5 +6375,10 @@ po_ls_was:                               | (2.12) the browser's slot held a mark
 po_ampdesc_buf:                          | the AMP descriptor clone with LEG in slot 11 (built on first use, po_amp_desc)
         .fill   AMP_DESC_LEN, 1, 0
         .align  4
+        .if     HAVE_MUTE_MODES
+po_mm_play:                              | (2.19) po_mm_tick: 1 while the sequencer played at the last frame
+        .byte   0
+        .align  4
+        .endif
         .include "remix.inc"             | second pass: independent setup and lock code
 po_end:
