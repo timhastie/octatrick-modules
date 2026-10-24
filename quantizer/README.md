@@ -1,7 +1,8 @@
 # Scale quantizer
 
 (24 Oct 2026, Octatrick 2.18: an audio track's CHROMATIC keyboard marks the note a key sounds
-with a scale on, not the key's own place -- "2.18" below.
+with a scale on, not the key's own place, and a MIDI track's NOT2..4 step through the scale as
+NOTE does -- "2.18" below.
 15 Oct 2026, Octatrick 2.15: what a MIDI track plays follows the scale -- chords, TRAN, the
 arpeggiator -- and each MIDI track has a switch that takes it out of the scale -- "MIDI tracks:
 what they play, and MIDI n SCALE (2.15)" below.
@@ -68,6 +69,20 @@ at its octave `qz_oct`; a note off the picture is not marked, as stock does
 for a key off it. A MIDI track's mark was already its sounding note
 (`qz_mkey` stores the snapped note it marks); that branch is untouched.
 SCALE OFF: the displaced instructions, byte for byte.
+
+**A MIDI track's chord offsets follow the scale.** With a scale on (and the
+track's MIDI n SCALE ON), NOT2, NOT3 and NOT4 on the NOTE page step the way
+NOTE does: one click moves the offset to the next value at which NOTE +
+offset is a note of the scale, in the turn direction (in E MAJOR from E3:
++2, +4, +5, +7 ...), so the value shown, the chord the trig plays and the
+notes the arpeggiator takes from it are scale notes, each its own (2.15
+snapped NOTE + an out-of-scale offset only where the note was sent: the knob
+showed every semitone, and +1 played E3 again, so the chord lost a note). The Part's value with the
+knob (`qz_mknob`, from the Part's NOTE) and a step's lock with a [TRIG] key
+held (`qz_mplock`, from the step's NOTE lock or the Part's NOTE) alike; an
+offset stored before stays as it is until it is turned, and is still
+snapped on the way out. The offsets remain semitones in the Part; SCALE OFF
+and MIDI n SCALE OFF are stock.
 
 ## MIDI tracks (2.13)
 
