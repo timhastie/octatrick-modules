@@ -65,7 +65,7 @@ po_read_chrd:
         move.l  (%sp)+,%d1
         rts
 
-| a0 descriptor: replace only SETUP A/B. Other four boxes stay from stock.
+| a0 descriptor: SETUP A/B become VOIC/CHRD; the other four boxes are removed.
 po_setup_patch:
         lea     -12(%sp),%sp
         movem.l %d0/%a0-%a1,(%sp)
@@ -98,6 +98,9 @@ po_setup_patch:
         andi.l  #0x00ffffff,%d0
         ori.l   #0x55000000,%d0           | enabled, fixed-layout SETUP dials
         move.l  %d0,0x18e(%a1)
+        move.l  0x18a(%a1),%d0            | slots 8-11 (the stock LEN RATE TSTR TSNS boxes): enable
+        andi.l  #0xffff0000,%d0           | nibbles 0, so SRC SETUP draws neither their widget nor
+        move.l  %d0,0x18a(%a1)            | their name (fm_setup_draw6 removes their frame lines)
         movea.l %a1,%a0
         jsr     fl_ui_patch:l
         movem.l (%sp),%d0/%a0-%a1
@@ -114,7 +117,7 @@ po_setup_edit:
         movea.l (%sp)+,%a0
         bne     po_se_no
         cmpa.l  #2,%a3
-        bcc     po_se_no
+        bcc     po_se_inert              | knobs C-F: no box on the FM page, the turn edits nothing
         jsr     fs_ui_edit:l
         tst.l   %d0
         bne     po_se_out
@@ -129,6 +132,9 @@ po_setup_edit:
         movem.l (%sp),%d2/%d4
         lea     8(%sp),%sp
         moveq   #2,%d0
+        rts
+po_se_inert:
+        moveq   #1,%d0
         rts
 po_se_no:
         moveq   #0,%d0

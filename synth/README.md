@@ -4,7 +4,8 @@
 Hold **FUNC + PLAYBACK** on an FM SYNTH track. The two leftmost boxes, formerly LOOP and SLIC,
 are **VOIC** and **CHRD**. VOIC selects **1..4 voices**, starting at **1**; CHRD selects the
 **32 shapes with 4 inversions**, with `----` for no chord. Each knob click changes one value.
-The other four setup boxes stay stock. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
+The other four setup boxes (LEN, RATE, TSTR, TSNS) are not on an FM SYNTH track's page (2.18):
+no frame, name or icon, and knobs C-F edit nothing there. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
 again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate a destination
 such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
 The design values in this section are recorded in the author's workspace log
