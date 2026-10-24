@@ -3,7 +3,9 @@
 **Octatrick 2.17 candidate: LFO 3 is back, with VOIC and CHRD on PLAYBACK SETUP.**
 Hold **FUNC + PLAYBACK** on an FM SYNTH track. The two leftmost boxes, formerly LOOP and SLIC,
 are **VOIC** and **CHRD**. VOIC selects **1..4 voices**, starting at **1**; CHRD selects the
-**32 shapes with 4 inversions**, with `----` for no chord. Each knob click changes one value.
+**32 shapes with 4 inversions**, with `----` for no chord. CHRD changes one value a knob click. VOIC steps like the stock
+few-valued boxes (LOOP, SLIC): one step per stock threshold of knob travel, and its dial spreads
+1..4 evenly over the arc (2.18; the same stepping for its step and scene locks).
 The other four setup boxes (LEN, RATE, TSTR, TSNS) are not on an FM SYNTH track's page (2.18):
 no frame, name or icon, and knobs C-F edit nothing there. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
 again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate a destination

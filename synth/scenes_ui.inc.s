@@ -84,7 +84,9 @@ fs_ui_edit:
         tst.l   %d0
         beq     fs_ue_handled
         move.l  %a3,%d4
-        movea.l %d3,%a4
+        move.l  %d3,%d1
+        jsr     po_voic_steps:l          | VOIC: one step a stock threshold (setup.inc.s)
+        movea.l %d1,%a4
         moveq   #1,%d0
         move.l  %d0,0x460d1698           | turned: the release must not remove it
         bsr     fs_ui_row

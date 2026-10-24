@@ -1358,9 +1358,9 @@ fm_e6:
         add.l   %d2,%d2
         sub.l   %d2,%d0
         jmp     EDIT6_RET
-| Ordinary FM A/B default: one detent per value. The stock SETUP editor
-| bypasses descriptor knob handlers and scales short ranges in its accumulator.
-| Follow its established direct-step entry; the stock clamp/store/redraw remains.
+| Ordinary FM A/B default. The stock SETUP editor bypasses descriptor knob handlers.
+| CHRD (128 values): one raw unit a value. VOIC (4 values): the stock stepper, as the
+| stock few-valued boxes step (2.18). The stock clamp/store/redraw remains.
 fm_e6_one:
         moveq   #FLEX*6,%d0
         lea     (%a3,%d0.l),%a4
@@ -1373,6 +1373,11 @@ fm_e6_voice:
         move.l  %d0,%d2
         move.l  %d3,-(%sp)
         move.l  %a3,-(%sp)
+        cmpa.l  #0,%a3
+        bne     fm_e6_chord
+        jsr     0x4003249c               | VOIC: the stock stepper (knob A's accumulator) -> steps
+        jmp     0x4003a56c
+fm_e6_chord:
         move.l  %a3,%d0
         mulu.w  #24,%d0
         lea     0x46c7de2e,%a0
