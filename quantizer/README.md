@@ -122,11 +122,11 @@ Part's own PTCH first, as it does after a lock.
 - **SY DRUM:** its PTCH is semitones too and takes the same path.
 - **Not snapped:** PICKUP, THRU and NEIGHBOR tracks; RATE (FINE on a synth
   track); the stored PTCH locks (they stay as recorded). **LFOs and scenes
-  on PTCH are not snapped by this stage:** the snap is of the value the
-  trig's lock application resolves (the step's lock or the Part's PTCH);
-  an LFO and the crossfader's scene morph act on PTCH after that stage, as
-  stock, so their contribution is not pulled onto the scale (open: the
-  work order asks for the resolved value including them).
+  on PTCH stay continuous, by design:** a pitch LFO is vibrato and a scene
+  sweep on PTCH is a glide, so only the trig's own pitch (the step's lock
+  or the Part's PTCH, as the trig's lock application resolves it) snaps;
+  the LFO and the crossfader's scene morph act on PTCH after that stage, as
+  stock, and are not pulled onto the scale.
 
 **AUDIO 1 SCALE .. AUDIO 8 SCALE.** PROJECT > CONTROL > SEQUENCER, rows 15
 to 22 under MIDI 8 SCALE: **ON** (the default) or **OFF**, one row per audio
@@ -183,10 +183,11 @@ scripts and logs are in the author's workspace, not in this repository):
   PROJECT > SAVE: `#SEQUENCER_AUDIO_SCALE_OFF=5` after the MIDI line in
   `project.work` and `project.strd`; the power cut and the power-up from
   the battery RAM: 05; the saved project loaded through the loader: 05.
-- **Not measured:** the pitch a FLEX track sounds (the test card's FLEX
-  track sounded only a click per trig, whatever its locks), the rows on
-  the screen (drawn, stepped, toggled), STATIC and SY DRUM tracks, an LFO
-  or a scene on PTCH.
+- **Not measured here:** the pitch a FLEX track sounds (this card's FLEX
+  track sounded only a click per trig, whatever its locks; the release
+  record gates it on a card with a sine FLEX sample), STATIC and SY DRUM
+  tracks (the release record), the rows on the screen (drawn, stepped,
+  toggled).
 
 ## MIDI tracks (2.13)
 

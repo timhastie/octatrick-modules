@@ -1279,9 +1279,10 @@ qz_mn_skip:
 | resolved it -- the word -- and snapped (qz_asnap); when that moves it, the
 | snapped value is applied as a lock of that value is (byte, word, mask bit),
 | so the next trig restores the Part's own PTCH first: nothing stored changes,
-| and a scale switched back plays the pattern as recorded. Then the displaced
-| instructions (move.l a4,d1; btst #1,d1; the beq after reads their flags).
-| d1 is the displaced code's; everything else used is saved.
+| and a scale switched back plays the pattern as recorded. Then the two
+| displaced instructions are replayed (a register copy into d1 and a bit test
+| of it, whose flags the stock branch after the site reads). d1 is the
+| displaced code's; everything else used is saved.
 qz_atrig:
         tst.b   NV_SCALE
         jbeq    qz_at_replay            | SCALE OFF: stock
