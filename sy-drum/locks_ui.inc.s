@@ -530,7 +530,7 @@ sl_ui_widget:
         move.l  8(%sp),%d4
         bsr     sl_ui_context
         tst.l   %d0
-        beq     sl_uw_draw
+        beq     sl_uw_scene
         bsr     sl_ui_readable
         tst.l   %d0
         beq     sl_uw_draw
@@ -559,6 +559,15 @@ sl_uw_found:
         move.l  %d5,12(%sp)
         move.l  16(%sp),%d0
         ori.l   #1,%d0                  | same highlighted-value flag as native lock
+        move.l  %d0,16(%sp)
+        bra     sl_uw_draw
+sl_uw_scene:                            | (2.18) no held trig: a held scene's value for this control, highlighted alike
+        jsr     sc_ui_value:l
+        tst.l   %d0
+        bmi     sl_uw_draw
+        move.l  %d0,12(%sp)
+        move.l  16(%sp),%d0
+        ori.l   #1,%d0
         move.l  %d0,16(%sp)
 sl_uw_draw:
         cmpi.l  #2,%d4

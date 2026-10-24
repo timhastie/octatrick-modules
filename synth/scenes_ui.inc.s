@@ -177,35 +177,53 @@ fs_uv_out:
         rts
 
 | The four stock scene handlers, entered by detour (8 displaced bytes each). The held
-| side is 0x460d169c, whichever function stock entered.
+| side is 0x460d169c, whichever function stock entered. (2.18) A gesture that is not FM
+| SYNTH's goes on to SY DRUM's handler when SY DRUM is in the remix, which replays the
+| displaced instructions itself.
 fs_ui_knob_a_hook:
         bsr     fs_ui_knob
         tst.l   %d0
         bne     fs_uh_done
+        .if HAVE_SYDRUM
+        jmp     sc_ui_knob_a_hook:l      | SY DRUM's setup scenes (sy-drum/scenes_ui.inc.s), then stock
+        .else
         lea     -36(%sp),%sp
         movem.l %d2-%d7/%a2-%a4,(%sp)
         jmp     0x400534a0
+        .endif
 fs_ui_knob_b_hook:
         bsr     fs_ui_knob
         tst.l   %d0
         bne     fs_uh_done
+        .if HAVE_SYDRUM
+        jmp     sc_ui_knob_b_hook:l      | SY DRUM's setup scenes (sy-drum/scenes_ui.inc.s), then stock
+        .else
         lea     -32(%sp),%sp
         movem.l %d2-%d7/%a2-%a3,(%sp)
         jmp     0x40052ea0
+        .endif
 fs_ui_key_a_hook:
         bsr     fs_ui_key
         tst.l   %d0
         bne     fs_uh_done
+        .if HAVE_SYDRUM
+        jmp     sc_ui_key_a_hook:l      | SY DRUM's setup scenes (sy-drum/scenes_ui.inc.s), then stock
+        .else
         lea     -40(%sp),%sp
         movem.l %d2-%d7/%a2-%a5,(%sp)
         jmp     0x40054364
+        .endif
 fs_ui_key_b_hook:
         bsr     fs_ui_key
         tst.l   %d0
         bne     fs_uh_done
+        .if HAVE_SYDRUM
+        jmp     sc_ui_key_b_hook:l      | SY DRUM's setup scenes (sy-drum/scenes_ui.inc.s), then stock
+        .else
         lea     -44(%sp),%sp
         movem.l %d2-%d7/%a2-%a6,(%sp)
         jmp     0x40053a70
+        .endif
 fs_uh_done:
         rts
 

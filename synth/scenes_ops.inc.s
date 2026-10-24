@@ -1,4 +1,6 @@
 | ==== SETUP SCENES: the stock scene and Part operations carry them (b59) ============
+| (2.18) With SY DRUM in the remix every hook ends in SY DRUM's own (sy-drum/scenes_ops.inc.s:
+| its LSPD LDEP WAVE S&H table), which replays the displaced instructions instead.
 | Ten entry detours (8 displaced bytes each, lock_hooks.json). Each does its row work
 | on the parallel table with the UI's bank (0x100b14ce), restores every register,
 | replays the displaced instructions and continues in stock:
@@ -98,9 +100,13 @@ fs_scene_copy_hook:                      | (part, scene)
         bsr     fs_op_valid
 fs_sch_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_scene_copy_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -24(%sp),%sp
         movem.l %d2-%d7,(%sp)
         jmp     0x400274d4
+        .endif
 
 fs_scene_undo_hook:                      | (op, part, scene)
         fs_op_enter
@@ -115,9 +121,13 @@ fs_scene_undo_hook:                      | (op, part, scene)
         bsr     fs_op_valid
 fs_suh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_scene_undo_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -24(%sp),%sp
         movem.l %d2-%d7,(%sp)
         jmp     0x400275a8
+        .endif
 
 fs_scene_write_hook:                     | (src, part, scene)
         fs_op_enter
@@ -144,9 +154,13 @@ fs_swh_src:
         jsr     fl_mark_dirty:l
 fs_swh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_scene_write_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -48(%sp),%sp
         movem.l %d2-%d7/%a2-%a6,(%sp)
         jmp     0x40025b48
+        .endif
 
 fs_scene_clear_hook:                     | (scene), the UI's Part
         fs_op_enter
@@ -160,9 +174,13 @@ fs_scene_clear_hook:                     | (scene), the UI's Part
         jsr     fl_mark_dirty:l
 fs_sxh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_scene_clear_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -40(%sp),%sp
         movem.l %d2-%d7/%a2-%a5,(%sp)
         jmp     0x40038c38
+        .endif
 
 fs_part_save_hook:                       | (part): working -> part-saved
         fs_op_enter
@@ -175,9 +193,13 @@ fs_part_save_hook:                       | (part): working -> part-saved
         jsr     fl_mark_dirty:l
 fs_psh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_save_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -20(%sp),%sp
         movem.l %d2-%d4/%a2-%a3,(%sp)
         jmp     0x4004a910
+        .endif
 
 fs_part_reload_hook:                     | (part): part-saved -> working, when stock has a saved Part
         fs_op_enter
@@ -195,9 +217,13 @@ fs_part_reload_hook:                     | (part): part-saved -> working, when s
         jsr     fl_mark_dirty:l
 fs_prh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_reload_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -32(%sp),%sp
         movem.l %d2-%d5/%a2-%a3,(%sp)
         jmp     0x4004aabc
+        .endif
 
 fs_part_clear_hook:                      | (part): working -> none (stock falls into SAVE)
         fs_op_enter
@@ -210,9 +236,13 @@ fs_part_clear_hook:                      | (part): working -> none (stock falls 
         jsr     fl_mark_dirty:l
 fs_pxh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_clear_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -16(%sp),%sp
         movem.l %d2-%d3/%a2-%a3,(%sp)
         jmp     0x4004a9d8
+        .endif
 
 fs_part_copy_hook:                       | (part)
         fs_op_enter
@@ -226,9 +256,13 @@ fs_part_copy_hook:                       | (part)
         bsr     fs_op_valid
 fs_pch_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_copy_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         pea     0x18b2
         move.l  8(%sp),%d0
         jmp     0x40029334
+        .endif
 
 fs_part_undo_hook:                       | (op, part)
         fs_op_enter
@@ -242,9 +276,13 @@ fs_part_undo_hook:                       | (op, part)
         bsr     fs_op_valid
 fs_puh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_undo_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         move.l  8(%sp),%d0
         lea     4(%sp),%a0
         jmp     0x400292a8
+        .endif
 
 fs_part_write_hook:                      | (src, part)
         fs_op_enter
@@ -270,9 +308,13 @@ fs_pwh_src:
         jsr     fl_mark_dirty:l
 fs_pwh_out:
         fs_op_leave
+        .if HAVE_SYDRUM
+        jmp     sc_part_write_hook:l           | SY DRUM's setup scenes (sy-drum/scenes_ops.inc.s), then stock
+        .else
         lea     -20(%sp),%sp
         movem.l %d2-%d5/%a2,(%sp)
         jmp     0x40029a54
+        .endif
 
 | Cleared on project reset; clip storage contents are inert until valid.
         .global fs_reset,fs_clip_valid

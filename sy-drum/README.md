@@ -81,10 +81,46 @@ oscillators' pitch, the filter's tracking and the tuning-dependent decay. With R
 value and holds it to the next hit. The random streams are separate for each track and are not restarted by notes;
 a cold boot starts them again.
 
-The four setup controls are the **Part's defaults** (saved with the Part, edited on the page) and **each can be
-locked per step** (next section). They are not in scenes and are no LFO destinations (see "What it leaves out").
-The three ordinary Octatrack LFOs work on the PLAYBACK knobs as on any track; the LFO page is the stock one (no
-VOIC / CHRD: SY DRUM is one voice a track).
+The four setup controls are the **Part's defaults** (saved with the Part, edited on the page), **each can be
+locked per step** (next section), and since 2.18 **each is a scene target and an LFO destination** (the two
+sections after it). The three ordinary Octatrack LFOs work on the PLAYBACK knobs as on any track; the LFO page is
+the stock one (no VOIC / CHRD: SY DRUM is one voice a track).
+
+The PLAYBACK knobs (PTCH MODE WDTH SWEP SPED DEC) are the FLEX PLAYBACK bytes: stock scenes sweep them with the
+crossfader and the three LFOs reach them, exactly as on any FLEX track (the LFO SETUP list names them PTCH MODE WDTH
+SWEP SPED DEC on a SY DRUM track).
+
+## Scenes of the setup controls (2.18)
+
+Open PLAYBACK SETUP (FUNC + PLAYBACK), hold SCENE A or SCENE B and turn A..D (LSPD LDEP WAVE S&H): the scene
+selected on that side stores a value for that control. The turn starts from the scene's value, or from the Part's
+value when the control is not assigned yet, and steps as the Part value's edit does (WAVE and S&H one value a
+detent). While the scene key is held an assigned control is drawn inverted with the scene's value. Keep the scene
+key held and press and release the encoder without turning it to remove an assignment; pressing an unassigned
+control assigns it at the Part's value. A held trig wins: with a trig held the turn is a step lock.
+
+The crossfader sweeps all values, as it does a stock parameter: between the two sides the control takes
+`A * WA + B * (1 - WA)` with the stock crossfader weight, rounded to the control's step (LSPD and LDEP one raw value,
+WAVE OFF TRI SQR RND in turn, S&H switching at the midpoint). A side without an assignment, or a disabled scene side,
+gives the Part's value. The order is FM SYNTH's VOIC / CHRD order: a step's lock first, otherwise the scenes,
+otherwise the Part's value; the LFOs then act on the result. Applied every frame (the dedicated LFO reads its controls
+continuously; S&H still captures at each hit).
+
+Scene COPY / PASTE / CLEAR and their undo, Part SAVE, RELOAD, CLEAR, COPY, PASTE and their undo, and a whole track's
+copy / paste carry the assignments, as they carry stock scene locks. A machine change keeps them (as the step locks);
+they apply only while the track plays SY DRUM. On the card they are the `syscenNN` files (below).
+
+## The setup controls as LFO destinations (2.18)
+
+LFO SETUP (FUNC + LFO), PMTR: on a SY DRUM track the list goes on after the stock destinations with `LSPD`, `LDEP`,
+`WAVE` and `S&H` (page tag `SRC`), stored in the stock PMTR byte as 30..33 like FM SYNTH's VOIC / CHRD. SPD, DEP,
+WAVE, MULT and TRIG of the LFO work as for any destination. The offset is bipolar, as for every stock destination
+(the LFO's signed output scaled by DEP, the stock arithmetic around the parameter's midpoint), added to the control's
+value after its step lock and scenes, and clamped, never wrapped: LSPD and LDEP move up to +-63 raw values, WAVE up to
++-3 shapes, S&H up to +-1 (one shape per 16 raw units of offset, S&H per 32: a few-valued control spreads over the
+LFO's swing). Two or three LFOs on one control add up. The destination is saved with the Part and the project and
+survives a power cycle (the stock Part validator is kept from clamping it to 29, as for VOIC / CHRD). A sample track
+keeps the stock list; 30..33 left on a track that is no longer SY DRUM modulates nothing.
 
 ## Step locks of the setup controls (LSPD LDEP WAVE S&H)
 
@@ -162,12 +198,19 @@ line; never written here, carried as read), each 0..127 or 255 for no lock. A fi
 (older development builds: four controls a row) are read. `tools/lockfile.py FILE` prints a file's bank, version,
 generation and lock count; it reads and writes both versions.
 
+**Setup scene files (2.18).** `syscen01.work` / `syscen01.strd` .. `syscen16.*`, the development line's format
+(4,128 bytes: a 32-byte header `SYSCENE\0`, version 1, header length 32, bank, flags 0, payload length 4,096, edit
+generation, CRC-32 of the payload and of the first 28 bytes; then the working and the Part-saved halves,
+`[part][scene][track][LSPD LDEP WAVE S&H]`, 0..127 or 255 for none). A bank's pair is written only once the bank's
+scenes have been edited: a project without setup scene assignments gets no file. WORK follows edits with the lock
+files' background writes (while stopped and while playing), STRD an explicit SAVE; RELOAD restores STRD; SAVE TO NEW
+and EXPORT carry the pair, DELETE removes it. A damaged WORK with a good STRD loads the saved assignments; a file of a
+later version is preserved and that bank's scene assignments are disabled.
+
 **Development-line projects.** Their sylock files load and save as here (the development line writes all sixteen
 pairs; this module then keeps updating the pairs that exist). Their two other companion families stay intact:
 `sylkgjNN` (the GRANULAR machine's controls G..J) is read, carried with the rows and written back by that line's
-rules; `syscenNN` (setup scenes, which this module does not have) is never read for playback; RELOAD restores it as
-that line does, EXPORT copies it and DELETE removes it. SAVE TO NEW copies the locks this module holds, not the
-scene files.
+rules; `syscenNN` holds the same setup scenes as here and plays as here (since 2.18; before, it was carried only).
 
 ## Playing it
 
@@ -181,9 +224,8 @@ scene files.
 
 ## What it leaves out
 
-The author's development builds (Octatrick 3.0) have more than this module: setup scenes (hold a scene and turn a
-setup control), the four setup controls as destinations of the three LFOs, and a marker file that selects the
-machine from a FLEX slot. They can follow as an addition (nothing stored here would change).
+The author's development builds (Octatrick 3.0) have more than this module: a marker file that selects the machine
+from a FLEX slot. (Their setup scenes and the setup controls as LFO destinations are here since 2.18.)
 
 ## How it works
 

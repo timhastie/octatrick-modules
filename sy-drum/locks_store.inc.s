@@ -201,6 +201,7 @@ sl_reset_gj:
         clr.l   sl_ready_mask:l
         clr.l   sl_blocked_mask:l
         clr.l   sl_dirty_mask:l
+        jsr     sc_reset:l               | (2.18) the setup scene table, with the project (scenes_store.inc.s)
         movem.l (%sp),%d0-%d1/%a0
         lea     12(%sp),%sp
         rts

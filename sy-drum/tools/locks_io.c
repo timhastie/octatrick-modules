@@ -14,10 +14,9 @@
  *   sylkgjNN.work / .strd -- the development line's controls G..J (gjlocks_io.h): read,
  *     carried with the rows and written back as that line does; no control of this module
  *     uses them.
- *   syscenNN.work / .strd -- the development line's setup scenes: this module has no setup
- *     scenes and never reads them for playback; RELOAD restores them as that line does (a
- *     saved STRD becomes WORK again, a WORK without STRD is removed), EXPORT copies them,
- *     DELETE removes them (scenes_io.h).
+ *   syscenNN.work / .strd -- the setup scenes (2.18; the development line's files): the
+ *     scene assignments of LSPD LDEP WAVE S&H per Part, scene and track, working and
+ *     Part-saved (scenes_io.h); loaded with the project, written with the lock files.
  * WORK follows working edits, STRD an explicit SAVE PROJECT / SAVE BANK; RELOAD restores
  * STRD. WORK is written by the stock background save (the UI tick asks for it about once a
  * second while a bank is dirty, sl_io_background_request) and the card SYNC. Stock asks for
@@ -36,10 +35,10 @@
  *     existing sylock files first, so a stale one there is overwritten, never left behind.
  *   - RELOAD of a bank without a saved (STRD) file removes its WORK file instead of writing
  *     an all-unlocked one; both read as "no lock" on both lines.
- *   - no setup-scene state (above). Its RELOAD step for the syscen files is kept: without it a
- *     RELOAD on an emulated card whose files had been saved in place failed in the stock loader
- *     ('PARSE ERROR', 9 Oct 2026); with it, as on the development line, it does not (why that
- *     step matters to the stock loader was not established).
+ *   - the setup scenes are the development line's (2.18; until 2.17 this module only carried
+ *     their files). Their RELOAD step matters: without it a RELOAD on an emulated card whose
+ *     files had been saved in place failed in the stock loader ('PARSE ERROR', 9 Oct 2026);
+ *     with it, as on the development line, it does not (why was not established).
  */
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -258,12 +257,12 @@ static s32 load_project(void) {
     sl_reset();sl_clip_reset();sl_seq_reset();sl_io_loaded=0;sl_io_protected_mask=0;sl_io_warning=0;sl_io_last_error=0;
     sl_present_mask=0;
     text_copy(sl_io_base,base,PATH_BYTES);
-    for(bank=0;bank<16;++bank){load_bank(bank);sg_load_bank(bank);}
+    for(bank=0;bank<16;++bank){load_bank(bank);sg_load_bank(bank);sc_load_bank(bank);}
     sl_io_loaded=1;return 0;
 }
 /* A fresh project can edit in RAM immediately; card IO waits for engine jobs. */
 static void fresh_project(void) {
-    sl_reset();sl_clip_reset();sl_seq_reset();sl_ready_mask=65535;sl_io_protected_mask=0;
+    sl_reset();sl_clip_reset();sl_seq_reset();sl_ready_mask=65535;sc_ready_mask=65535;sl_io_protected_mask=0;
     sl_present_mask=0;sg_present_mask=0;sg_protected_mask=0;
     sl_io_loaded=1;sl_io_last_error=0;sl_io_warning=0;
 }
@@ -271,11 +270,12 @@ static s32 flush_ab(u32 mask,u32 force);
 static s32 store_ab(u32 mask);
 /* force repairs recovered ordinary corruption only after an explicit SAVE. */
 static s32 flush(u32 mask,u32 force) {
-    s32 r,rg;
+    s32 r,rg,rc;
     if(!sl_io_loaded)return 0;
-    r=flush_ab(mask,force);   /* A..F first; a G..J error never stops it, the first error is returned */
+    r=flush_ab(mask,force);   /* A..F first; a G..J or scene error never stops it, the first error is returned */
     rg=sg_flush(mask);
-    return r<0?r:rg;
+    rc=sc_flush(mask);
+    return r<0?r:rg<0?rg:rc;
 }
 static s32 flush_ab(u32 mask,u32 force) {
     u32 bank,bit,g,locked; s32 r;
@@ -295,11 +295,12 @@ static s32 flush_ab(u32 mask,u32 force) {
     return 0;
 }
 static s32 store_mask(u32 mask) {
-    s32 r,rg;
+    s32 r,rg,rc;
     if(!sl_io_loaded)return CORRUPT;
-    r=store_ab(mask);   /* A..F first; a G..J error never stops it, the first error is returned */
+    r=store_ab(mask);   /* A..F first; a G..J or scene error never stops it, the first error is returned */
     rg=sg_store(mask);
-    return r<0?r:rg;
+    rc=sc_store(mask);
+    return r<0?r:rg<0?rg:rc;
 }
 static s32 store_ab(u32 mask) {
     u32 bank,bit,g,locked; s32 r;
@@ -329,7 +330,7 @@ static s32 restore_preflight(u32 mask) {
 }
 static s32 restore_mask(u32 mask) {
     u32 bank,bit,g; s32 r;
-    sc_restore_files(mask);
+    sc_restore(mask);
     for(bank=0;bank<16;++bank)if(mask&(bit=1u<<bank)) {
         r=read_bank(sl_io_base,bank,1,&g);
         if(r==ABSENT) {
@@ -355,7 +356,9 @@ static s32 restore_mask(u32 mask) {
 static u32 background_dirty(void) {
     u32 m=sl_dirty_mask&sl_ready_mask&~(sl_blocked_mask|sl_io_protected_mask);
     if(m)return m;
-    return sg_dirty_mask&sl_ready_mask&~(sl_blocked_mask|sg_blocked_mask|sg_protected_mask);
+    m=sg_dirty_mask&sl_ready_mask&~(sl_blocked_mask|sg_blocked_mask|sg_protected_mask);
+    if(m)return m;
+    return sc_dirty_mask&sc_ready_mask&~sc_blocked_mask;
 }
 /* The UI tick while the sequencer plays (stock skips its background save then): after
  * PLAY_TICKS ticks with a dirty bank, post the flush job, under the checks stock makes

@@ -131,6 +131,13 @@ sl_io_background_request:
         not.l %d1
         and.l %d1,%d0
         tst.l %d0
+        bne sl_io_background_some
+        move.l sc_dirty_mask:l,%d0       | (2.18) the setup scene files (syscen) alone dirty
+        and.l sc_ready_mask:l,%d0
+        move.l sc_blocked_mask:l,%d1
+        not.l %d1
+        and.l %d1,%d0
+        tst.l %d0
 sl_io_background_some:
         move.l (%sp)+,%d1
         tst.l %d0
