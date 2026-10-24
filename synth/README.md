@@ -23,7 +23,7 @@ author's analysis):
 |---|---|
 | OT, OTFX | as before: the trigs play, Mute Modes cuts the sound |
 | DT-T | new trigs make no note; the note already sounding plays out on its own envelope |
-| OTFX-T | new trigs make no note; a note already sounding at the mute plays on as in DT-T (a sample voice is cut there: not yet for FM SYNTH, below) |
+| OTFX-T | new trigs make no note; a note already sounding at the mute is cut at once, as OTFX cuts it |
 
 Every START is dropped on such a track, whatever posted it (a sequencer trig, a CHROMATIC key,
 a MIDI note-on), because Mute Modes' own trig gates test the track's mute and solo state and not
@@ -40,7 +40,9 @@ consults from its source (the MUTE MODE word and the per-track solo / mute long,
 engine acts on a START (`sy_render`'s resolve, before `sy_cold`; `po_frame`, before `po_start`):
 MUTE MODE 1 (OTFX-T) or 2 (DT-T), and the track muted, or not soloed while another track is.
 `po_mm_tick` (from `po_tick`, once a frame) ends those tracks' engine voices at the frame the
-sequencer stops, as `po_kill` would have. Without Mute Modes none of it is assembled: the engine
+sequencer stops, as `po_kill` would have, and in OTFX-T also at the frame a track becomes
+silenced (muted, or soloed out, or a muted track whose mode becomes OTFX-T): Mute Modes' own
+edge, which it answers with a stock note-off that does not end a note of this engine. Without Mute Modes none of it is assembled: the engine
 is byte for byte 2.18's.
 
 ### Measured (24 Oct 2026, octabam's emulator `ot_emu`, a bench image = the 2.19 modules + Mute Modes; emulator results, not the unit)
@@ -58,8 +60,9 @@ A paraphonic T1 (VOIC 3) gives the same in DT-T and OTFX-T (no chord after a mut
 a muted HOLD INF note in DT-T or OTFX-T ends the tone 68 / 83 samples after the STOP press, in one
 step, as the stock voice kill cuts. On the emulator the stock kill of an UNMUTED HOLD INF note comes
 about 0.7 s after the press (BUILD 33 above), so a muted synth track goes quiet before the others.
-Open: in OTFX-T a note already sounding when the track is muted is not cut (it read -27.3 dBFS
-until STOP, as in DT-T; OTFX cuts it to -77.8 dBFS). The live-key rule and the SIDECHAIN COMPRESSOR
+In OTFX-T a note already sounding when the track is muted read -27.3 dBFS until STOP before the
+cut at the silenced edge was added (OTFX cuts the same note to -77.8 dBFS); the measurement with
+the cut is in the 2.19 release record. The live-key rule and the SIDECHAIN COMPRESSOR
 KEY exemption follow Mute Modes' source and were not run.
 
 ## VOIC and CHRD on PLAYBACK SETUP (2.17)

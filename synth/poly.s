@@ -732,9 +732,17 @@ po_mm_drop:
 | never ran and a HOLD INF note rang on. At the frame the sequencer stops playing (po_tick's
 | own test: SEQ_STATE 0 or 2), every track po_mm_silenced answers yes for ends its engine
 | voices as po_kill ends them (po_mm_kill). Other tracks were killed by stock already.
+| (2.19 final) OTFX-T is OTFX's dry cut plus the trig suppression: at the mute Mute Modes
+| sends the newly silenced track a stock note-off, which does not end a note of this engine
+| (measured: the note sounded on until STOP; sy_render holds the DSP voice and runs its own
+| envelope), so the cut is made here.
+| Mute Modes' own edge, mirrored: po_mm_sh holds last frame's set of tracks silenced in MUTE
+| MODE 1 (OTFX-T); a track that enters it (muted, or soloed out, while the mode is 1; also
+| a muted track whose mode becomes 1) has its voices ended at once (po_mm_kill), as OTFX
+| cuts. DT-T (2) is not in the set: its note rides on its own envelope, as before.
 po_mm_tick:
-        lea     -16(%sp),%sp
-        movem.l %d0-%d2/%a0,(%sp)
+        lea     -24(%sp),%sp
+        movem.l %d0-%d4/%a0,(%sp)
         moveq   #0,%d1                   | d1 := 1 while the sequencer plays
         move.l  SEQ_STATE,%d0
         beq     po_mmt_st
@@ -745,23 +753,45 @@ po_mmt_st:
         lea     po_mm_play:l,%a0
         mvz.b   (%a0),%d0                | the last frame's
         move.b  %d1,(%a0)
+        moveq   #0,%d3                   | d3 := 1 at the frame the sequencer stops
         tst.l   %d1
-        bne     po_mmt_out               | playing
+        bne     po_mmt_md                | playing
         tst.l   %d0
-        beq     po_mmt_out               | stopped before too: no STOP this frame
+        beq     po_mmt_md                | stopped before too: no STOP this frame
+        moveq   #1,%d3
+po_mmt_md:
+        moveq   #0,%d1                   | d1 := 1 in MUTE MODE 1 (OTFX-T)
+        move.l  MM_MODE,%d0
+        cmpi.l  #1,%d0
+        bne     po_mmt_m0
+        moveq   #1,%d1
+po_mmt_m0:
+        moveq   #0,%d4                   | d4 := this frame's OTFX-T silenced set
         moveq   #0,%d2
 po_mmt_t:
         bsr     po_mm_silenced
         beq     po_mmt_n
+        tst.l   %d1
+        beq     po_mmt_s                 | not OTFX-T: only the STOP edge
+        bset    %d2,%d4
+        lea     po_mm_sh:l,%a0
+        mvz.b   (%a0),%d0                | the last frame's set
+        btst    %d2,%d0
+        beq     po_mmt_k                 | 0 -> 1: the dry cut
+po_mmt_s:
+        tst.l   %d3
+        beq     po_mmt_n
+po_mmt_k:
         bsr     po_mm_kill
 po_mmt_n:
         addq.l  #1,%d2
         moveq   #8,%d0
         cmp.l   %d0,%d2
         bne     po_mmt_t
-po_mmt_out:
-        movem.l (%sp),%d0-%d2/%a0
-        lea     16(%sp),%sp
+        lea     po_mm_sh:l,%a0
+        move.b  %d4,(%a0)
+        movem.l (%sp),%d0-%d4/%a0
+        lea     24(%sp),%sp
         rts
 
 | po_mm_kill: d2 = the track: po_kill's engine part (the mono voice silent, S_ON 0, the four
@@ -6377,6 +6407,8 @@ po_ampdesc_buf:                          | the AMP descriptor clone with LEG in 
         .align  4
         .if     HAVE_MUTE_MODES
 po_mm_play:                              | (2.19) po_mm_tick: 1 while the sequencer played at the last frame
+        .byte   0
+po_mm_sh:                                | (2.19 final) po_mm_tick: last frame's tracks silenced in OTFX-T (bit t)
         .byte   0
         .align  4
         .endif
