@@ -3941,7 +3941,9 @@ of it live here. `po_tick` is the clock it reads: ticked once a frame from
 `po_lfo3b` (the frame builder's LFO pass runs for every track from boot,
 `sy_render` only once a FLEX voice has started), it counts frames and the
 changes of the sequencer's (step, tick) pair, keeps ticks a step and the
-frames a step measured between step changes, and publishes its address at
+frames a step measured between step changes (2.18: not the first change after
+the sequencer was stopped or paused, which spans the stopped time and gated the
+first trig of every PLAY for that long), and publishes its address at
 `qz_clock` (`KEYS_AT + 40`). And a **sequencer-started paraphonic voice is
 gated for the step's HOLD**: `po_start` reads the current HOLD byte
 (`0x80000810 + t*72 + 13`, the lock else the Part's byte), converts it

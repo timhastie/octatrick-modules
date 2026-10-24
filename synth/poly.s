@@ -194,6 +194,7 @@
         .set    CLOCK_AT, KEYS_AT+40     | qz_clock at +40: where this unit publishes po_clock's address
         .set    SEQ_STEP, 0x800065b2     | the sequencer's step (word) and tick (byte, counting down) ...
         .set    SEQ_TICK, 0x800065b6     | ... the clock below counts their changes
+        .set    SEQ_STATE, 0x800065b8    | (2.18) the sequencer's state, a long: 1 playing, 0 stopped, 2 (stock's not-playing test)
         .set    CV_HOLD, 13              | flat slot 13 = AMP page slot 1 (HOLD): a sequencer note's gate
         .set    CK_LAST, 16              | the last (step << 8 | tick)
         .set    CK_PING, 20              | (unused)
@@ -1136,7 +1137,11 @@ sy_done:
 | -- a monotonic tick count the live-record note-length hooks read through
 | qz_clock (the pattern's step word wraps, this does not); ticks a step = the
 | largest tick value seen + 1; frames a step measured at each step change
-| (the HOLD gate's unit). Clobbers d1, d3, a0; d0 untouched.
+| (the HOLD gate's unit). 2.18: the first step change after the sequencer was
+| not playing (its state 0 or 2, stock's own not-playing test) is not a
+| measurement -- it spans the stopped time, and until 2.18 it set the unit the
+| first trig of every PLAY took its HOLD gate from (that trig rang for the
+| stopped time). Clobbers d1, d3, a0; d0 untouched.
 po_tick:
         lea     po_clock(%pc),%a0
         move.l  %a0,CLOCK_AT             | published for the quantizer
@@ -1146,6 +1151,15 @@ po_tick:
         jsr     sd_tick:l                | (2.11) SY DRUM, once a frame: its SETUP controls to the engine, the CF
                                          | records' SETUP bytes neutral on its tracks, its LFOs (every register kept)
         .endif
+        move.l  SEQ_STATE,%d1            | 2.18: not playing (0 or 2) -> the next step change is no measurement
+        beq     po_tk_idle
+        moveq   #2,%d3
+        cmp.l   %d1,%d3
+        bne     po_tk_run
+po_tk_idle:
+        moveq   #1,%d3
+        move.b  %d3,po_tk_stopped:l
+po_tk_run:
         mvz.w   SEQ_STEP,%d1
         lsl.l   #8,%d1
         mvz.b   SEQ_TICK,%d3
@@ -1167,10 +1181,15 @@ po_tk_step:
         move.l  %d1,%d3
         sub.l   CK_FSTEP(%a0),%d3
         move.l  %d1,CK_FSTEP(%a0)
-        cmpi.l  #16,%d3                  | a plausible step (not the first after a stop)
+        tst.b   po_tk_stopped:l
+        bne     po_tk_first              | the first step change of a run: the stopped time, kept out
+        cmpi.l  #16,%d3                  | a plausible step
         blt     po_tk_done
         move.l  %d3,CK_FPS(%a0)
 po_tk_done:
+        rts
+po_tk_first:
+        clr.b   po_tk_stopped:l          | CK_FPS keeps the last run's step (FPS_DEFAULT before any)
         rts
 
 | ---- po_rate: d0 := C4_INC * rate, the rate as the stock renderer computes it ----
@@ -6187,6 +6206,8 @@ po_rtlog:                                | po_retrig's counters and ring (po_clo
         .fill   RT_SIZE, 1, 0
 po_pg_built:
         .byte   0
+po_tk_stopped:                           | (2.18) po_tick: nonzero while the sequencer is not playing, until its next step change
+        .byte   1
         .align  4
 po_pgdesc_buf:                           | the FM SYNTH PLAYBACK descriptor clone for page.s (built on first use)
         .fill   FLEX_DESC_LEN, 1, 0
