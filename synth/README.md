@@ -472,6 +472,8 @@ selection guard (2.15)"); the machine list is the way in.
   LEN, RATE, TSTR, TSNS -- all OFF on a fresh FM SYNTH track).
 - **SELECT MACHINE TYPE:** press the track key twice quickly (the QUICK ASSIGN
   slot list), press LEFT on `<< MACHINE`, go DOWN to `FM SYNTH`, press YES.
+  Since 2.18 the track key pressed twice on an FM SYNTH or SY DRUM track opens
+  this list directly (as on THRU, NEIGHBOR and PICKUP), not the slot list.
 
 The PLAYBACK page then reads `PTCH RATO INDX FINE FDBK DEC`, the footer
 `FM SYNTH>FM SYNTH`, and both lists open on the `FM SYNTH` row for that

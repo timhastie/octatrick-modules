@@ -85,7 +85,7 @@
 
         .text
         .global fm_machine_name, fm_name_a, fm_src_names
-        .global fm_setup_row, fm_chooser_row, fm_setup_open, fm_chooser_open
+        .global fm_setup_row, fm_chooser_row, fm_setup_open, fm_chooser_open, fm_chooser_col
         .global fm_setup_edit6, fm_setup_draw6
         .global fm_main_commit, fm_src_commit, fm_src_commit2
         .global fm_tick, fm_validate
@@ -125,6 +125,7 @@
         .set    CHOOSER_MISS, 0x400786fc | ... and its other one
         .set    SETUP_OPEN_RET, 0x400585e6
         .set    CHOOSER_OPEN_RET, 0x40078890
+        .set    CHOOSER_COL_RET, 0x400788cc | the machine window's opening column, after its machine test
         .set    EDIT6_RET, 0x4003a536
         .set    DRAW6_RET, 0x4003cda0
         .set    FILL_RECT, 0x40012254    | the stock rectangle fill (window, x0, y0, x1, y1, mode)
@@ -1339,6 +1340,20 @@ fm_chooser_open:
         move.l  %d0,-(%sp)
         pea     (0x460e7386).l           | displaced
         jmp     CHOOSER_OPEN_RET
+
+| ---- 0x400788c4 (jmp, 8 B): the machine window's opening column (2.18): displaced `mvzb
+| %a0@,%d0; moveq #1,%d2; cmpl %d0,%d2; scs %d0` (a0 = the track's machine byte); stock goes
+| on to store column 1 (the sample-slot list) for STATIC / FLEX and column 0 (the machine
+| list) for every other machine. A signed track (FM SYNTH, SY DRUM) is FLEX by its byte, so
+| the track key pressed twice opened the slot list (empty for these machines); its row
+| (fm_type: 5..) takes it to the machine list, as THRU, NEIGHBOR and PICKUP go.
+fm_chooser_col:
+        mvz.b   (%a0),%d0                | displaced
+        bsr     fm_type                  | FLEX + signed -> its row (5..); d1/d2/a0/a1 kept
+        moveq   #1,%d2                   | displaced
+        cmp.l   %d0,%d2                  | displaced
+        scs     %d0                      | displaced
+        jmp     CHOOSER_COL_RET
 
 | ---- 0x4003a52e / 0x4003cd98 (jmp, 8 B each): SRC SETUP's editor and drawer address the
 | row's Part bytes at row * 6: displaced `movel %dN,%d0; lsll #3,%d0; addl %dN,%dN; subl

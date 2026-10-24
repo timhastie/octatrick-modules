@@ -528,6 +528,8 @@ FM_SETUP_OPEN_HOOK = 0x400585dc          # `moveb %a0@,%d3; mvsb %d3,%d4; pea 0x
 
 FM_CHOOSER_OPEN_HOOK = 0x40078886        # `mvsb %a0@,%d0; movel %d0,%sp@-; pea 0x460e7386` (the machine window opens on it)
 
+FM_CHOOSER_COL_HOOK = 0x400788c4         # `mvzb %a0@,%d0; moveq #1,%d2; cmpl %d0,%d2; scs %d0` (the machine window's opening column)
+
 FM_EDIT6_HOOK = 0x4003a52e               # `movel %d2,%d0; lsll #3,%d0; addl %d2,%d2; subl %d2,%d0` (SRC SETUP's editor: row * 6)
 
 FM_DRAW6_HOOK = 0x4003cd98               # `movel %d6,%d7; lsll #3,%d7; addl %d6,%d6; subl %d6,%d7` (its drawer: the same)
@@ -850,6 +852,10 @@ MODULE = Module(
         Detour(FM_CHOOSER_OPEN_HOOK, stock_guard(FM_CHOOSER_OPEN_HOOK, 10), "fmmachine", "fm_chooser_open",
                "the machine window opens on FM SYNTH for a chosen track",
                kind="jmp", pad_to=10),
+        Detour(FM_CHOOSER_COL_HOOK, stock_guard(FM_CHOOSER_COL_HOOK, 8), "fmmachine", "fm_chooser_col",
+               "the machine window opens on its machine list for a chosen track (2.18: the track key pressed twice on "
+               "FM SYNTH / SY DRUM shows SELECT MACHINE TYPE, as on THRU / NEIGHBOR / PICKUP, not the empty slot list)",
+               kind="jmp", pad_to=8),
         Detour(FM_EDIT6_HOOK, stock_guard(FM_EDIT6_HOOK, 8), "fmmachine", "fm_setup_edit6",
                "SRC SETUP's editor addresses row 5's Part bytes as FLEX's",
                kind="jmp", pad_to=8),

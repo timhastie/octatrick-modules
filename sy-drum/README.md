@@ -15,6 +15,7 @@ and adds the row; without it, SYNTH MACHINE is byte for byte the FM-only engine.
 
 - **SELECT MACHINE TYPE**: press the track key twice (QUICK ASSIGN), LEFT (`<< MACHINE`), DOWN to `SY DRUM` (the
   seventh row: STATIC FLEX THRU NEIGHBOR PICKUP FM SYNTH SY DRUM; the window shows six rows and scrolls), YES.
+  Since 2.18 the track key pressed twice on a SY DRUM (or FM SYNTH) track opens this list directly, not the slot list.
 - **SRC SETUP**: hold FUNC and press the PLAYBACK (SRC) key, DOWN to `SY DRUM`, YES.
 
 **At most two SY DRUM tracks in a Part** (2.15): SY DRUM is drawn on the unit's main processor, and too many
@@ -60,8 +61,9 @@ such a build.
 
 These are the FLEX PLAYBACK bytes, so stock p-locks, the three LFOs and scenes reach them as on any FLEX track. An
 encoder pressed gives steps of seven; with FUNCTION held a detent moves PTCH 12, MODE 1, WDTH 16, SWEP 12, SPED 16,
-DEC 16. The AMP page (ATK, HOLD, REL, VOL, BAL) works as on FM SYNTH: the engine runs the envelope; a CHROMATIC key
-sustains while held, sequencer trigs use HOLD.
+DEC 16. Since 2.18 MODE turned without FUNCTION steps as a stock parameter with few values does (the stock stepper
+with MODE's count of six), no longer one mode per encoder unit. The AMP page (ATK, HOLD, REL, VOL, BAL) works as on
+FM SYNTH: the engine runs the envelope; a CHROMATIC key sustains while held, sequencer trigs use HOLD.
 
 ## The LFO (PLAYBACK SETUP: FUNC + PLAYBACK)
 
