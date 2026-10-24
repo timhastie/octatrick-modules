@@ -266,6 +266,21 @@ sl_ui_trig_rel_hook:
         jsr     0x4002ce54
         jmp     0x4005fbd8
 
+| (2.19) SCENE A / B press (0x4004348c, after it set the held side 0x460d169c) and release
+| (0x40054ca4, after it cleared it): SYNTH MACHINE holds both sites (synth/locks_ui.inc.s
+| fl_ui_scene_*_hook) and comes here; the same setup-window redraw as the trig hooks', so the
+| held scene's LSPD / LDEP / WAVE / S&H show inverted at once and the Part's on release; then
+| the displaced instruction and back.
+        .global sl_ui_scene_press_hook,sl_ui_scene_rel_hook
+sl_ui_scene_press_hook:
+        bsr     sl_ui_setup_redraw
+        clr.l   0x460d1698
+        jmp     0x400434ca
+sl_ui_scene_rel_hook:
+        bsr     sl_ui_setup_redraw
+        jsr     0x400418e0
+        jmp     0x40054cd0
+
 | The setup window is the active one and its page is an FM / SY synth page:
 | its redraw (the knob hook's). Every register preserved.
 sl_ui_setup_redraw:
