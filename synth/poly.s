@@ -413,10 +413,10 @@ sy_kind_same:
         .endif
 sy_cold:                                 | a synth starts -- THE START RULE (plan B, 28 Sep 2026): the engine owns
         jsr     lf_latch:l               | distant include: latch before this note's mono/poly decision
-        move.l  #CV_STRIDE,%d1           | the AMP envelope (the DSP sees ATK 0 / HOLD INF / REL INF: sy_ison), so
-        muls.l  %d2,%d1                  | the only question is whether THIS voice still sounds. S_GPREV != 0 (the
-        lea     CURVALS,%a0              | gain the last call ended at): WARM -- the SAME oscillator continues
-        mvz.b   CV_HOLD(%a0,%d1.l),%d1   | phase-continuously at its current level, the pitch changes, the attack
+        bsr     po_amp_snap              | the AMP envelope (the DSP sees ATK 0 / HOLD INF / REL INF: sy_ison), so
+        bsr     po_amp_at                | the only question is whether THIS voice still sounds. S_GPREV != 0 (the
+                                         | gain the last call ended at): WARM -- the SAME oscillator continues
+        mvz.b   1(%a0),%d1               | phase-continuously at its current level, the pitch changes, the attack
                                          | re-runs from that level (an analog mono synth's retrigger), and the index
                                          | envelope restarts at 1.0 and the INDEX ramps to I * E over the ramp's
                                          | frames (BUILD 38's ramp; 2.10: sy_il_*, never a one-frame collapse). S_GPREV
@@ -424,8 +424,8 @@ sy_cold:                                 | a synth starts -- THE START RULE (pla
                                          | the 16-frame ramp its floor), the index envelope restarts at once (from
                                          | silence: inaudible). BUILD 27/28's four-condition rule (S_HOLD, S_KEYED,
                                          | the released flag) is gone: the DSP no longer restarts or
-        cmpi.l  #127,%d1                 | releases anything. The HOLD the live lane holds now (the lock, else the
-        beq     sy_cold_nohold           | Part's) arms the mono HOLD timer: 127 = INF (none), else po_hold128 steps
+        cmpi.l  #127,%d1                 | releases anything. The track's effective HOLD now (2.20, po_amp_at: the
+        beq     sy_cold_nohold           | lock or the Part's, a scene, an LFO) arms the mono HOLD timer: 127 = INF (none), else po_hold128 steps
         bsr     po_livekey               | (2.10) a CHROMATIC key still held: no timer -- the key is the gate
         bne     sy_cold_nohold           | (its release posts the AMP release: po_rel)
         lea     po_hold128(%pc),%a0      | in 1/128 x frames a step (the DSP's own timer runs from the START at that
@@ -527,6 +527,7 @@ sy_set:
 sy_ison:
         tst.b   S_ON(%a3)
         beq     sy_sample
+        bsr     po_amp_snap              | (2.20) the AMP values the frame builder wrote (locks, scenes, LFOs), before the override
         lea     CURVALS,%a0              | LEG (2 Oct 2026): the track's live lane 0x80000810 + t * 72 holds the
         move.l  #CV_STRIDE,%d1           | Part's AMP page-2 bytes at +0x2c; byte 5 (+0x31, LEG) is what the copier
         muls.l  %d2,%d1                  | 0x4000cb6a carries into the DSP record's AMP word 23, low byte, every
@@ -545,7 +546,7 @@ sy_ison:
         add.l   %d1,%a0                  | these halfwords after the render loop, so nothing is restored, and the
         clr.w   (%a0)                    | live lane the UI shows (0x80000810 + 72 t + 12..14) is never touched --
         move.w  #0x7f00,2(%a0)           | the same shape as the PTCH / RATE override of the CF record below. The
-        move.w  #0x7f00,4(%a0)           | engine applies the lane's ATK / HOLD / REL itself (po_mono_env, po_frame).
+        move.w  #0x7f00,4(%a0)           | engine applies the track's ATK / HOLD / REL itself (po_mono_env, po_frame; 2.20: po_amp_at).
         mvz.w   6(%a4),%d5               | the RATE (FINE) halfword, restored for the DSP after the call
         mvz.w   (%a4),%d1
         lsr.l   #8,%d1
@@ -934,11 +935,79 @@ sy_il_done:
         bsr     po_mono_env              | the mono voice's AMP envelope (plan B): S_GAIN := the level this frame ends at
         bra     sy_check                 | (po_mono_env's body follows: not fall-through)
 
+| ---- po_amp_snap (2.20): the track's effective AMP ATK / HOLD / REL this frame --------
+| Following Jan Kolkmeier's report and fix in Modwerk #883 / #884. The live lane (CURVALS
+| + 72 t + 12..14) holds the Part's bytes with the trig's locks; the scene morph and the
+| LFOs write the DSP voice record's halfwords 0..2 (value << 8, the LFO's fraction in the
+| low byte) instead, the words sy_ison then overrides. Called while they are still the
+| frame builder's (sy_cold at a START, sy_ison before the override), this keeps their high
+| bytes, capped at 127, in po_amp + 4 t, and byte 3 := 1 (the track has a snapshot).
+| d2 = track. Preserves every register.
+po_amp_snap:
+        lea     -12(%sp),%sp
+        movem.l %d0-%d1/%a0,(%sp)
+        move.l  PING_AT,%d1              | 0x80000110 + (ping << 9) + 64 * track, as sy_ison
+        andi.l  #1,%d1
+        lsl.l   #8,%d1
+        lsl.l   #1,%d1
+        move.l  %d2,%d0
+        lsl.l   #6,%d0
+        add.l   %d0,%d1
+        lea     DSP_REC,%a0
+        add.l   %d1,%a0
+        move.l  %a1,-(%sp)
+        lea     po_amp(%pc),%a1
+        lea     (%a1,%d2.l*4),%a1
+        moveq   #2,%d1
+po_as_byte:
+        mvz.b   (%a0),%d0                | the value byte
+        cmpi.l  #127,%d0
+        bls     po_as_put
+        moveq   #127,%d0
+po_as_put:
+        move.b  %d0,(%a1)+
+        addq.l  #2,%a0
+        subq.l  #1,%d1
+        bpl     po_as_byte
+        move.b  #1,(%a1)                 | (a1 = po_amp + 4 t + 3)
+        movea.l (%sp)+,%a1
+        movem.l (%sp),%d0-%d1/%a0
+        lea     12(%sp),%sp
+        rts
+
+| ---- po_amp_at (2.20): a0 := the track's ATK at 0(a0), HOLD at 1, REL at 2 -----------
+| An FM SYNTH track with a snapshot (po_amp_snap): po_amp + 4 t, the values the frame
+| builder wrote (locks, scenes, LFOs), as the stock envelope reads them. Before its first
+| snapshot, and on a SY DRUM track (its envelope stays 2.19's), the live lane (CURVALS +
+| 72 t + CV_ATK: the three slots follow each other). d2 = track. Preserves every other
+| register.
+po_amp_at:
+        move.l  %d0,-(%sp)
+        .if     HAVE_SYDRUM
+        lea     sy1_kind:l,%a0
+        tst.b   (%a0,%d2.l)
+        bne     po_aa_lane
+        .endif
+        lea     po_amp(%pc),%a0
+        lea     (%a0,%d2.l*4),%a0
+        tst.b   3(%a0)
+        bne     po_aa_out
+po_aa_lane:
+        move.l  #CV_STRIDE,%d0
+        muls.l  %d2,%d0
+        lea     CURVALS+CV_ATK,%a0
+        add.l   %d0,%a0
+po_aa_out:
+        move.l  (%sp)+,%d0
+        rts
+
 | ---- po_mono_env: the mono voice's AMP envelope, once a frame (plan B) -----------
 | a3 = the track record, d2 = track. The level S_GAIN (Q15, full 32768; sy_loop
 | ramps S_GPREV -> S_GAIN linearly across the call) follows the live lane's AMP
-| bytes (CURVALS + 72 t + 12 / 13 / 14: locks, scenes and LFOs applied by the frame
-| builder before the render loop) with the DSP's own laws as measured (stage 1):
+| bytes (2.20: po_amp_at, the values the frame builder wrote into the DSP record before
+| the render loop: the lock or the Part's, the scenes and the LFOs; until 2.19 the live
+| lane CURVALS + 72 t + 12 / 13 / 14, which has the locks only) with the DSP's own laws
+| as measured (stage 1):
 |   RELEASING (S_ON bit 1: po_rel for every note-off path -- the panel key's
 |     release, MIDI note-off, the sequencer's -- or the HOLD timer below):
 |     gain -= gain * k, k = po_relk[REL] (Q16 a frame: tau = 0.295 ms x
@@ -957,10 +1026,7 @@ sy_il_done:
 | Clobbers d0, d1, a0.
 po_mono_env:
         move.l  S_GAIN(%a3),%d1
-        move.l  #CV_STRIDE,%d0
-        muls.l  %d2,%d0
-        lea     CURVALS,%a0
-        add.l   %d0,%a0                  | a0 = the track's live lane
+        bsr     po_amp_at                | (2.20) a0 = the track's effective ATK / HOLD / REL
         btst    #1,S_ON(%a3)
         bne     po_me_rel
         move.l  S_HTIM(%a3),%d0          | the HOLD timer
@@ -973,7 +1039,7 @@ po_mono_env:
 po_me_atk:
         cmpi.l  #32768,%d1               | at full: the attack is over, nothing to pay (po_alaw is for attacks only)
         bge     po_me_store
-        mvz.b   CV_ATK(%a0),%d0
+        mvz.b   (%a0),%d0                | ATK
         lea     po_atk(%pc),%a0
         mvz.w   (%a0,%d0.l*2),%d0
         .if     HAVE_SYDRUM
@@ -995,7 +1061,7 @@ po_me_add:
         move.l  #32768,%d1
         bra     po_me_store
 po_me_rel:
-        mvz.b   CV_REL(%a0),%d0
+        mvz.b   2(%a0),%d0               | REL
         lea     po_relk(%pc),%a0
         mvz.w   (%a0,%d0.l*2),%d0        | k, Q16 (0 = INF)
         bne     po_me_rel0
@@ -1724,11 +1790,8 @@ po_fr_dk:
         mulu.l  %d0,%d1
         lsr.l   #8,%d1
         move.l  %d1,T_I(%a5)
-        move.l  #CV_STRIDE,%d0           | AMP REL -> the release k (po_relk: the DSP's law, plan B)
-        muls.l  %d2,%d0
-        lea     CURVALS,%a0
-        add.l   %d0,%a0
-        mvz.b   CV_REL(%a0),%d0
+        bsr     po_amp_at                | AMP REL -> the release k (po_relk: the DSP's law, plan B; 2.20: the effective REL)
+        mvz.b   2(%a0),%d0
         lea     po_relk(%pc),%a1
         mvz.w   (%a1,%d0.l*2),%d0
         bne     po_fr_rk
@@ -1737,7 +1800,7 @@ po_fr_dk:
         mvz.w   (%a1),%d0
 po_fr_rk:
         move.l  %d0,T_RK(%a5)
-        mvz.b   CV_ATK(%a0),%d0          | AMP ATK -> the attack step a frame, po_atk[ATK] * T_GMAX / 32768 (at least 1)
+        mvz.b   (%a0),%d0                | AMP ATK -> the attack step a frame, po_atk[ATK] * T_GMAX / 32768 (at least 1)
         lea     po_atk(%pc),%a1
         mvz.w   (%a1,%d0.l*2),%d0
         mulu.l  T_GMAX(%a5),%d0
@@ -2640,10 +2703,10 @@ po_st_env:
         cmpi.l  #0x80,%d7                | key already gone releases at once below)
         bcs     po_st_hinf
 po_st_hseq:
-        move.l  #CV_STRIDE,%d1           | a sequencer note (and a MIDI note) is gated for the lane's HOLD (the lock,
-        muls.l  %d2,%d1                  | else the Part's byte): frames = hold * frames a step (plan B: the DSP's
-        lea     CURVALS,%a4              | own timer ran from the START, stage 1; 127 = INF: until the note-off /
-        mvz.b   CV_HOLD(%a4,%d1.l),%d1   | the next trig)
+        move.l  %a0,-(%sp)               | a sequencer note (and a MIDI note) is gated for the track's HOLD (2.20,
+        bsr     po_amp_at                | po_amp_at: the lock or the Part's byte, a scene, an LFO): frames = hold *
+        mvz.b   1(%a0),%d1               | frames a step (plan B: the DSP's own timer ran from the START, stage 1;
+        movea.l (%sp)+,%a0               | 127 = INF: until the note-off / the next trig; a0 = the voice again)
         cmpi.l  #127,%d1
         beq     po_st_hinf
         lea     po_hold128(%pc),%a4
@@ -6368,6 +6431,8 @@ sy_tab:
         .align  4
 sy_state:                                | 8 tracks x 128 bytes
         .fill   8 * ST_STRIDE, 1, 0
+po_amp:                                  | (2.20) 8 tracks x 4 bytes: ATK, HOLD, REL as the frame builder wrote them,
+        .fill   8 * 4, 1, 0              | 1 once kept (po_amp_snap)
 po_voices:                               | 8 tracks x 4 voices x 64 bytes
         .fill   8 * 4 * V_STRIDE, 1, 0
 po_pend:                                 | (2.10) 8 tracks x 4 voices x 16 bytes: the notes waiting for a fading voice (po_st_xf)

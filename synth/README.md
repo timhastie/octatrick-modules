@@ -13,6 +13,35 @@ such as INDX while the chord plays, and SPD3 / DEP3 are available in the destina
 The design values in this section are recorded in the author's workspace log
 `R/work/r17/logs/design-contract.txt`; they are not runtime measurements.
 
+## LFOs and scenes on AMP ATK / HOLD / REL, and the PTCH LFO depth (2.20)
+
+Following Jan Kolkmeier's report and fix in Modwerk #883 / #884:
+
+- **The AMP envelope follows LFOs and scene locks on ATK, HOLD and REL**, as on a FLEX track.
+  Until 2.19 the engine read only the knob value and a trig's lock: an LFO or a scene on those
+  three changed nothing on an FM SYNTH track.
+- **An LFO on PTCH moves the pitch as far as on FLEX**: DEP 127 sweeps about +-12.8 semitones.
+  Until 2.19 it moved five times as far, because a synth's PTCH unit is a semitone and a sample
+  track's is a fifth of one. The PTCH knob, its trig locks and its scene locks stay in whole
+  semitones, as before. A project saved with a PTCH LFO on an FM SYNTH track now swings a fifth
+  as far as it did.
+
+VOIC, CHRD and RATO keep their scene behaviour: the crossfader sweeps through the values in
+between (VOIC and CHRD since 2.18; RATO as the stock morph does). SY DRUM's envelope and its
+LFOs are unchanged.
+
+How: the frame builder writes the effective ATK / HOLD / REL (the Part's value or the trig's lock,
+then the scene morph, then the LFOs) into the DSP voice record, the three words `sy_ison` then
+overrides so that the engine runs the envelope itself. `po_amp_snap` keeps those values per track
+while they are still the frame builder's (at a START in `sy_cold`, every frame in `sy_ison` before
+the override), and `po_amp_at` gives them to the envelope's readers (`sy_cold`'s HOLD timer,
+`po_mono_env`, `po_frame`, a paraphonic note's HOLD gate in `po_st_env`). The live lane, which has
+the locks only, is still read before a track's first snapshot and on a SY DRUM track. The PTCH
+depth: `lf_apply`, which both stock LFO depth reads already pass through, gives a fifth of the
+depth for PMTR 0 (PTCH) on an FM SYNTH track; full DEP counts as 0x8000 first, as the stock
+arithmetic's own full-depth correction makes it. Every other track and destination keeps the
+stock depth. The emulator measurements are in the 2.20 release record.
+
 ## Mute Modes' trig mutes (2.19)
 
 With Mute Modes (octabam's `mute-modes`, PERSONALIZE > MUTE MODE) in the image, an FM SYNTH or
@@ -3414,6 +3443,8 @@ byte and the stock "+7.0" display, byte for byte. What changes, and where:
 - **An LFO on PTCH sweeps ONE SEMITONE per unit of depth on a synth track**
   -- five times what it does on a sample track (0.2 st a unit); DEP +-12 is
   an octave. A PTCH lock, a scene, a MIDI CC on PTCH: the same units.
+  (Until 2.19. Since 2.20 an LFO on PTCH has the sample tracks' depth; the
+  lock, scene and CC units are unchanged: see the 2.20 section at the top.)
 - **The CHROMATIC keyboard** (`modules/quantizer`): a key sets PTCH raw =
   64 + note, note = the key's semitone (key 13 = 0 = C4, key 1 = -12) + 12
   * octave, and the octave, FUNC + LEFT / RIGHT, runs **-4..+4** on a synth

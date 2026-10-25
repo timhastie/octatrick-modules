@@ -26,6 +26,8 @@
 lf_apply:
         mvs.w   0x12(%a2,%d2.l*2),%d0
         lea     (%a0,%d4.l*2),%a1
+        tst.l   %d4
+        beq     lf_apply_ptch            | (2.20) PMTR 0 = PTCH
         cmpi.l  #30,%d4
         bcs     lf_apply_out
         lea     -20(%sp),%sp
@@ -59,6 +61,38 @@ lf_apply_mid:
         movem.l (%sp),%d0-%d3/%a0
         lea     20(%sp),%sp
 lf_apply_out:
+        rts
+
+| (2.20) PTCH on an FM SYNTH track, following Jan Kolkmeier's report and fix in Modwerk
+| #883 / #884: a synth's PTCH unit is a semitone, five of a sample track's (sy_word), so an
+| LFO moved the pitch five times as far as on FLEX. The depth is a fifth here, for both
+| depth reads (this routine serves both): DEP 127 sweeps +-12.8 semitones as on FLEX. Full
+| DEP counts as 0x8000 first, as the stock arithmetic's own full-depth correction makes it.
+| Every other track and destination: the stock depth. d0 = the depth (in and out).
+lf_apply_ptch:
+        tst.l   %d0
+        beq     lf_apply_out             | DEP 0 (every LFO's default PMTR is PTCH): nothing to scale
+        lea     -12(%sp),%sp
+        movem.l %d1-%d2/%a0,(%sp)
+        move.l  %d0,%d1                  | the stock depth
+        move.l  %a4,%d2
+        subi.l  #LFO_STATE,%d2
+        lsr.l   #3,%d2                   | the track
+        cmpi.l  #8,%d2
+        bcc     lf_ap_keep
+        jsr     po_signed:l              | 1 FM SYNTH (d0; every other register kept)
+        cmpi.l  #1,%d0
+        bne     lf_ap_keep
+        cmpi.l  #0x7f00,%d1
+        bne     lf_ap_fifth
+        move.l  #0x8000,%d1
+lf_ap_fifth:
+        moveq   #5,%d0
+        divs.l  %d0,%d1
+lf_ap_keep:
+        move.l  %d1,%d0
+        movem.l (%sp),%d1-%d2/%a0
+        lea     12(%sp),%sp
         rts
 
 lf_lfo_standalone:
