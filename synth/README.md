@@ -20,7 +20,10 @@ Following Jan Kolkmeier's report and fix in Modwerk #883 / #884:
 - **The AMP envelope follows LFOs and scene locks on ATK, HOLD and REL**, as on a FLEX track.
   Until 2.19 the engine read only the knob value and a trig's lock: an LFO or a scene on those
   three changed nothing on an FM SYNTH track.
-- **An LFO on PTCH moves the pitch as far as on FLEX**: DEP 127 sweeps about +-12.8 semitones.
+- **An LFO on PTCH moves the pitch as far as on FLEX**: 0.2 semitone per unit of depth, as on FLEX
+  (DEP 16 = about +-3.2 semitones); FLEX's PTCH stops at +-12.8, an FM SYNTH track's goes further.
+  (The 2.20 commit message, efbb192, still says "DEP 127 sweeps about +-12.8 semitones"; history is
+  not rewritten, this line is the correct statement.)
   Until 2.19 it moved five times as far, because a synth's PTCH unit is a semitone and a sample
   track's is a fifth of one. The PTCH knob, its trig locks and its scene locks stay in whole
   semitones, as before. A project saved with a PTCH LFO on an FM SYNTH track now swings a fifth

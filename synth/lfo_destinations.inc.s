@@ -66,8 +66,9 @@ lf_apply_out:
 | (2.20) PTCH on an FM SYNTH track, following Jan Kolkmeier's report and fix in Modwerk
 | #883 / #884: a synth's PTCH unit is a semitone, five of a sample track's (sy_word), so an
 | LFO moved the pitch five times as far as on FLEX. The depth is a fifth here, for both
-| depth reads (this routine serves both): DEP 127 sweeps +-12.8 semitones as on FLEX. Full
-| DEP counts as 0x8000 first, as the stock arithmetic's own full-depth correction makes it.
+| depth reads (this routine serves both): 0.2 semitone per unit of depth, as on FLEX (DEP 16
+| = about +-3.2 semitones); FLEX's PTCH stops at +-12.8, an FM SYNTH track's goes further.
+| Full DEP counts as 0x8000 first, as the stock arithmetic's own full-depth correction makes it.
 | Every other track and destination: the stock depth. d0 = the depth (in and out).
 lf_apply_ptch:
         tst.l   %d0
