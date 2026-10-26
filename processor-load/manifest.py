@@ -15,7 +15,7 @@ One DRAM unit (loadmeter.s), four detours and one poke:
     entry stamp in front of the stock handler, instead of the handler;
   * the frame interrupt's universal epilogue (0x4000d9a6, 10 bytes): the
     exit stamp, the running sum, the block count and the longest block,
-    then the displaced restore and RTE;
+    then the displaced restore and the return from the exception;
   * the UI task's type-1 message path (0x40056c8a, 6 bytes, about 60
     times a second): the meter's tick -- the division, the text and the
     redraw run here, in the UI task, never in the interrupt;

@@ -3456,7 +3456,7 @@ po_l3b_depth:
         .set    LFD_P2V, 0x400a7280      | display page -> page
         .set    LFD_LAST, 29             | the last stock destination (FX2 slot 6)
 
-| po_lfdname: 0x4003bff2 (jmp, 8 B), `lea 0x400d5f38,%a0; bras 0x4003c054` (then
+| po_lfdname: 0x4003bff2 (jmp, 8 B), the address 0x400d5f38 into a0 and a short branch to 0x4003c054 (then
 | a2 = tbl[machine]). d0 = the machine byte, d1 = the track, d2 = the slot (kept), a4 =
 | buf. A FLEX pick is replaced by the page resolver's answer -- FM SYNTH's clone on a
 | synth track -- so LFO SETUP prints the PLAYBACK page's own names; the master track
@@ -4718,8 +4718,8 @@ po_is_fm:
         .endif
 
 | ---- 0x4000d514 (jmp, 8 B): the frame builder's second supplier call takes the per-track
-| supplier from its list (`moveal %a4@+,%a0`), caches it (`movel %a0,%a3@+`) and pushes
-| the end argument 16 (`pea 16`). An EMPTY FLEX voice gets stock's silent supplier there;
+| supplier from its list (the long at a4 into a0, a4 advanced), caches it (a0 stored at a3, a3
+| advanced) and pushes the end argument 16. An EMPTY FLEX voice gets stock's silent supplier there;
 | a chosen FM SYNTH track gets sy_render, which needs no sample. d3 = track.
 po_fmsource:
         movea.l (%a4)+,%a0               | displaced: the supplier
@@ -5037,8 +5037,8 @@ po_mring_reset:
         move.b  %d0,(%a0,%d2.l)
         rts
 
-| ---- po_mon: 0x4000e746, the chromatic block's voice command `moveq #29,%d1;
-| movel %d1,%a5@(0,%d2:l:4)` (6 bytes): the START into the mailbox, which
+| ---- po_mon: 0x4000e746, the chromatic block's voice command (the START
+| command, 29, stored as the track's long at a5 + 4 * d2; 6 bytes): the START into the mailbox, which
 | stock posts BEFORE it stores the PTCH lock byte (0x4000e74c..0x4000e758: a0
 | = 5 * note - 100 -> the byte at d4, the track's lock block). d2 = the track,
 | a3 -> the note, a5 = the mailbox base, d4 = the lock block; d0, d1, a0, a1
@@ -5098,8 +5098,8 @@ po_mon_stock:
         move.l  %d1,(%a5,%d2.l*4)
         jmp     0x4000e74c               | ... then the stock mapping, 64 + 5 * (note - 84)
 
-| ---- po_moff: 0x4000dfd4, the note-off's per-track compare `mvsb %a0@,%d1; mvsb
-| %a3@,%d0; cmpl %d1,%d0; bnes 0x4000dff8` (8 bytes). d2 = the track, a0 -> its
+| ---- po_moff: 0x4000dfd4, the note-off's per-track compare (two signed byte
+| loads, a0's into d1 and a3's into d0, their compare and a short branch to 0x4000dff8 when they differ; 8 bytes). d2 = the track, a0 -> its
 | held-note byte, a3 -> the note; d0, d1 scratch (d5 = 1, d3 = the track's bit,
 | d4 = the channel's mask, a1 = the end, a2 = the mailbox: kept). The stock
 | block at 0x4000dfdc: mailbox := 0x40, held := -1, the gate bit cleared.
@@ -5132,12 +5132,12 @@ po_moff_stock:
         bne     po_moff_more
         jmp     0x4000dfdc
 
-| ---- po_rel: 0x4000b51a, the frame builder's AMP-release consumer `moveal
-| %sp@(114),%a3; movel %a1@(0,%a3:l:4),%d0` (8 bytes): the builder found bit 6
+| ---- po_rel: 0x4000b51a, the frame builder's AMP-release consumer (the track
+| index read from the stack frame at +114 into a3 and the long at a1 + 4 * a3 into d0; 8 bytes): the builder found bit 6
 | in the track's mailbox 0x46c80354[t] (0x4000b4e4; a1 = the mailbox base,
-| sp@(114) = the track), took the release bytes 0x80001828/9 into its frame,
+| the frame's +114 = the track), took the release bytes 0x80001828/9 into its frame,
 | wrote 4 into the LFO state 0x80004858[t], and here re-reads the word to clear
-| bit 6 (andl #-65 at 0x4000b522). Every path that posts 0x40 -- the panel key
+| bit 6 (the AND that clears it, at 0x4000b522). Every path that posts 0x40 -- the panel key
 | release 0x4004fbfe.. (the last held key), the MIDI note-off's stock block
 | 0x4000dfdc (po_moff's last note), whatever the sequencer posts -- passes this
 | one site. A synth voice (S_ON bit 0) takes the released flag (S_ON bit 1):
@@ -5160,7 +5160,7 @@ po_rel:
 po_rel_out:
         jmp     0x4000b522
 
-| ---- po_retrig: 0x4000c634 (8 bytes displaced: `moveal 114(sp),a1; moveb (a0,a1.l),d0`,
+| ---- po_retrig: 0x4000c634 (8 bytes displaced: the track index read from the stack frame into a1 and the byte at a0 + a1 into d0,
 | a0 = 0x46104d15) -- the frame builder's per-track copy of the DSP command byte
 | 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t] (0x4000c642), the one
 | funnel every START form passes on its way to the DSP and the packer. THE CAUSE
@@ -5243,7 +5243,7 @@ po_retrig_out:
         move.b  (%a0,%a1.l),%d0          | displaced: the byte (rewritten or not) for the packer's nibble byte
         jmp     0x4000c63c
 
-| ---- (2.12) po_stop is gone. 2.9..2.11 hooked the frame builder's `clrl 0x46c80350` at
+| ---- (2.12) po_stop is gone. 2.9..2.11 hooked the frame builder's clear of the long 0x46c80350 at
 | 0x4000b2c8 as "the sequencer's STOP / restart word, after the DSP all-off" and released every
 | engine voice there (S_ON bits 1 and 2, the paraphonic voices to state 2, po_pend cleared). That
 | word is the METRONOME's click (GLOBAL_WORD above) and the byte the builder posts from it is the
@@ -5252,7 +5252,7 @@ po_retrig_out:
 | VOICE KILL (po_kill, below; BUILD 33), which never needed the global word. 0x4000b2c8 is stock.
 
 | ---- po_kill: 0x4000685c, the stock VOICE KILL 0x40006820(t)'s CF voice-byte
-| clear `clrb %d0; moveb %d0,%a1@(0,%a0:l)` (6 bytes; BUILD 33). The kill's
+| clear (a cleared d0 stored as the byte at a1 + a0; 6 bytes; BUILD 33). The kill's
 | prologue takes the track from 4(sp): t >= 8 recurses through the entry for
 | 0..7, so this site sees one track at a time, d1 = t, a0 = 0x800049d8, a1 =
 | 168 t, interrupts masked (0x40006846: no render call is mid-flight). Every
@@ -5301,8 +5301,8 @@ po_kill_v:
         lea     8(%sp),%sp
         jmp     KILL_RET
 
-| ---- po_mgate: 0x4000e452, the octave switch `movel %d6,%d0; subql #2,%d0; moveq
-| #5,%d2; cmpl %d0,%d2` (8 bytes; the bcs at 0x4000e45a follows). d6 = the octave
+| ---- po_mgate: 0x4000e452, the octave switch (d6 copied into d0, lowered by 2
+| and compared with 5 in d2; 8 bytes; the branch on carry at 0x4000e45a follows). d6 = the octave
 | (7 for note 96), d3 = the channel's track mask (bit 8 = the auto channel), a3
 | -> the note. A note outside 72..96 addressed to a synth track takes the
 | chromatic block for the channel's synth tracks alone.
@@ -5346,8 +5346,8 @@ po_mg_stock:
         cmp.l   %d0,%d2
         jmp     0x4000e45a
 
-| ---- po_mogate: 0x4000de10, the note-off's octave switch `subql #2,%d0; moveq
-| #5,%d3; cmpl %d0,%d3` (6 bytes; the bcs at 0x4000de16 follows). d0 = the
+| ---- po_mogate: 0x4000de10, the note-off's octave switch (d0 lowered by 2 and
+| compared with 5 in d3; 6 bytes; the branch on carry at 0x4000de16 follows). d0 = the
 | octave, d2 = the note, d4 = the channel's track mask (bit 8 = the auto
 | channel). A note outside 72..96 addressed to a synth track takes the
 | chromatic block 0x4000df9e for the channel's synth tracks alone, as its
@@ -5395,8 +5395,8 @@ po_mog_stock:
         cmp.l   %d0,%d3
         jmp     0x4000de16
 
-| ---- po_mrec: 0x400625e0, the 0x41 event handler's live-recorder entry `movel
-| %a2@(4),%d0; movel %d0,0x46c7e956` (10 bytes), reached for the ACTIVE track
+| ---- po_mrec: 0x400625e0, the 0x41 event handler's live-recorder entry (the event's
+| long at a2 + 4 loaded into d0 and stored to 0x46c7e956; 10 bytes), reached for the ACTIVE track
 | while LIVE RECORDING (stock's checks, kept). d1 = the track, a2 -> the event
 | record (+2 the note, +4 the context). Stock goes on at 0x400625ea (the
 | recorder, then the PTCH lock 5 * note - 356 through 0x40062550); the handler
@@ -5466,8 +5466,8 @@ po_mr_stock:
         move.l  4(%a2),%d0               | as displaced
         jmp     0x400625ea
 
-| ---- po_mtrig: 0x4006262a, the same handler's trig-held branch `mvsb %a2@(2),%d2;
-| moveal %d2,%a0; lea %a0@(0,%d2:l:4),%a0` (8 bytes): a0 - 356 is the PTCH lock
+| ---- po_mtrig: 0x4006262a, the same handler's trig-held branch (the event's signed
+| byte at a2 + 2 into d2, then a0 := d2 + 4 * d2, five times the note; 8 bytes): a0 - 356 is the PTCH lock
 | the held trig gets (0x4004f5f8 through 0x40062afc). d1 = the track. A synth
 | track's lock is the raw, note - 20.
 po_mtrig:
@@ -5500,8 +5500,8 @@ po_mt_out:
 | mode 0x460d16f0) and any other edge returns; open, a press or a repeat
 | (edge 2) steps the mode (0x40051f54 UP for code 0x33, 0x40051ee4 DOWN for
 | any other) and the handler chains to 0x400bebd2 (the window's redraw
-| 0x400359ac). The hook sits at the handle test (0x40051fce: `tstl
-| 0x400bebae; beqs 0x40051ff6`, d1 = the code, d0 = the edge, d2 pushed) and
+| 0x400359ac). The hook sits at the handle test (0x40051fce: the long
+| 0x400bebae tested and a short branch to 0x40051ff6 when it is 0, d1 = the code, d0 = the edge, d2 pushed) and
 | takes a press with the window CLOSED when a [TRIG] key is held for locking
 | on a synth track in GRID RECORDING, in any trig mode -- the lock editor's
 | own state: the held-trig mask 0x460d174a (a word, bit n = [TRIG n + 1],
@@ -5529,7 +5529,7 @@ po_mt_out:
         .set    SEL_WIN, 0x400bebae      | the selector window's handle, 0 = closed
         .set    OCT_HOOK_OPEN, 0x40051fd6 | the displaced beq's fall-through: the window is open (its presses step the mode)
         .set    OCT_HOOK_CLOSED, 0x40051ff6 | ... its target: the window is closed (a press opens it)
-        .set    OCT_HOOK_RTS, 0x40052006 | the handler's return (`movel %sp@+,%d2; rts`)
+        .set    OCT_HOOK_RTS, 0x40052006 | the handler's return (d2 restored from the stack, then the return)
         .set    GRID_REC, 0x460d1736     | nonzero: GRID RECORDING (PANEL.md)
         .set    HELD_MASK, 0x460d174a    | word: the [TRIG] keys held for locking
         .set    HELD_PAGE, 0x460d174c    | long: the trig page's first step (0 16 32 48)
@@ -5645,7 +5645,7 @@ po_oc_swallow:
 po_oc_pop_closed:
         movem.l (%sp),%d0-%d7/%a2-%a5
         lea     48(%sp),%sp
-po_oc_closed:                            | displaced: `tstl 0x400bebae; beqs 0x40051ff6`
+po_oc_closed:                            | displaced: the handle test and its branch to 0x40051ff6
         jmp     OCT_HOOK_CLOSED
 po_oc_open:
         jmp     OCT_HOOK_OPEN
@@ -5680,8 +5680,8 @@ po_part_ptch:
 
 | ==== THE AMP SETUP PAGE'S SIXTH BOX: LEG (2 Oct 2026) =============================
 | FUNC + AMP opens the AMP SETUP window (0x40059c8c): it stages the stock AMP
-| descriptor's page 2 into its knob array (0x40059d56: `pea 0x400d3988; jsr
-| 0x400326d4`, the enable nibbles decide which boxes take a knob), and its
+| descriptor's page 2 into its knob array (0x40059d56: 0x400d3988 pushed for a call of
+| 0x400326d4, the enable nibbles decide which boxes take a knob), and its
 | drawer 0x40036794 walks the six boxes with the names at 0x400d39c2 (P +
 | 0x3a), the formatters at 0x400d3a6a (P + 0xca + 24, the widgets 48 bytes
 | on) and the enable pair 0x400d3b12/16 (P + 0x18a/0x18e), all hard-coded --
@@ -5835,14 +5835,14 @@ po_lk1:
 po_lk2:
         rts
 
-| ---- 0x40059d56, the AMP SETUP window's staging `pea 0x400d3988` (6 bytes): the
+| ---- 0x40059d56, the AMP SETUP window's staging push of 0x400d3988 (6 bytes): the
 | descriptor for the current track (d0/d1/a0/a1 are scratch around the call).
 po_ampstage:
         bsr     po_amp_desc
         move.l  %d0,-(%sp)
         jmp     0x40059d5c
 
-| ---- 0x4003685a, the drawer's `lea 0x400d39c2,%a4; lea 0x400d3a6a,%a3` (12 bytes):
+| ---- 0x4003685a, the drawer's address loads, 0x400d39c2 into a4 and 0x400d3a6a into a3 (12 bytes):
 | a4 = the page-2 names, a3 = their formatters (the widgets at +48).
 po_ampdraw1:
         bsr     po_amp_desc
@@ -5851,8 +5851,8 @@ po_ampdraw1:
         lea     0xca+24(%a0),%a3
         jmp     0x40036866
 
-| ---- 0x400368ac and 0x40036946, the drawer's `movel 0x400d3b16,-(sp); movel
-| 0x400d3b12,-(sp)` (12 bytes each): the enable pair for the accessor 0x400a6994.
+| ---- 0x400368ac and 0x40036946, the drawer's pushes of the longs at 0x400d3b16
+| and 0x400d3b12 (12 bytes each): the enable pair for the accessor 0x400a6994.
 po_ampdraw2:
         bsr     po_amp_desc
         movea.l %d0,%a0
@@ -5866,8 +5866,8 @@ po_ampdraw3:
         move.l  0x18a(%a0),-(%sp)
         jmp     0x40036952
 
-| ---- 0x4003ae40, the page-2 editor's `addil #0x400d3988,%d0; moveal %d0,%a1;
-| moveal %a1@(298),%a0` (12 bytes): d0 = (slot + 6) * 4, d2 = slot + 6, d4 = the
+| ---- 0x4003ae40, the page-2 editor's handler fetch (0x400d3988 added to d0, the
+| sum into a1 and the long at a1 + 298 into a0; 12 bytes): d0 = (slot + 6) * 4, d2 = slot + 6, d4 = the
 | track; a0 := the slot's handler (0 = the default stepper). Slot 11 of an
 | audio track (po_amp_kind, not the master track): po_legknob.
 po_ampedit:
@@ -5886,8 +5886,8 @@ po_ampedit:
 po_ae_out:
         jmp     0x4003ae4c
 
-| ---- 0x4003af0a, the page-2 editor's live-lane write `lea 0x8000083c,%a0; moveb
-| %d2,%a0@(0,%d0:l)` (10 bytes): d0 = track * 72 + slot, d2 = the value, d4 =
+| ---- 0x4003af0a, the page-2 editor's live-lane write (the address 0x8000083c
+| into a0 and d2 stored as the byte at a0 + d0; 10 bytes): d0 = track * 72 + slot, d2 = the value, d4 =
 | track * 8, a2 = the slot. Slot 5 (LEG) of a synth track: the lane gets 0 (the
 | DSP's byte), the Part and its shadow keep the value (stored above); a sample
 | track's lane gets the value as stock writes it (the DSP sees it: measured
@@ -5931,19 +5931,19 @@ po_al_store:
 | sample track is never written (a non-marker slot is no synth track); RATE
 | p-locks live in the pattern and are not read here.
 |   * po_assign at 0x400795ba, in the slot assigner 0x40079424 (both windows'
-|     apply paths call it when the slot differs): `addal #0x8f04a,%a0; moveb
-|     %d1,%a0@` -- a0 = the Part's slot byte of the new machine (a3), d1 = the
+|     apply paths call it when the slot differs): 0x8f04a added to a0 and d1
+|     stored as the byte at a0 -- a0 = the Part's slot byte of the new machine (a3), d1 = the
 |     new slot; the machine byte was written at 0x40079522 and the OLD machine
 |     is the outermost of the three arguments still on the stack (0x4007956c:
 |     old machine, track, part for 0x400972fc), 8(sp). The old slot of the new
 |     machine's column is read before the displaced store.
 |   * po_machwin at 0x40079816, the machine window's machine-only write
 |     0x400797cc (the slot equal, the machine changed -- the assigner exits at
-|     0x40079672 without writing): `addal #0x8eda2,%a0; mvsb %a0@,%d3` -- d3 :=
+|     0x40079672 without writing): 0x8eda2 added to a0 and the signed byte at a0 into d3 -- d3 :=
 |     the old machine, d4 = the new one, d1 = the track; the FLEX column's slot
 |     is the Part's (po_flex_slot).
 |   * po_machlist at 0x4005a848, the sample-list window's machine-only write
-|     0x4005a826, the same shape: `addal #0x8eda2,%a0; mvsb %a0@,%d4` -- d4 :=
+|     0x4005a826, the same shape: 0x8eda2 added to a0 and the signed byte at a0 into d4 -- d4 :=
 |     the old machine, the new one at 0x460d5c30, d2 = the track.
 | Not detoured: the paste of a copied track record (0x40027e4c kind 0, machine
 | and slot with every page byte from the source, so FINE comes along) and the
@@ -6087,7 +6087,7 @@ po_fine_reset:
 | ---- 0x40022686: the file browser's select (0x40022610: d4 = the machine, 1 =
 | FLEX, d3 = the slot, d5 = the chosen file's path, d2 = the slot's settings
 | record; the three sprintf arguments record / format / path are on the stack)
-| writes the path into the record with `jsr 0x40013a08`, replaced by `jsr
+| writes the path into the record with a call of 0x40013a08, replaced by `jsr
 | po_loadsel`. THE NEW-PROJECT CASE (Tim, MKI, 2.9 + the FINE fix: the FIRST
 | FM machine of a project read +63c): in a fresh project every track already
 | owns its slot in both columns (T1 = slot 1 .. T8 = slot 8, every slot empty;

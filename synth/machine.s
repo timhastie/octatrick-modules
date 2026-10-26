@@ -138,8 +138,8 @@
         .set    TICK_A, 0x4005213c       | the UI tick's two calls fm_tick replays (the first is PC-relative
         .set    TICK_B, 0x4007e940       | in stock, so it is replayed by its absolute address)
         .set    TICK_RET, 0x40052228
-        .set    WIN_COUNT_RET, 0x40079250 | the machine window's list init after its `pea 5; pea 6` (ml_win_count)
-        .set    SRC_COUNT_RET, 0x40058602 | SRC SETUP's list init after its `pea 5; pea 5` (ml_src_count)
+        .set    WIN_COUNT_RET, 0x40079250 | the machine window's list init after its pushes of 5 and 6 (ml_win_count)
+        .set    SRC_COUNT_RET, 0x40058602 | SRC SETUP's list init after its pushes of 5 and 5 (ml_src_count)
         .set    NAME_BOUND_IN, 0x4003c956 | SRC SETUP's name lookup: the row has a name ...
         .set    NAME_BOUND_OUT, 0x4003c95a | ... or not (the default string)
         .set    DRAW_BOUND_IN, 0x40078684 | the machine window's drawer: the row's name drawn (after the formatter call) ...
@@ -639,8 +639,8 @@ fm_us_out:
 | ---- 0x40079816 (jmp, 8 B): the machine window's machine-byte write (FUNC + SRC, YES).
 | a1 = the bank blob, d0 = part * 6322, d1 = the track, d2 = the part index, d4 = the
 | chosen row, a0 = blob + part * 6322 + track. The row becomes the machine byte to store
-| (fm_choose), then po_machwin (poly.s) replays the displaced `addal #0x8eda2,%a0; mvsb
-| %a0@,%d3` with its FINE rule and stock stores d4 into the Part and its shadow. Stock
+| (fm_choose), then po_machwin (poly.s) replays the displaced instructions (0x8eda2 added
+| to a0, the signed byte at a0 into d3) with its FINE rule and stock stores d4 into the Part and its shadow. Stock
 | goes on with d0 (+ d1: the shadow's byte, 0x100a4ef0 + part * 6322 + track), d1, d2
 | (the Part's change bit), d3 (the old machine), d4 and a0 / a1: each is what it was, d4
 | the machine to store (2.15: the guard's verdict is not left in d0).
@@ -664,7 +664,7 @@ fm_mc_refuse:
         jmp     WIN_REFUSE               | nothing written: the stock refusal's exit
 
 | ---- 0x4005a616 / 0x4005a850 (jmp, 6 B each): SRC SETUP's two machine-byte writes:
-| displaced `movel 0x460d5c30,%d1` (the chosen row), then stock stores d1 at a0 (the
+| displaced: the long at 0x460d5c30 into d1 (the chosen row), then stock stores d1 at a0 (the
 | machine byte) and into the shadow. d2 = the track. The second site follows
 | po_machlist's detour (0x4005a848, poly.s), which returns to it. Stock goes on with d0
 | (part * 6322; + d2: the shadow's byte), d1 (the machine to store), d2, d3 (the part
@@ -1037,7 +1037,7 @@ ml_toast:
         .set    PREVIEW_SAVE, 0x46105424 | the FLEX preview's saved machine
         .set    PREVIEW_RET, 0x40096d2e
 | 0x40027e98 (jmp, 10 B): the SRC page's store (d4 = the Part, d5 = the track, a2 = the
-| clipboard for a paste, 0x40028fd4, or the undo buffer for an undo, 0x40028f94): displaced `moveb %a2@(19),%d3; mvsb %d3,%d6; moveb %a2@(18),%d7` (the machine and
+| clipboard for a paste, 0x40028fd4, or the undo buffer for an undo, 0x40028f94): displaced: the record's bytes at a2 + 19 into d3 (sign-extended into d6) and at a2 + 18 into d7 (the machine and
 | its slot). FLEX pasted over a track whose signature place holds a row's signature makes
 | that machine (the signature is not written by this store): guarded.
 fm_page_store:
@@ -1066,8 +1066,8 @@ fm_ps_refuse:
         bsr     ml_toast
         jmp     PAGE_STORE_NONE
 | 0x4002b962 / 0x4002b99e (jmp, 10 B each): the whole track's undo (0x4002b8xx, which saved
-| d2 / d3) and its paste (0x4002b988) call the store: displaced `pea UNDO_BUF / CLIP_BUF;
-| jsr %pc@(FULL_STORE)` (replayed by its address); the store's other two arguments are on
+| d2 / d3) and its paste (0x4002b988) call the store: displaced: UNDO_BUF / CLIP_BUF pushed
+| and the pc-relative call of FULL_STORE (replayed by its address); the store's other two arguments are on
 | the stack (0(sp) the pattern, 4(sp) the track). A refusal leaves through the function's
 | own "nothing" answer (d0 = 0).
 fm_track_undo:
@@ -1131,7 +1131,7 @@ ml_tc_out:
         tst.l   %d0
         rts
 | 0x40029b54 / 0x40029b8a (jmp, 10 B each): the Part's undo and its paste call the store:
-| displaced `pea UNDO_BUF / CLIP_BUF; jsr %pc@(PART_STORE)` (replayed by its address); the
+| displaced: UNDO_BUF / CLIP_BUF pushed and the pc-relative call of PART_STORE (replayed by its address); the
 | Part's index is on the stack. The buffer holds a whole Part from its +0.
 fm_part_undo:
         lea     UNDO_BUF-PART_OFF,%a0
@@ -1171,7 +1171,7 @@ ml_part_over:
         rts
 | 0x40096d22 (jmp, 12 B): the sample preview of the FLEX list (0x40096c54: d4 = the track
 | of the current Part, a0 = its machine byte) makes the track FLEX while it plays and puts
-| the machine back after: displaced `mvsb %a0@,%d3; movel %d3,PREVIEW_SAVE; moveb #1,%a0@`.
+| the machine back after: displaced: the signed byte at a0 into d3, d3 stored to PREVIEW_SAVE and 1 written to the byte at a0.
 | A track that is not FLEX loses the signature it kept, so the preview plays the sample.
 fm_preview:
         mvs.b   (%a0),%d3                | displaced: the machine before the preview
@@ -1268,7 +1268,7 @@ fm_ty_rts:
         rts
 
 | ---- 0x400334d8 (jmp, 6 B): the machine-name formatter name(row): rows 5.. -> their
-| names; any other row replays the displaced `movel %d2,%sp@-; movel %sp@(8),%d1`.
+| names; any other row replays the displaced push of d2 and the stack's long at +8 into d1.
 fm_machine_name:
         move.l  4(%sp),%d0
         subq.l  #FM_ROW,%d0
@@ -1284,8 +1284,8 @@ fm_mn_row:
         rts
 
 | ---- 0x4003d718 (jmp, 6 B): a track's machine name, d0 = its machine (0..4 checked),
-| a0 = its machine byte; displaced `lea 0x400a78c8,%a0`, then d1 := the name (the
-| instruction after, `movel %a0@(0,%d0:l:4),%d1`, is done here: rejoins after it).
+| a0 = its machine byte; displaced: the address 0x400a78c8 into a0, then d1 := the name (the
+| instruction after, the long at a0 + 4 * d0 into d1, is done here: rejoins after it).
 fm_name_a:
         bsr     fm_type                  | FLEX + signed -> its row
         lea     NAMES,%a0                | displaced
@@ -1300,16 +1300,16 @@ fm_na_row:
         lea     NAMES,%a0
         jmp     NAME_A_RET
 
-| ---- 0x4003c980 (jmp, 6 B): SRC SETUP's row highlight: displaced `mvsb %a0@,%d0; lea
-| %sp@(24),%sp` (a0 = the track's machine byte); a signed track's row is its row.
+| ---- 0x4003c980 (jmp, 6 B): SRC SETUP's row highlight: displaced: the signed byte at a0 into
+| d0 and the release of 24 stack bytes (a0 = the track's machine byte); a signed track's row is its row.
 fm_setup_row:
         mvs.b   (%a0),%d0
         lea     24(%sp),%sp
         bsr     fm_type
         jmp     SETUP_ROW_RET
 
-| ---- 0x400786c8 (jmp, 6 B): the machine window's row highlight: displaced `mvsb
-| %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (d2 = the visible row drawn; 2.11: the
+| ---- 0x400786c8 (jmp, 6 B): the machine window's row highlight: displaced: the signed
+| byte at a0 into d0, its compare with d2 and a short branch to 0x400786fc when they differ (d2 = the visible row drawn; 2.11: the
 | window scrolls, so the list row is d2 + its top, ml_draw_name).
 fm_chooser_row:
         mvs.b   (%a0),%d0
@@ -1322,8 +1322,8 @@ fm_chooser_row:
 fm_cr_miss:
         jmp     CHOOSER_MISS
 
-| ---- 0x400585dc (jmp, 10 B): SRC SETUP opens on the track's row: displaced `moveb
-| %a0@,%d3; mvsb %d3,%d4; pea 0x400bb704`; d4 indexes the PLAYBACK descriptor table
+| ---- 0x400585dc (jmp, 10 B): SRC SETUP opens on the track's row: displaced: the byte at
+| a0 into d3, sign-extended into d4, and the push of 0x400bb704; d4 indexes the PLAYBACK descriptor table
 | (slots 5..: the rows' pages, fm_tick), d3 is the row the window starts on.
 fm_setup_open:
         move.b  (%a0),%d3
@@ -1337,7 +1337,7 @@ fm_setup_open:
         jmp     SETUP_OPEN_RET
 
 | ---- 0x40078886 (jmp, 10 B): the machine window opens on the track's row: displaced
-| `mvsb %a0@,%d0; movel %d0,%sp@-; pea 0x460e7386`.
+| the signed byte at a0 into d0, d0 pushed and the push of 0x460e7386.
 fm_chooser_open:
         mvs.b   (%a0),%d0
         bsr     fm_type
@@ -1345,8 +1345,8 @@ fm_chooser_open:
         pea     (0x460e7386).l           | displaced
         jmp     CHOOSER_OPEN_RET
 
-| ---- 0x400788c4 (jmp, 8 B): the machine window's opening column (2.18): displaced `mvzb
-| %a0@,%d0; moveq #1,%d2; cmpl %d0,%d2; scs %d0` (a0 = the track's machine byte); stock goes
+| ---- 0x400788c4 (jmp, 8 B): the machine window's opening column (2.18): displaced: the
+| unsigned byte at a0 into d0, 1 into d2, their compare and d0 set when the byte is above 1 (a0 = the track's machine byte); stock goes
 | on to store column 1 (the sample-slot list) for STATIC / FLEX and column 0 (the machine
 | list) for every other machine. A signed track (FM SYNTH, SY DRUM) is FLEX by its byte, so
 | the track key pressed twice opened the slot list (empty for these machines); its row
@@ -1360,8 +1360,8 @@ fm_chooser_col:
         jmp     CHOOSER_COL_RET
 
 | ---- 0x4003a52e / 0x4003cd98 (jmp, 8 B each): SRC SETUP's editor and drawer address the
-| row's Part bytes at row * 6: displaced `movel %dN,%d0; lsll #3,%d0; addl %dN,%dN; subl
-| %dN,%d0` (d2 / d6, the row; d0 / d7 := row * 6). Rows 5.. address FLEX's.
+| row's Part bytes at row * 6: displaced: the row copied into d0 and shifted left by 3,
+| the row doubled and subtracted from it (d2 / d6, the row; d0 / d7 := row * 6). Rows 5.. address FLEX's.
 fm_setup_edit6:
         jsr     po_setup_edit:l
         cmpi.l  #2,%d0
@@ -1460,7 +1460,7 @@ fm_d6_rects:                             | x0, y0, x1, y1
         .short  -1
         .balign 2
 
-| ---- 0x4005221e (jmp, 10 B): the UI tick: displaced `jsr 0x4005213c; jsr 0x4007e940`,
+| ---- 0x4005221e (jmp, 10 B): the UI tick: displaced: the calls of 0x4005213c and 0x4007e940,
 | replayed; then SRC SETUP's name table is filled from the stock one and the rows' names,
 | and the PLAYBACK descriptor table's spare slots 5.. get the rows' pages (FM SYNTH:
 | page.s, built on first use; SY DRUM: its unit's), so the SRC SETUP window has a page
@@ -1499,18 +1499,18 @@ fm_tk_row:
 | ---- the six row-count and row-bound sites (2.11): the stock list code was written for
 | five machines; 2.10 poked its constants to six rows. Each detour does what the stock
 | instruction did with 5 + ML_COUNT rows (the last row ML_LAST), and rejoins.
-| 0x40079248 (jmp, 8 B): the machine window's list init, `pea 5; pea 6` (rows, visible).
+| 0x40079248 (jmp, 8 B): the machine window's list init, the pushes of 5 and 6 (rows, visible).
 ml_win_count:
         pea     (5+ML_COUNT).w           | the rows
         pea     6.w                      | the rows visible (stock's)
         jmp     WIN_COUNT_RET
-| 0x400585fa (jmp, 8 B): SRC SETUP's list init, `pea 5; pea 5` (rows, visible).
+| 0x400585fa (jmp, 8 B): SRC SETUP's list init, the pushes of 5 and 5 (rows, visible).
 ml_src_count:
         pea     (5+ML_COUNT).w
         pea     5.w
         jmp     SRC_COUNT_RET
-| 0x4003c950 (jmp, 6 B): SRC SETUP's name lookup, `moveq #4,%d1; cmpl %d2,%d1; bcss
-| 0x4003c95a` (d2 = the row: past the last row, the default string).
+| 0x4003c950 (jmp, 6 B): SRC SETUP's name lookup, the row d2 compared with 4 and a
+| short branch on carry to 0x4003c95a (d2 = the row: past the last row, the default string).
 ml_name_bound:
         moveq   #ML_LAST,%d1
         cmp.l   %d2,%d1
@@ -1518,8 +1518,8 @@ ml_name_bound:
         jmp     NAME_BOUND_IN
 ml_nb_out:
         jmp     NAME_BOUND_OUT
-| 0x40078678 (jmp, 12 B): the machine window's row drawer, `moveq #4,%d0; cmpl %d2,%d0;
-| blts 0x400786a2; movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@` (d2 = the visible row, d3 =
+| 0x40078678 (jmp, 12 B): the machine window's row drawer, the row d2 compared with 4,
+| a short branch to 0x400786a2 past it, d2 pushed and the call through d3 (d2 = the visible row, d3 =
 | the name formatter). It drew name(d2) for d2 = 0 .. 5 with no scroll offset: a seventh
 | row was never drawn and the cursor box left its name (found by a study of the list code, 8 Oct 2026). 2.11:
 | name(d2 + the list's top), up to the last row -- the window scrolls as SRC SETUP's does,
@@ -1535,8 +1535,8 @@ ml_draw_bound:
         jmp     DRAW_BOUND_IN
 ml_db_out:
         jmp     DRAW_BOUND_OUT
-| 0x400786ce (jmp, 6 B): the machine window's highlight, `moveq #4,%d0; cmpl %d2,%d0;
-| blts 0x400786fc`.
+| 0x400786ce (jmp, 6 B): the machine window's highlight, the row d2 compared with 4 and
+| a short branch to 0x400786fc past it.
 ml_hi_bound:
         moveq   #ML_LAST,%d0
         cmp.l   %d2,%d0
@@ -1544,8 +1544,8 @@ ml_hi_bound:
         jmp     HI_BOUND_IN
 ml_hb_out:
         jmp     CHOOSER_MISS
-| The machine window's row clamp after a list move (five sites, 8 B each: `moveq #5,%d1;
-| cmpl %d0,%d1; bges +2; moveq #5,%d0` -- the absolute row 0x460e738e kept to 0..5, the
+| The machine window's row clamp after a list move (five sites, 8 B each: the row d0 compared
+| with 5 and set to 5 when above it -- the absolute row 0x460e738e kept to 0..5, the
 | six rows the window shows, then handed to the list's row setter 0x4007edb0): a row past
 | the sixth was put back on the sixth, so it could not be selected or committed (located by the
 | development line's machine-list build, 8 Oct 2026). 2.11: kept to 0 .. the last row.
@@ -1562,8 +1562,8 @@ ml_clamp\n:
         ML_CLAMP 3, 0x40078d36
         ML_CLAMP 4, 0x40078df6
         ML_CLAMP 5, 0x40078e84
-| 0x40079904 (jmp, 8 B): the machine window's cursor, `moveq #4,%d3; cmpl %d4,%d3;
-| bgew 0x400797cc` (d4 = the cursor's row).
+| 0x40079904 (jmp, 8 B): the machine window's cursor, the row d4 compared with 4 and
+| a branch to 0x400797cc when it is not above it (d4 = the cursor's row).
 ml_cur_bound:
         moveq   #ML_LAST,%d3
         cmp.l   %d4,%d3

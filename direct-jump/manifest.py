@@ -15,7 +15,7 @@ direction of travel (0x40065a22..2a: a result of 1 becomes delta + 1, i.e.
 2 or 0), the project loader bumps a saved 1 to 2 (0x40087820..38, after its
 0..16 clamp at 0x4008780c/12), and the UI mirror's sanitiser (0x40010212..38)
 only clamps 0..16. So DIRECT takes index 1 (24 Sep 2026; the 13 Sep build
-used an 18th index, which needed two relocated 18-entry tables, eight `lea`
+used an 18th index, which needed two relocated 18-entry tables, eight address-load
 repoints and six widened clamps): the setter's skip and the loader's bump
 become plain branches (two 2-byte pokes), the stock step table's entry 1
 (0x400d80e0) becomes -1 so every stock reader -- the tick handler

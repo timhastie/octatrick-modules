@@ -32,8 +32,8 @@
 | as stock.
 |
 | HOW: the page descriptor resolver 0x40031da4(track, page kind) returns
-| tbl[machine] for the PLAYBACK page at 0x40031ece (`movel %a0@(0,%d0:l:4),%d0;
-| bras 0x40031ed6`, 6 bytes -> `jmp pg_resolve`). Everything that draws or edits
+| tbl[machine] for the PLAYBACK page at 0x40031ece (the long at a0 + 4 * d0 loaded
+| into d0 and a short branch to 0x40031ed6, 6 bytes -> `jmp pg_resolve`). Everything that draws or edits
 | the page -- the generic parameter-page renderer 0x4004e0xx, the footer
 | 0x4003d5xx, the knob handler 0x40055008 -- reaches the descriptor through it
 | (0x40031ee0 / 0x40031f28 tail-call it). The stub replays the lookup and, for
@@ -93,7 +93,7 @@ fm_descriptor:
         jmp     %a0@
 
 | ---- the resolver detour ------------------------------------------------------
-| 0x40031ece: `movel %a0@(0,%d0:l:4),%d0; bras 0x40031ed6` -> `jmp pg_resolve` (the
+| 0x40031ece: the long at a0 + 4 * d0 loaded into d0 and a short branch to 0x40031ed6 -> `jmp pg_resolve` (the
 | cave's +16 since 2.10: fm_descriptor is first; the manifest's PG_RESOLVE_AT).
 | d0 = machine type, a0 = the table 0x400d5f38, d3 = track, d1 = part index,
 | a1 = the bank blob; d2-d5 are restored by the resolver's epilogue, d1/a0/a1

@@ -22,8 +22,8 @@
 |   qz_boot       jsr detour at 0x40010212, inside stock's boot sanitiser of
 |                 the block (0x4000fec8, from 0x40025770: a warm boot with a
 |                 project): out of range -> OFF / C, as stock does for its
-|                 own bytes; ends with the displaced tst.b so the caller's
-|                 bge sees its flags.
+|                 own bytes; ends with the displaced byte test so the caller's
+|                 signed branch sees its flags.
 |   qz_defaults   jsr detour at 0x40025ac2, inside the project defaults
 |                 (0x40025848: a cold boot, a boot with no project, the
 |                 loader before its storing pass, a new project): OFF / C,

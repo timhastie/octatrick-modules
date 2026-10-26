@@ -398,7 +398,7 @@ qz_k_store:
 | The p-lock editor (loops over the held steps; d6 = step, d7 = the rest) takes
 | the step's lock byte -- or the Part's value when there is none (0xff) --
 | through the slot's own handler and the descriptor clamp into d4, then
-| stores it at (0x59,%a0,%a1.l) = track record + 0x59 + flat slot (a0 = the
+| stores it at the byte a0 + a1 + 0x59 = track record + 0x59 + flat slot (a0 = the
 | record, a1 = flat slot) and into the SRAM mirror after the hook. Same
 | registers as above: d5 = slot, a3 = descriptor, fp = delta. The lock byte
 | is still the old one when the hook runs, so the start value is read there.
@@ -862,7 +862,7 @@ qz_c_replay:
 | qz_oct (-60..+51) -- plus ROOT with a scale on, so key 1 sounds the root --
 | snapped to the nearest degree of the ROOT-rotated SCALE mask by pitch class
 | (lower first at each distance, the rule qz_c_loop and po_snap follow), raw =
-| 64 + n. The lea is not replayed: a2 := raw.
+| 64 + n. The displaced address load is not replayed: a2 := raw.
 qz_c_synth:
         move.l  %d3,-(%sp)
         move.l  %d4,-(%sp)
@@ -933,7 +933,7 @@ qz_cs_lo_ok:
 
 | ---- the CHROMATIC octave on a synth track --------------------------------------
 | Stock keeps ONE octave word for the keyboard, OCT_WORD, 0 or 1: FUNC + LEFT
-| or RIGHT eor it (0x40045918), the key handler's caller adds 12 * word to the
+| or RIGHT flips it (0x40045918), the key handler's caller adds 12 * word to the
 | key (0x40050254) and the drawer picks the 16- or 13-key picture by it
 | (0x40044968), prints it with "%d" (0x400449be) and places the held-key marks
 | with it (0x40044abe). On a synth track the octave is qz_oct instead, -4..+4:

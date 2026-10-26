@@ -82,7 +82,7 @@ pl_isr:
 
 | ---- the frame interrupt's epilogue ----------------------------------------------------------
 | Every stock exit reaches this point with D0-A6 saved at SP; the three displaced instructions
-| (restore, release, RTE) end it.
+| (the register restore, the stack release and the return from the exception) end it.
 pl_tail:
         lea     pl_stats,%a0
         tst.l   PS_OPEN(%a0)
