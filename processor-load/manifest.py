@@ -43,11 +43,11 @@ H = bytes.fromhex
 # file serves at modules/processor-load/ and at modules/processor-load/upstream/processor-load/.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
-VECTOR_INSTALL = 0x4001FBF8      # main: `pea 0x4000aad0` -- the frame handler for vector 0x41
-FRAME_EPILOGUE = 0x4000D9A6      # frame interrupt: `movem.l (sp),d0-a6; lea 252(sp),sp; rte`
-UI_MESSAGE = 0x40056C8A          # UI task loop: `movea.l d6,a0; jsr (a0); tpf` (type-1 message path)
-TEMPO_DRAW = 0x4004B528          # TEMPO popup draw: `link.w a6,#-24; movem.l d2-d4/a2,(sp)`
-TEMPO_HEADER_Y = 0x4004B5B4      # TEMPO draw: `pea 0x25`, the header's y
+VECTOR_INSTALL = 0x4001FBF8      # main: the push of 0x4000aad0 -- the frame handler for vector 0x41
+FRAME_EPILOGUE = 0x4000D9A6      # frame interrupt: the restore of d0-a6, the release of 252 stack bytes and the return from the exception
+UI_MESSAGE = 0x40056C8A          # UI task loop: the call through d6 and a no-op (type-1 message path)
+TEMPO_DRAW = 0x4004B528          # TEMPO popup draw: its prologue, a 24-byte frame and the save of d2-d4 / a2
+TEMPO_HEADER_Y = 0x4004B5B4      # TEMPO draw: the push of the header's y (0x25)
 
 MODULE = Module(
     name="processor-load",

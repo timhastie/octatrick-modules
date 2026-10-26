@@ -59,8 +59,8 @@
         .set    SPRINTF,   0x40013a08   | (buf, fmt, ...)
         .set    LPUSH,     0x40031494   | (layer)
         .set    LPOP,      0x4003146c   | (layer)
-        .set    TEMPO_GO,  0x40059ef6   | the stock opener after its `tstl TEMPOWIN`
-        .set    UI_GO,     0x40056c78   | the UI loop after its `pea UIQUEUE`
+        .set    TEMPO_GO,  0x40059ef6   | the stock opener after its test of TEMPOWIN
+        .set    UI_GO,     0x40056c78   | the UI loop after its push of UIQUEUE
         .set    ISR_GO,    0x4000d9a0   | frame_isr's last instruction (USB AUDIO's site)
 
         .set    WINW,      96
@@ -87,7 +87,7 @@ tu_tempo:
         btst    #(KUP&7),%d0
         bne.s   1f
         tstl    TEMPOWIN               | the displaced instruction; its flags
-        jmp     TEMPO_GO               | feed the stock `bne`
+        jmp     TEMPO_GO               | feed the stock conditional branch
 1:      tstl    tu_win
         bne.w   tu_close               | open: UP + TEMPO closes it
         bra.w   tu_open

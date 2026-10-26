@@ -461,7 +461,7 @@ qz_p_done:
 | on screen) resolves the Part byte into a5 (Part + 0x8f162 + 32 * track +
 | flat), calls the slot's handler (NOTE: the generic 0x4003240c, a semitone a
 | detent), clamps it to the descriptor's min into d0, and at 0x40055382 -- the
-| hook, 8 bytes: move.l d0,d2; cmp.l d0,d1; bge.s; move.l d1,d2 -- to the max
+| hook, 8 bytes: d0 copied into d2, compared with d1 and replaced by d1 when above it -- to the max
 | d1 into d2, which 0x4005538a stores into the Part; the SRAM mirror, the live
 | copy 0x46c76dc0 + 68 * track, a LIVE REC lock (0x40042158) and the CC echo
 | then read d2. The hook sits one instruction group before the store so that
@@ -942,7 +942,7 @@ qz_cs_lo_ok:
 | * qz_oct, and the number beside the keyboard is qz_oct. Sample tracks: the
 | displaced instructions, byte for byte.
 
-| 0x40050254, the key handler's caller: `movel OCT_WORD,%d0; movel %d0,%d1` (8
+| 0x40050254, the key handler's caller: OCT_WORD read into d0 and copied into d1 (8
 | bytes) -> jmp qz_keyidx; a0 = the key, d2 = press (pushed already); stock
 | goes on at 0x4005025c with d1 = the word and computes 12 * d1.
 qz_keyidx:
@@ -956,8 +956,8 @@ qz_ki_out:
         move.l  %d0,%d1                 | displaced
         jmp     0x4005025c
 
-| 0x40045918, FUNC + LEFT / RIGHT in CHROMATIC mode: `moveq #1,%d2; eorl
-| %d2,OCT_WORD` (8 bytes) -> jmp qz_octkey. The key code is the handler's
+| 0x40045918, FUNC + LEFT / RIGHT in CHROMATIC mode: OCT_WORD toggled by 1 through
+| d2 (8 bytes) -> jmp qz_octkey. The key code is the handler's
 | first argument, 8(%sp) (d2 is pushed at its entry): 0x34 = LEFT, 0x21 =
 | RIGHT (PANEL.md: key code = row * 8 + bit). Stock goes on at 0x40045920
 | (the redraw); d2 is dead (popped at the return).
@@ -988,8 +988,8 @@ qz_ok_stock:
         eor.l   %d2,OCT_WORD            | displaced
         jmp     0x40045920
 
-| 0x40044968, the CHROMATIC drawer's picture choice: `moveq #1,%d1; cmpl
-| OCT_WORD,%d1` (8 bytes) -> jmp qz_octdraw; stock's `bne` at 0x40044970 reads
+| 0x40044968, the CHROMATIC drawer's picture choice: OCT_WORD compared with 1
+| through d1 (8 bytes) -> jmp qz_octdraw; stock's conditional branch at 0x40044970 reads
 | the compare's flags. On a synth track the word is set to 0 first, so this
 | draw -- the picture, the number, the marks -- sees octave 0 (the word may
 | hold 1 from a sample track; the keys of a synth track ignore it anyway).
@@ -1002,11 +1002,11 @@ qz_od_cmp:
         cmp.l   OCT_WORD,%d1            | displaced
         jmp     0x40044970
 
-| 0x400449be, the number beside the keyboard: `movel %d0,%sp@-; pea
-| 0x400b465d` (8 bytes, the octave and stock's "%d") -> jmp qz_octnum. The
+| 0x400449be, the number beside the keyboard: the pushes of d0 and of 0x400b465d
+| (8 bytes, the octave and stock's decimal format) -> jmp qz_octnum. The
 | drawer reaches 0x400449be from BOTH branches: the audio one loads OCT_WORD
-| into d0 at 0x400449b8 and falls through, the MIDI one (0x400449a6: `tstl
-| 0x80000012`) loads stock's MIDI octave word 0x400beba2 - 1 into d0 and
+| into d0 at 0x400449b8 and falls through, the MIDI one (0x400449a6: a test of the
+| long at 0x80000012) loads stock's MIDI octave word 0x400beba2 - 1 into d0 and
 | branches straight here. The value is printed by the formatter 0x40013904
 | (ctx, font, x 0x44, y 9, 1, 0, buf 0x400b527d, fmt, value), and 0x400449ec
 | pops the nine -- so a synth track's -4..+4 prints as is. With a scale on
@@ -1075,7 +1075,7 @@ qz_on_copied:
         pea     qz_ofmt(%pc)            | the format, in place of stock's "%d"
         jmp     0x400449c6
 qz_on_fmt:
-        pea     FMT_D                   | displaced: stock's "%d"
+        pea     FMT_D                   | displaced: stock's decimal format
         jmp     0x400449c6
 
 | ---- (2.18) the held key's mark on an audio track's keyboard: jmp planted at 0x40044abc
@@ -1149,7 +1149,7 @@ qz_hm_word:
 | (0x40050226) made the note key + 12 * stock's octave word 0x400beba2 (4 at
 | boot: key 1 = 48 = C3). On a press stock has checked note <= 127 and taken
 | the key's held slot d2 = note & 15; at 0x400436a8 it pushes the event flag
-| (`pea 1`) and then calls 0x4009e9a8(track, note, the Part's VEL, 1) -- the
+| (a push of 1) and then calls 0x4009e9a8(track, note, the Part's VEL, 1) -- the
 | note-on, or the arpeggiator's add with ARP MODE on -- and stores held[d2] =
 | note + 1 (0x460d170c), which the release turns back into the note-off; the
 | live recorder records the note it was given (event 0x46). With a scale on
@@ -1158,7 +1158,7 @@ qz_hm_word:
 | sounds the root, every key a note of the scale. The note-on, the arp, held[]
 | (so the note-off) and the recorder all carry it; the release needs no hook.
 | Registers: d3 = the note, d4 = track, d2 = the slot; d0 / d1 / a0 / a1 are
-| free (d5 is not: stock's `movew #6322,%d5` keeps its upper half).
+| free (d5 is not: stock's word load of a constant into d5 keeps its upper half).
 qz_mkey:
         mvz.b   NV_SCALE,%d0
         jbeq    qz_mky_replay           | OFF: stock
@@ -1239,7 +1239,7 @@ qz_ms_found:
 | (0x4009fb2e, a2 = the note, d4 = 0..3, d7 = the track 0..7): + TRAN - 64 +
 | the MIDI transpose 0x46c7a124[t] (a byte out of 0..127 becomes -1),
 | stock's ARP SETUP KEY (0x4009fb58..7e), then at 0x4009fb80 -- the hook,
-| 6 bytes: move.b (a2),d1; blt.w 0x4009fd2a -- a negative note is skipped
+| 6 bytes: the note byte read into d1 and a branch to 0x4009fd2a when it is negative -- a negative note is skipped
 | and any other one goes through the active-note table 0x46c78152 (ch * 128
 | + note): a free note is sent (0x4009fbac) and stored for its note-off
 | (0x46c77a1a + 32 t + 8 i; the table entry := t * 4 + i), a note this track
@@ -1263,7 +1263,7 @@ qz_mnote:
         move.b  %d0,(%a2)               | the note, snapped (fp-4..-1: the stage's own copy)
 qz_mn_replay:
         move.b  (%a2),%d1               | displaced
-        jblt    qz_mn_skip              | displaced: blt.w 0x4009fd2a
+        jblt    qz_mn_skip              | displaced: the branch on a negative note (to 0x4009fd2a)
         jmp     0x4009fb86
 qz_mn_skip:
         jmp     0x4009fd2a
@@ -1416,7 +1416,7 @@ qz_as_done:
 | 0x400438fc(_, press) plays the UI MIDI track's step under a [TRIG] key in
 | GRID RECORDING: its four notes into 28(sp)..31(sp) (the step's NOTE lock or
 | the Part's NOTE, + the NOT2..4 locks or the Part's - 64; no TRAN, no KEY),
-| then at 0x400439d6 -- the hook, 8 bytes: tst.l 40(sp); beq.w 0x40043b1c --
+| then at 0x400439d6 -- the hook, 8 bytes: a test of the press argument on the stack and a branch to 0x40043b1c when it is 0 --
 | the press sends each note that is not negative through 0x4009e9a8 (the
 | note-on, or the arpeggiator's add), the release recomputes the four the
 | same way and sends their note-offs. The snap goes on both, so the release
@@ -1437,7 +1437,7 @@ qz_mprev:
         movea.l (%sp)+,%a2
 qz_mv_replay:
         tst.l   40(%sp)                 | displaced: the press?
-        jbeq    qz_mv_rel               | displaced: beq.w 0x40043b1c
+        jbeq    qz_mv_rel               | displaced: the branch on a release (to 0x40043b1c)
         jmp     0x400439de
 qz_mv_rel:
         jmp     0x40043b1c
@@ -1482,7 +1482,7 @@ qz_mv_next:
 | track; until 3 Oct 2026 still on a sample track). FUNC
 | held, a release, or nothing held: stock, byte for byte.
 
-| 0x4004fbfe: `tstl 0x46c7dd26; bnes 0x4004fc44` (8 bytes) -> jmp qz_leg1.
+| 0x4004fbfe: a test of the long at 0x46c7dd26 and a short branch to 0x4004fc44 when it is set (8 bytes) -> jmp qz_leg1.
 | d1 = the held key + 1 (nonzero here), d2 = track, d3 = the new key + 1
 | (0 on a release); d0/a0 are free (reloaded by the stock code that follows).
 qz_leg1:
@@ -1523,7 +1523,7 @@ qz_legmode:
 qz_lm_ret:
         rts
 
-| 0x4004fc94: `tstl 0x46c7dd26; beqs 0x4004fcb2` (8 bytes) -> jmp qz_leg2.
+| 0x4004fc94: the same test and a short branch to 0x4004fcb2 when it is clear (8 bytes) -> jmp qz_leg2.
 | d2 = track, d3 = the new key + 1; the pitch is staged (0x4004fc84..fc90).
 | The legato press posts stock's own trigless word through 0x4004fc9c
 | (`mailbox |= 0x119`). Measured 24 Sep 2026: that word does not restart the
@@ -1596,7 +1596,7 @@ qz_g2_trig:
                                         | the START; po_start does the same for a paraphonic voice, a sample
                                         | track's START clears it in sy_no; before, only the paraphonic path posted it)
 
-| 0x4004fce0: `tstl 0x46c7dd26; beqs 0x4004fcf8` (8 bytes) -> jmp qz_leg3. The
+| 0x4004fce0: the same test and a short branch to 0x4004fcf8 when it is clear (8 bytes) -> jmp qz_leg3. The
 | same press, a few instructions on, is handed to the LIVE RECORDER (the
 | block 0x4004fcd8..0x4004fd24 runs while 0x460d172a is set: live recording,
 | or a trig held): stock records a TRIGLESS trig (0x4004271c) when FUNC is
@@ -1631,8 +1631,8 @@ qz_g3_joined:
         jmp     0x4004fd3e              | a joined key: no trig of its own, no PTCH / HOLD lock (the chord's step has them)
 
 | ---- the note length (OCTATRICK7 report: a recorded note droned for the AMP HOLD) --
-| 0x4004fd06, after the recorder returned: `addql #8,%sp; tstl %d0; blts
-| 0x4004fd3e` (6 bytes) -> jmp qz_leg4. d0 = the step the press was recorded on
+| 0x4004fd06, after the recorder returned: the release of 8 stack bytes, a test of d0
+| and a short branch to 0x4004fd3e when it is negative (6 bytes) -> jmp qz_leg4. d0 = the step the press was recorded on
 | (-1 = none), d2 = track, d3 = the key + 1, a2 = the raw pitch. On a synth track
 | the press is noted -- key, step, the engine's tick count (po_clock through
 | qz_clock, 0 until the engine has run) -- in one of the track's four slots;
@@ -1681,7 +1681,7 @@ qz_g4_none:
         jmp     0x4004fd3e
 
 | ---- fingered chords (26 Sep 2026): 0x4004fd20, right after the recorder's PTCH
-| lock write for the key: `lea %sp@(20),%sp; bras 0x4004fd3e` (6 bytes) -> jmp
+| lock write for the key: the release of 20 stack bytes and a short branch to 0x4004fd3e (6 bytes) -> jmp
 | qz_leg5. d2 = track, d3 = the key + 1, a2 = the raw pitch (callee-saved
 | across the writer), the step in qz_step (qz_leg4). On a synth track, once
 | the engine has run (qz_clock: the synth module is there), the engine's
@@ -1864,8 +1864,8 @@ qz_ha_next:
         lea     8(%sp),%sp
         rts
 
-| 0x4004fbde, the release path: `mvzb %a0@(0,%d2:l),%d1; movel %a2,%d0` (6
-| bytes) -> jmp qz_leg0. a0 = HELD, d2 = track, a2 = the key index; stock
+| 0x4004fbde, the release path: the track's held-key byte read unsigned into d1 and a2
+| copied into d0 (6 bytes) -> jmp qz_leg0. a0 = HELD, d2 = track, a2 = the key index; stock
 | goes on at 0x4004fbe4 with d0 = the index and d1 = the held key + 1, and
 | returns at once unless they match. On a paraphonic synth track the mask
 | decides: the key leaves qz_pmask (the engine releases its voices); with keys

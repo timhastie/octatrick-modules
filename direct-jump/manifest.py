@@ -77,7 +77,7 @@ from remix.schema import CavePatch, Kind, Module
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
 # ---- the two hook sites ------------------------------------------------------
-# The setter 0x400a0570, transport running: the two moveb that publish the
+# The setter 0x400a0570, transport running: the two byte stores that publish the
 # queued bank/pattern. Twelve bytes, two instructions, replayed in the cave.
 QUEUE_HOOK = 0x400a06d6
 QUEUE_HOOK_STOCK = bytes.fromhex("13c4800065bf" "13c5800065c0")
@@ -98,8 +98,8 @@ DIRECT_STR = 0x400b6912       # stock's own "DIRECT\0"
 POKES = (
     (STEPS_ENTRY1, "00000001", "ffffffff", "step table entry 1: DIRECT reads as PAT.LEN"),
     (LABELS_ENTRY1, "400b5771", "400b6912", "label table entry 1: DIRECT"),
-    (0x40065a26, "6604", "6004", "menu setter: no longer skips index 1 (bne -> bra)"),
-    (0x40087826, "6600", "6000", "project loader: no longer bumps 1 to 2 (bne -> bra)"),
+    (0x40065a26, "6604", "6004", "menu setter: no longer skips index 1 (its conditional branch made unconditional)"),
+    (0x40087826, "6600", "6000", "project loader: no longer bumps 1 to 2 (its conditional branch made unconditional)"),
 )
 
 # direct_jump.s assembled with m68k-elf-as -mcpu=5475 and linked at

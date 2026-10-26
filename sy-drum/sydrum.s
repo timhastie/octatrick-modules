@@ -40,7 +40,7 @@
         .set    PLAY_SETUP, 0x8ef60      | Part + 30 * track: the FLEX SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
         .set    LANE_SETUP, 0x80000830   | + 72 * track: the live lane's six SETUP bytes
         .set    CF_SETUP, 0x80000528     | + 384 * ping + 48 * track: the CF record's SETUP bytes (0x80000510 + 24)
-        .set    RESOLVER_TAIL, 0x40031ede | the page resolver's `rts` after its epilogue (sd_page)
+        .set    RESOLVER_TAIL, 0x40031ede | the page resolver's return after its epilogue (sd_page)
 
 | ==== sd_tick: po_tick's SY DRUM part, once an audio frame (from po_lfo3b, the frame
 | builder's LFO pass, before the render loop). Every register kept.
@@ -322,8 +322,8 @@ sy1_mono_key_frame:
 sy1_mk_out:
         rts
 
-| ==== sd_page: 0x40031ed6 (jmp, 8 B), the page resolver's epilogue `moveml %sp@,%d2-%d5;
-| lea %sp@(16),%sp` (then `rts` at 0x40031ede). Every page lookup ends here with d0 = the
+| ==== sd_page: 0x40031ed6 (jmp, 8 B), the page resolver's epilogue (the restore of d2-d5
+| and the release of 16 stack bytes; then the return at 0x40031ede). Every page lookup ends here with d0 = the
 | descriptor; d3 = the track, d1 = the current Part's index (the resolver's own reads,
 | 0x40031e08..), d2-d5 are restored by the displaced instructions. The PLAYBACK page of a
 | FLEX track that page.s left stock (FLEX_P: not FM SYNTH) is SY DRUM's when SY DRUM is
@@ -607,7 +607,8 @@ sd_sp_names:
         rts
 
 | ---- sd_setup_edit: 0x4003a524 (jmp, 10 B), the PLAYBACK SETUP editor's descriptor load
-| `lea 0x400d5f38,%a0; moveal %a0@(0,%d2:l:4),%a5` (d2 = the window's machine row, a3 =
+| (the machine table's address 0x400d5f38 into a0 and the descriptor pointer it holds for
+| row d2 into a5; d2 = the window's machine row, a3 =
 | the control, d4 = the track; then 0x4003a52e stores the edit in the Part, its shadow and
 | the live lane). On SY DRUM's page (the development line's po_setup_edit for its SY
 | page): E / F store nothing (hidden); with trigs held the turn edits their locks

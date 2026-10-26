@@ -91,7 +91,7 @@ generic list (state 0x460e43d8, init 0x40065c7c, draw 0x40065b14, keys
 0x40065cec, LEVEL knob 0x40065c98) over three parallel pointer tables --
 labels 0x400b27d0, getters 0x400b27dc, setters 0x400b282c -- which the
 build grows to six entries (fourteen since 2.15: MIDI 1..8 SCALE) (TableGrow) and repoints. The list is created
-with count 3 / visible 3 (`pea 3; pea 3` at 0x40065c7c); the count becomes
+with count 3 / visible 3 (two pushes of 3 at 0x40065c7c); the count becomes
 4 (poke) and the three visible rows scroll, as the firmware's longer lists
 do, once the draw loop indexes the tables from the scroll offset instead of
 0 (qz_draw). The value byte lives in the unit (qz_scale), OFF in the image.
@@ -152,7 +152,7 @@ take the stored value after the hook. RATE (slot D) is a playback rate
 semitone quantity, and is left alone.
 
 CHROMATIC. 0x4004fb94(track, key index 0..24, press) turns the index into
-the raw pitch at 0x4004fc58 (`lea (4,%a2,%a2.l*4),%a2` = 5*idx + 4, root =
+the raw pitch at 0x4004fc58 (an address computation, 5*idx + 4, root =
 index 12 = TRIG 13), writes it as the lock byte 0x46c7dfda + t*32, trigs the
 voice (0x40005030 / 0x46c80354) and, in LIVE RECORDING or with a trig held,
 records it as the trig's PTCH lock (0x40042158 with a2). The detour snaps

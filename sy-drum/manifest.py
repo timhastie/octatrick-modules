@@ -53,9 +53,9 @@ LOCKS = ("setup_stage", "locks_store", "locks_seq", "locks_ui", "locks_sparse", 
          "locks_io")
 
 
-PAGE_HOOK = 0x40031ed6                  # `moveml %sp@,%d2-%d5; lea %sp@(16),%sp` (the page resolver's epilogue)
+PAGE_HOOK = 0x40031ed6                  # the restore of d2-d5 from the stack and the release of 16 stack bytes (the page resolver's epilogue)
 PAGE_STOCK = bytes.fromhex("4cd7003c" "4fef0010")
-SETUP_EDIT_HOOK = 0x4003a524            # `lea 0x400d5f38,%a0; moveal %a0@(0,%d2:l:4),%a5` (the PLAYBACK SETUP editor)
+SETUP_EDIT_HOOK = 0x4003a524            # the machine table's address 0x400d5f38 into a0 and the descriptor pointer it holds for row d2 into a5 (the PLAYBACK SETUP editor)
 SETUP_EDIT_STOCK = bytes.fromhex("41f9400d5f38" "2a702c00")
 
 # The step locks' stock hooks (the development line's, 8 Oct 2026, less its setup-scene and

@@ -23,8 +23,8 @@ H = bytes.fromhex
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
 
 TEMPO_OPEN = 0x40059EF0          # the TEMPO key's press handler (keymaps 0x400bfc10 / 0x400c01f4, code 0x18)
-FRAME_TAIL = 0x4000D99A          # frame_isr: `movel %d1,0x80004800`, the instruction before USB AUDIO's site 0x4000d9a0
-UI_LOOP = 0x40056C72             # the UI task 0x40056c40: `pea 0x460d1664` before every queue_receive
+FRAME_TAIL = 0x4000D99A          # frame_isr: the store of d1 to 0x80004800, the instruction before USB AUDIO's site 0x4000d9a0
+UI_LOOP = 0x40056C72             # the UI task 0x40056c40: the push of 0x460d1664 before every queue_receive
 
 MODULE = Module(
     name="tuner",

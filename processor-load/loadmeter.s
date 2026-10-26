@@ -108,8 +108,8 @@ pl_tail:
 
 | ---- the UI task --------------------------------------------------------------------------------
 | The type-1 message path of the UI loop (about 60 times a second, measured): the meter's tick,
-| then the displaced `movea.l %d6,%a0; jsr (%a0)` (the stock countdown; the displaced tpf is a
-| no-op).
+| then the displaced call through d6 (the stock countdown; the displaced no-op instruction is
+| left out).
 pl_ui:
         bsr.w   pl_tick
         movea.l %d6,%a0
