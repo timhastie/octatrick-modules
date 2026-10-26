@@ -151,7 +151,12 @@ CONTRIBUTING.md, "The one rule"): `tools/stock_scan.py --stock
 <octabam>/out/raw/section_3_MAIN_OS.bin` looks every data directive, hex
 constant and assembled unit up in your own stock image and lists what
 matches (the hook-site replays and a few call idioms the assembler shares
-with the stock compiler; no data).
+with the stock compiler; no data). The manifests hold no stock bytes at
+all: every displaced span and every poke's stock value is read from your
+OS through `stock_guard(site, length)` and asserted before anything is
+written. The READMEs describe each hook site in words (its address, its
+length, what the displaced code does) and quote no stock bytes or stock
+instructions.
 
 **No code at an odd address.** A ColdFire stops with an address error when
 it fetches an instruction from an odd address, and neither GNU as (code

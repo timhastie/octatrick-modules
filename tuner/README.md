@@ -27,11 +27,15 @@ pitch (drums) gives a wandering reading, as any tuner would.
 A DRAM unit (`tuner.s`, 2,846 B of code and tables, 19,500 B of data in
 the platform reserve, no ROM cave) and three detours:
 
-| site | stock instruction | stub | what |
+| site | displaced (6 B, replayed by the stub) | stub | what |
 |---|---|---|---|
-| `0x40059ef0` | `tstl 0x460d16a0` (the TEMPO opener's first instruction; the key's press handler in both keymaps, code `0x18`) | `tu_tempo` | UP held (`0x46100b18[6]` bit 3) -> the tuner toggles; else the stock opener runs |
-| `0x4000d99a` | `movel %d1,0x80004800` (frame_isr's tail, the instruction before USB AUDIO's site `0x4000d9a0`) | `tu_frame` | window open: the current track's 16 frames of this block, `(L + R) >> 1`, top 16 bits, into a 4,096-sample ring (93 ms). Closed: three instructions |
-| `0x40056c72` | `pea 0x460d1664` (the UI task `0x40056c40`, before every `queue_receive`) | `tu_tick` | window open and 400 blocks (145 ms) since the last: analyse the ring and redraw, in the UI task. Closed: two instructions |
+| `0x40059ef0` | the TEMPO opener's first instruction, its test of the word at `0x460d16a0` (the key's press handler in both keymaps, code `0x18`) | `tu_tempo` | UP held (`0x46100b18[6]` bit 3) -> the tuner toggles; else the stock opener runs |
+| `0x4000d99a` | frame_isr's tail, the long store to `0x80004800`, the instruction before USB AUDIO's site `0x4000d9a0` | `tu_frame` | window open: the current track's 16 frames of this block, `(L + R) >> 1`, top 16 bits, into a 4,096-sample ring (93 ms). Closed: three instructions |
+| `0x40056c72` | the UI task `0x40056c40`'s push of the queue address `0x460d1664`, before every `queue_receive` | `tu_tick` | window open and 400 blocks (145 ms) since the last: analyse the ring and redraw, in the UI task. Closed: two instructions |
+
+Each stub replays the 6 bytes it displaces. They are not in this
+repository: the manifest reads them from your OS through
+`stock_guard(site, 6)` and refuses to build when they differ from 1.40C's.
 
 The window is the stock TEMPO window's shape: `0x4005829c(96, 56, 0, 0,
 5, tu_close)` + `0x40056f4c(handle)`, an input layer of its own pushed by

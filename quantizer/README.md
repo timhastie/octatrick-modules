@@ -261,15 +261,15 @@ images were never affected.
 
 **Hooks (stock 1.40C addresses).**
 
-| site | stock bytes (displaced) | kind | stub | what |
+| site | displaced (in words; read from your OS by `stock_guard`) | kind | stub | what |
 |---|---|---|---|---|
-| `0x40055382` knob handler, the MIDI tracks' clamp to the max, just before the store `0x4005538a` | `2400 b280 6c02 2401` -- `move.l %d0,%d2; cmp.l %d0,%d1; bge.s 0x4005538a; move.l %d1,%d2` | jsr + nop | `qz_mknob` | the four (d2 := the value capped at the max); then NOTE (flat 0, slot named `NOTE`): d2 := the old Part byte stepped by scale degree (`qz_quantm`); d0 / d1 / a0 / a1 as stock leaves them; the store at `0x4005538a` stays stock |
-| `0x40050b98` MIDI p-lock editor, the lock store | `1144 4900 73b9 100b14cc` -- `move.b %d4,(18688,%a0); mvz.b 0x100b14cc,%d1` | jsr + 2 nops | `qz_mplock` | NOTE: d4 := the old lock (or the Part's NOTE when 0xff) stepped; then both |
-| `0x400436a8` MIDI CHROMATIC key, the press | `4878 0001 73b9 100b14cf` -- `pea 1; mvz.b 0x100b14cf,%d1` | jmp + 2 nops | `qz_mkey` | d3 := `qz_msnap`(min(127, note + ROOT)); both; `jmp 0x400436b2` |
-| `0x400449be` CHROMATIC drawer, the common push | `2f00 4879 400b465d` -- `move.l %d0,-(%sp); pea 0x400b465d` | jmp + nop | `qz_octnum` | MIDI: stock's number, `"<ROOT> %d"` with a scale on; audio: as 2.12; `jmp 0x400449c6` |
+| `0x40055382` knob handler, the MIDI tracks' clamp to the max, just before the store `0x4005538a` | 8 B, four instructions: d2 := the value, compared with the max in d1, and capped at it (the short branch skips to `0x4005538a`) | jsr + nop | `qz_mknob` | the four (d2 := the value capped at the max); then NOTE (flat 0, slot named `NOTE`): d2 := the old Part byte stepped by scale degree (`qz_quantm`); d0 / d1 / a0 / a1 as stock leaves them; the store at `0x4005538a` stays stock |
+| `0x40050b98` MIDI p-lock editor, the lock store | 10 B, two instructions: the store of the lock byte d4 into the track's lock record, then the read of the byte at `0x100b14cc` into d1 | jsr + 2 nops | `qz_mplock` | NOTE: d4 := the old lock (or the Part's NOTE when 0xff) stepped; then both |
+| `0x400436a8` MIDI CHROMATIC key, the press | 10 B, two instructions: the push of the argument 1, then the read of the byte at `0x100b14cf` into d1 | jmp + 2 nops | `qz_mkey` | d3 := `qz_msnap`(min(127, note + ROOT)); both; `jmp 0x400436b2` |
+| `0x400449be` CHROMATIC drawer, the common push | 8 B, two instructions: the push of d0, then the push of the format string's address `0x400b465d` | jmp + nop | `qz_octnum` | MIDI: stock's number, `"<ROOT> %d"` with a scale on; audio: as 2.12; `jmp 0x400449c6` |
 
 No branch in the stock code lands inside any of the three new sites (the
-`bge.s` the knob site displaces targets `0x4005538a`, the instruction
+short branch the knob site displaces targets `0x4005538a`, the instruction
 after the site), and no other module of the octatrick remix hooks within
 16 bytes of them. The knob's hook sits one step before the store rather
 than on it because octabam's MIDI SCENES module (scene locks for the MIDI
@@ -409,10 +409,10 @@ more instruction in the ROM core `core.s` (192 -> 196 bytes).
 
 **Hooks (2.15; stock 1.40C addresses).**
 
-| site | stock bytes (displaced) | kind | stub | what |
+| site | displaced (in words; read from your OS by `stock_guard`) | kind | stub | what |
 |---|---|---|---|---|
-| `0x4009fb80` the MIDI note stage `0x4009f794`, after TRAN / the MIDI transpose / ARP SETUP KEY, before the active-note test | `1212 6d00 01a6` -- `move.b (%a2),%d1; blt.w 0x4009fd2a` | jmp | `qz_mnote` | a following track's note (a2, the stage's own copy; d7 = the track) snapped in place (`qz_msnap`); the two replayed; `jmp 0x4009fb86` (or `0x4009fd2a`: a negative note is skipped, as stock) |
-| `0x400439d6` the GRID RECORDING preview `0x400438fc` ([TRIG] + [YES]), after its four notes are made | `4aaf 0028 6700 0140` -- `tst.l 40(%sp); beq.w 0x40043b1c` | jmp + nop | `qz_mprev` | the four notes at 28..31(sp) snapped (press and release alike); both replayed; `jmp 0x400439de` / `0x40043b1c` |
+| `0x4009fb80` the MIDI note stage `0x4009f794`, after TRAN / the MIDI transpose / ARP SETUP KEY, before the active-note test | 6 B, two instructions: the read of the note byte at a2 into d1, and the branch to `0x4009fd2a` when it is negative | jmp | `qz_mnote` | a following track's note (a2, the stage's own copy; d7 = the track) snapped in place (`qz_msnap`); the two replayed; `jmp 0x4009fb86` (or `0x4009fd2a`: a negative note is skipped, as stock) |
+| `0x400439d6` the GRID RECORDING preview `0x400438fc` ([TRIG] + [YES]), after its four notes are made | 8 B, two instructions: the test of the preview's stack argument at 40(sp), and the branch to `0x40043b1c` when it is zero | jmp + nop | `qz_mprev` | the four notes at 28..31(sp) snapped (press and release alike); both replayed; `jmp 0x400439de` / `0x40043b1c` |
 
 No branch in the stock code lands inside either site (a scan of every
 branch and jump target of the stock OS), and no module of octabam hooks
@@ -420,7 +420,7 @@ within 16 bytes of them (MIDI SCENES' nearest detour, `0x4009faaa` in the
 same routine, is 214 bytes before). The 2.13 hooks `qz_mknob`, `qz_mplock`,
 `qz_mkey` and `qz_octnum`'s MIDI branch each gained the switch test (the
 UI track, or the key's track); the SEQUENCER tables grew from 3 + 3 to
-3 + 11 entries and the count poke is `pea 14`. Every new path replays the
+3 + 11 entries and the count poke pushes 14. Every new path replays the
 displaced instructions and does nothing else with SCALE OFF or the
 track's switch OFF.
 
@@ -565,7 +565,7 @@ SYNC saw only the cold boot's whole-RAM clear). Every reader and writer uses
 the byte in place (`lea qz_scale,%a0` absolute, `qz_glide_of`, the synth's
 `sy_glide` at the same `GLIDE_AT`); two jsr detours keep it sane:
 `qz_boot` at `0x40010212` inside the sanitiser (out of range -> OFF, then the
-displaced `tst.b 0x100b14ae` so the caller's `bge` sees its flags) and
+displaced test of the byte at `0x100b14ae`, so the caller's conditional branch sees its flags) and
 `qz_defaults` at `0x40025ac2` inside the project defaults (OFF with the
 block: a cold boot, a boot with no project, every load before it stores, a
 new project). `glide.s` is gone; 424 B of cave left (`octatrick-usb`).
@@ -585,7 +585,7 @@ values every time: 5/82, 6/80, 7/90 after SAVE, SYNC, RELOAD.
 `make check REMIX=octatrick-usb` ALL GATES PASSED.
 
 The SEQUENCER window (`0x40065b14` draws it, `0x40065c7c` creates its
-list state at `0x460e43d8` with `pea 3; pea 3` = count / visible,
+list state at `0x460e43d8` with two pushed 3s = count / visible,
 `0x40065cec` handles keys, `0x40065c98` the LEVEL knob) is a generic list
 over three parallel pointer tables — labels `0x400b27d0`, getters
 `0x400b27dc`, setters `0x400b282c` (CHAIN AFTER's `0x400659ec` /
@@ -593,11 +593,11 @@ over three parallel pointer tables — labels `0x400b27d0`, getters
 three to four (`TableGrow`, the new tables at `0x400d7100 / 7180 / 7200`,
 the six operands repointed: `0x40065bd8`, `0x40065bde`, `0x40065cc4`,
 `0x40065d3e`, `0x40065d58`, `0x40065d72`), the count becomes 4 (poke
-`0x40065c7c`: `4878 0003` → `4878 0004`) and the window scrolls, as the
+`0x40065c7c`: the pushed count 3 → 4) and the window scrolls, as the
 firmware's longer lists do: three rows fit the PATTERN CHANGE frame, a
 fourth would land on its bottom edge. The one thing the stock draw loop
 lacked is indexing the tables from the scroll offset — it started at 0
-(`clrl %d2`), so the fourth row could never come into view; `qz_draw`
+(it clears the index register), so the fourth row could never come into view; `qz_draw`
 replaces that. [DOWN] three times shows `SCALE`, the LEVEL knob steps it
 (clamped: −4 from PHRYGN stays OFF, +30 stops at LYD.DOM, a single report
 of +3 from OFF is PHRYGN; `remix_menu.log`, `a*`), [YES] steps it with
@@ -616,7 +616,7 @@ unchanged. The writer (`0x40088882..`, one sprintf / strlen / write per
 key through `a4 / a3 / a2`) is detoured at the start of the SILENCE_TRACKS
 line; the loader's `#` check is detoured to compare the line against the
 key and parse the digits (0..24, anything else = OFF), storing only in a
-storing pass (`58(%sp)` = 0); and the loader's entry resets the byte to
+storing pass (the argument at sp+58 = 0); and the loader's entry resets the byte to
 OFF for a storing pass (second argument ≠ 0), so a project without the
 line loads as OFF.
 
@@ -642,7 +642,7 @@ for byte:
   distance -- the rule po_snap follows), a2 := that raw for the staged
   lock byte, the live recorder's PTCH lock and the screen.
 - **The octave**: stock keeps one word, `0x460d16fc`, 0 or 1 -- FUNC +
-  LEFT and FUNC + RIGHT both `eor` it (0x40045918), the handler's caller
+  LEFT and FUNC + RIGHT both toggle it (0x40045918), the handler's caller
   adds 12 * word to the key (0x40050254), the drawer chooses the 16- or
   13-key picture by it (0x40044968), prints it with `%d` (0x400449b8) and
   places the held-key marks with it (0x40044abe); at 1 keys 14..16 give
@@ -675,24 +675,28 @@ All addresses are the stock 1.40C main OS at `0x40000400` (a disassembly
 listing of it). Sites are asserted against the
 stock bytes before anything is written (`manifest.py`).
 
-| site | stock bytes (displaced) | kind | stub | replays |
+| site | displaced (in words; read from your OS by `stock_guard`) | kind | stub | replays |
 |---|---|---|---|---|
-| `0x40055170` knob handler `0x40055008`, the store | `1482 1a82 320e` — `move.b %d2,(%a2); move.b %d2,(%a5); move.w %fp,%d1` | jsr | `qz_knob` | the three, after recomputing d2 |
-| `0x40050e60` p-lock editor, the lock store | `1384 8859 73b9 100b14cc` — `move.b %d4,(0x59,%a1,%a0.l); mvz.b 0x100b14cc,%d1` | jsr + 2 nops | `qz_plock` | the two (the store as `(0x59,%a0,%a1.l)`, the same address), after recomputing d4 |
-| `0x4004fc58` CHROMATIC key → pitch | `45f2 ac04 71b9 100b14cf` — `lea (4,%a2,%a2.l*4),%a2; mvz.b 0x100b14cf,%d0` | jsr + 2 nops | `qz_chrom` | the two, after snapping a2 |
-| `0x4004fbfe` CHROMATIC key handler, the note-off gate | `4ab9 46c7dd26 663e` — `tst.l 0x46c7dd26; bne 0x4004fc44` | jmp + nop | `qz_leg1` | the FUNC test; with GLIDE on and a key held: the old key's MIDI note-off, `jmp 0x4004fc44` (no voice note-off); else `jmp 0x4004fc06` / `0x4004fc44` as stock |
-| `0x4004fc94` the same handler, sample trig vs trigless | `4ab9 46c7dd26 6716` — `tst.l 0x46c7dd26; beq 0x4004fcb2` | jmp + nop | `qz_leg2` | the FUNC test; with GLIDE on and a key held: held := the new key, `jmp 0x4004fc9c` (the trigless trig); else `jmp 0x4004fcb2` / `0x4004fc9c` as stock |
-| `0x40050254` CHROMATIC key handler's caller | `2039 460d16fc 2200` — `move.l 0x460d16fc,%d0; move.l %d0,%d1` | jmp + nop | `qz_keyidx` | both; a synth track: d0 = d1 = 0; `jmp 0x4005025c` |
-| `0x40045918` FUNC + LEFT/RIGHT, CHROMATIC | `7401 b5b9 460d16fc` — `moveq #1,%d2; eor.l %d2,0x460d16fc` | jmp + nop | `qz_octkey` | both; a synth track: `qz_oct` +-1 (clamped -4..+4), the word := 0; `jmp 0x40045920` |
-| `0x40044968` CHROMATIC drawer, picture choice | `7201 b2b9 460d16fc` — `moveq #1,%d1; cmp.l 0x460d16fc,%d1` | jmp + nop | `qz_octdraw` | both (the compare last: the `bne` after reads its flags), after clearing the word on a synth track; `jmp 0x40044970` |
-| `0x400449be` CHROMATIC drawer, the number (2.13, Modwerk #264; `0x400449b8` until 2.12) | `2f00 4879 400b465d` — `move.l %d0,-(%sp); pea 0x400b465d` | jmp + nop | `qz_octnum` | both on every path (stock's MIDI branch jumps here); a MIDI track pushes stock's number, a synth track `qz_oct`, a sample track its position; with a scale on (2.9) its own format `"<ROOT> %d"` in place of stock's `"%d"`; `jmp 0x400449c6` (the same nine arguments) |
+| `0x40055170` knob handler `0x40055008`, the store | 6 B, three instructions: the new value d2 stored to the Part byte at a2 and to its copy at a5, then a word copy into d1 | jsr | `qz_knob` | the three, after recomputing d2 |
+| `0x40050e60` p-lock editor, the lock store | 10 B, two instructions: the store of the lock byte d4 into the track's lock record (offset 0x59, indexed), then the read of the byte at `0x100b14cc` into d1 | jsr + 2 nops | `qz_plock` | the two (the store with its two address registers in the other order, the same address), after recomputing d4 |
+| `0x4004fc58` CHROMATIC key → pitch | 10 B, two instructions: a2 := the key's table entry (5 × a2 + 4), then the read of the byte at `0x100b14cf` into d0 | jsr + 2 nops | `qz_chrom` | the two, after snapping a2 |
+| `0x4004fbfe` CHROMATIC key handler, the note-off gate | 8 B, two instructions: the test of the FUNC word `0x46c7dd26`, and the branch to `0x4004fc44` when it is set | jmp + nop | `qz_leg1` | the FUNC test; with GLIDE on and a key held: the old key's MIDI note-off, `jmp 0x4004fc44` (no voice note-off); else `jmp 0x4004fc06` / `0x4004fc44` as stock |
+| `0x4004fc94` the same handler, sample trig vs trigless | 8 B, two instructions: the test of the FUNC word `0x46c7dd26`, and the branch to `0x4004fcb2` when it is clear | jmp + nop | `qz_leg2` | the FUNC test; with GLIDE on and a key held: held := the new key, `jmp 0x4004fc9c` (the trigless trig); else `jmp 0x4004fcb2` / `0x4004fc9c` as stock |
+| `0x40050254` CHROMATIC key handler's caller | 8 B, two instructions: the octave word `0x460d16fc` read into d0 and copied to d1 | jmp + nop | `qz_keyidx` | both; a synth track: d0 = d1 = 0; `jmp 0x4005025c` |
+| `0x40045918` FUNC + LEFT/RIGHT, CHROMATIC | 8 B, two instructions: the octave word `0x460d16fc` toggled (exclusive or with 1, through d2) | jmp + nop | `qz_octkey` | both; a synth track: `qz_oct` +-1 (clamped -4..+4), the word := 0; `jmp 0x40045920` |
+| `0x40044968` CHROMATIC drawer, picture choice | 8 B, two instructions: the octave word `0x460d16fc` compared with 1 (through d1) | jmp + nop | `qz_octdraw` | both (the compare last: the conditional branch after it reads its flags), after clearing the word on a synth track; `jmp 0x40044970` |
+| `0x400449be` CHROMATIC drawer, the number (2.13, Modwerk #264; `0x400449b8` until 2.12) | 8 B, two instructions: the push of d0, then the push of the format string's address `0x400b465d` | jmp + nop | `qz_octnum` | both on every path (stock's MIDI branch jumps here); a MIDI track pushes stock's number, a synth track `qz_oct`, a sample track its position; with a scale on (2.9) its own format `"<ROOT> %d"` in place of stock's `"%d"`; `jmp 0x400449c6` (the same nine arguments) |
 | `0x40055382`, `0x40050b98`, `0x400436a8` (2.13) | see "MIDI tracks (2.13)" | | `qz_mknob`, `qz_mplock`, `qz_mkey` | |
-| `0x40010212` boot sanitiser of the battery block | `4a39 100b14ae` — `tst.b 0x100b14ae` | jsr | `qz_boot` (`core.s`, ROM) | the `tst.b` last (the caller's `bge` reads its flags), after clamping SCALE 0..24, GLIDE 0..127, ROOT 0..11 |
-| `0x40025ac2` project defaults | `42b9 100b14d4` — `clr.l 0x100b14d4` | jsr | `qz_defaults` (`core.s`, ROM) | the `clr.l`, after SCALE := OFF, GLIDE := OFF, ROOT := C |
-| `0x40065bca` SEQUENCER draw loop | `4282 4fef 0020` — `clr.l %d2; lea 32(%sp),%sp` | jmp | `qz_draw` | the `lea`; d2 := scroll offset × 4; `jmp 0x40065bd0` |
-| `0x400866cc` project loader entry | `2c2f 05c0 202f 05c4` — `move.l 1472(%sp),%d6; move.l 1476(%sp),%d0` | jmp + nop | `qz_ld_entry` | both; `jmp 0x400866d4` |
-| `0x400867a2` project loader, the `#` check | `122f 048f 7101 7a23` — `move.b 1167(%sp),%d1; mvs.b %d1,%d0; moveq #35,%d5` | jmp + nop | `qz_ld_line` | the three; `jmp 0x400867aa` (or `0x40088224`, next line, when the line is ours) |
-| `0x400888aa` project writer, SILENCE_TRACKS line | `7339 8000 004f 2f01` — `mvs.b 0x8000004f,%d1; move.l %d1,-(%sp)` | jmp + nop | `qz_wr` | both, after writing our line; `jmp 0x400888b2` |
+| `0x40010212` boot sanitiser of the battery block | 6 B, one instruction: the test of the byte at `0x100b14ae` | jsr | `qz_boot` (`core.s`, ROM) | the test last (the caller's conditional branch reads its flags), after clamping SCALE 0..24, GLIDE 0..127, ROOT 0..11 |
+| `0x40025ac2` project defaults | 6 B, one instruction: the clear of the long word at `0x100b14d4` | jsr | `qz_defaults` (`core.s`, ROM) | the clear, after SCALE := OFF, GLIDE := OFF, ROOT := C |
+| `0x40065bca` SEQUENCER draw loop | 6 B, two instructions: the clear of the row index d2, then the stack adjustment by 32 | jmp | `qz_draw` | the stack adjustment; d2 := scroll offset × 4; `jmp 0x40065bd0` |
+| `0x400866cc` project loader entry | 8 B, two instructions: the loader's stack arguments at sp+1472 and sp+1476 read into d6 and d0 | jmp + nop | `qz_ld_entry` | both; `jmp 0x400866d4` |
+| `0x400867a2` project loader, the `#` check | 8 B, three instructions: the line's first character (sp+1167) read into d1 and sign-extended into d0, and d5 := `'#'` (35) | jmp + nop | `qz_ld_line` | the three; `jmp 0x400867aa` (or `0x40088224`, next line, when the line is ours) |
+| `0x400888aa` project writer, SILENCE_TRACKS line | 8 B, two instructions: the byte at `0x8000004f` read sign-extended into d1, then pushed | jmp + nop | `qz_wr` | both, after writing our line; `jmp 0x400888b2` |
+
+The displaced instructions are not in this repository: `manifest.py` reads
+each site's bytes from your OS through `stock_guard(site, length)` and
+refuses to build when they differ from 1.40C's.
 
 **The knob.** `0x40055008(slot, delta)` resolves the Part byte (kind 0:
 `blob + part*6322 + 0x8edaa + track*30 + machine*6 + slot`), reads it into
@@ -722,8 +726,8 @@ stores it at `track record + 0x59 + flat slot` (a0 = the record, a1 = the
 flat slot). `qz_plock` recomputes d4 the same way from the old lock byte
 (read at the hook, before the store) or, when there is none, from the
 Part's PTCH. Note for the next hook of this kind: `objdump` prints the
-8-bit displacement of an indexed operand in hexadecimal (`%a1@(59,%a0:l)`
-is 0x59 = 89, the `+0x59` lock offset); the first build replayed it as
+8-bit displacement of an indexed operand in hexadecimal without a prefix
+(the lock store's 59 is 0x59 = 89, the `+0x59` lock offset); the first build replayed it as
 decimal 59 and the lock landed 30 bytes short (`plock_watch_remix.log`).
 `plock_watch_remix_fixed.log` is the shipped build.
 
@@ -734,7 +738,7 @@ t*32` the voice is trigged with (`0x40005030` / `0x46c80354`), the PTCH
 lock a held or live-recorded trig receives (`0x40042158(track, 0, a2,
 step)` at `0x4004fd1a`) and the box on the screen (`0x4004f5f8`).
 `qz_chrom` snaps the index to the nearest in-scale class (`qz_pc25`, the
-lower candidate checked first at each distance) before the `lea`. The
+lower candidate checked first at each distance) before the table-entry load. The
 MIDI note the key sends out stays the key's own (`d3 + 71`, matched on
 release).
 
@@ -743,7 +747,7 @@ release).
 sprintf / strlen / write exactly as the stock lines do, then replays.
 `qz_ld_line` replays the `#` test; on a `#` line it compares the line
 (d3) with `"#SEQUENCER_SCALE="`, parses the decimal, clamps 0..24 (else
-OFF), stores unless `58(%sp)` (the parse-only flag) is set, and jumps to
+OFF), stores unless the argument at sp+58 (the parse-only flag) is set, and jumps to
 the loop's next line; any other line continues into stock. `qz_ld_entry`
 clears the byte when the load's second argument is non-zero (a storing
 pass).
@@ -802,7 +806,7 @@ longer switches it. The measurements stand.)
 
 **The row.** `PROJECT > CONTROL > SEQUENCER`, [DOWN] ×4: `GLIDE OFF`; the
 LEVEL knob steps it 1..127 (clamped), [YES] steps with wrap-around
-(127 → OFF). The count poke is now `pea 3` → `pea 5` (the window scrolls
+(127 → OFF). The count poke now pushes 5 instead of 3 (the window scrolls
 its three rows over five: CHAIN AFTER, SILENCE TRACKS, LFO AUTO CHANGE,
 SCALE, GLIDE), the three grown tables carry two entries each
 (`qz_lbl_glide` / `qz_get_glide` / `qz_set_glide`; `qz_set_any` is the
@@ -965,7 +969,8 @@ HOLD 40 = "3.2500" runs 0.40 s at 120 BPM); `qz_hold128` holds the same
 values in 1/128 steps and the lock is the smallest entry that is not shorter
 than what was played (a tap is never silent: 60 ms recorded as 0.5000).
 
-The path: `0x4004fd06` (`addql #8,%sp; tstl %d0; blts`, right after the
+The path: `0x4004fd06` (6 B: the stack pop after the call, the test of
+its result d0 and the branch when it is negative, right after the
 recorder returned the step in d0) -> `qz_leg4` notes the press in one of the
 track's four slots (`qz_press`: key, step, in use, the engine's tick count).
 Time comes from the synth engine's clock (`po_clock`, published at
@@ -1014,8 +1019,8 @@ recorder's entry, asks (d0 = -1) whether the key joins the chord being
 recorded -- then the chord's step has its PTCH / CHRD / VOIC locks and the
 key skips the stock recorder (`jmp 0x4004fd3e`: no trig, no PTCH or HOLD
 lock of its own); else the key is recorded as stock and a fourth recorder
-detour, `qz_leg5` at `0x4004fd20` (`lea %sp@(20),%sp; bras 0x4004fd3e`,
-right after the recorder's PTCH lock write), hands track, key, the step
+detour, `qz_leg5` at `0x4004fd20` (6 B: the stack adjustment by 20 and
+the short branch to `0x4004fd3e`, right after the recorder's PTCH lock write), hands track, key, the step
 `qz_leg4` stashed in `qz_step` and the raw pitch over to start the next
 chord record. The recognition and the lock writes live in the engine
 (DRAM); this unit only passes the key on. `qz_hold128`, the 256-byte copy
@@ -1051,7 +1056,7 @@ keeps every held key instead of one:
 
 | site | stock | with VOIC 2..4 on a synth track |
 |---|---|---|
-| `0x4004fbde` (new, `qz_leg0`, 6 bytes `mvzb %a0@(0,%d2:l),%d1; movel %a2,%d0`) -- the release path | a release of a key that is not HELD returns at once; the HELD key's release runs the note-off block | the key's bit leaves `qz_pmask[t]` (the engine releases that key's voices); with keys still held its MIDI note-off goes out and nothing else happens; the LAST key makes itself HELD first, so stock's block runs -- the voice note-off (mailbox `|= 0x40`, the AMP release), the MIDI note-off, HELD := 0 |
+| `0x4004fbde` (new, `qz_leg0`, 6 bytes: the HELD byte read, indexed by d2, into d1, and a2 copied to d0) -- the release path | a release of a key that is not HELD returns at once; the HELD key's release runs the note-off block | the key's bit leaves `qz_pmask[t]` (the engine releases that key's voices); with keys still held its MIDI note-off goes out and nothing else happens; the LAST key makes itself HELD first, so stock's block runs -- the voice note-off (mailbox `|= 0x40`, the AMP release), the MIDI note-off, HELD := 0 |
 | `0x4004fbfe` (`qz_leg1`) -- a press while a key is held | ends the held key first (voice note-off, MIDI note-off, HELD := 0), then trigs | ends nothing: straight to the trig (checked before the GLIDE legato test, so legato is off on such a track) |
 | `0x4004fc94` (`qz_leg2`) -- the trig | FUNC held: trigless; else the stock trig, HELD := the key | FUNC held: trigless as stock; else the key's bit joins `qz_pmask[t]`, `qz_pkey[t]` := the key's index + 1 for the engine (read and cleared at the voice start; 0 there = a sequencer trig), the stock trig starts a fresh voice, HELD := the key |
 
@@ -1214,7 +1219,7 @@ buffer of the unit and hands the stock formatter that format instead of its
 `"%d"` (the call at `0x400449e6` takes nine arguments -- context, font, x
 0x44, y 9, 1, 0, the buffer `0x400b527d`, the format, the value -- and
 `0x400449ec` pops nine; the detour continues at `0x400449c6`, past stock's
-`pea "%d"`, so the frame is the stock's). **SCALE = OFF ignores ROOT**:
+push of its `"%d"` format, so the frame is the stock's). **SCALE = OFF ignores ROOT**:
 every path leaves at its OFF test before ROOT is read, so the keyboard, the
 knob, the locks and the readout are 2.8's. **ROOT = C is 2.8 in every
 pitch**: a rotation by 0 is the identity and the transposition adds 0, so
@@ -1283,7 +1288,7 @@ state (`qz_press`, `qz_gbuf`, `qz_ofmt` ...) lives in the runtime's window.
 keys over ONE index, 0..24 (`0x4004fb94`: raw = 5 * index + 4, so index 12
 = raw 64 = the sample's own pitch and the range is -12..+12 st, stock's
 PTCH ceiling), in two **positions** of one word, `0x460d16fc` (`OCT_WORD`),
-whose only writer is `eorl #1` at `0x4004591a` -- FUNC + LEFT or RIGHT
+whose only writer is the exclusive or with 1 at `0x4004591a` -- FUNC + LEFT or RIGHT
 toggles it -- and which is 0 at boot (BSS; no reset anywhere). The
 handler's caller `0x40050254` makes the index key - 1 + 12 * word: in
 position 0 keys 1..16 are index 0..15 = -12..+3 st, [TRIG 13] the sample's
@@ -1341,7 +1346,7 @@ the ceiling)
 ### Measured (the second pass: the octatrick-tuner BUILD 20 bus = OCTATRK2.9 on ot_emu `--dsp-rt` through the poke panel on 8950, a copy of the OTLIVE card whose four loop files are same-length sines -- `third-0.wav` = 95 whole cycles in its 9,551 frames = 438.645 Hz, the slots' TSMODE 0 / LOOPMODE 1; T1 = FLEX slot 3 = that sine (assigned through the machine window: OTLIVE's T1 is STATIC slot 5, the Amen break; a STATIC slot streaming the 2,679-frame `first-0.wav` came out as a 689 Hz buzz = 44100 / 64, a stuck 64-frame chunk under the port, so FLEX), PLAYBACK PTCH 0 / STRT 0 / LEN max / RATE +63, AMP HOLD INF REL 20; T2 = FM SYNTH slot 5 as before; the ef2944b bus (the first pass, byte-identical to the BUILD 19 bus) on 8951 with the same card as the baseline; pitches = the strongest spectral peak over 0.3-0.8 s of a 0.9 s key hold, in semitones from the sample's own pitch (SCALE OFF, position 0, key 13: 438.7 Hz, named C4 below), every value within 0.5 cent of the semitone; `m30.py`, its shots and `report.txt` / `report_keys.txt` for this bus and the first-pass bus, the readouts cropped as `*_ro.png`)
 
 - **The stock model** (the disassembly of the stock 1.40C main OS): `0x460d16fc`
-  has one writer, `eorl #1` at `0x4004591a`, and reads at `0x40044968`
+  has one writer, the exclusive or with 1 at `0x4004591a`, and reads at `0x40044968`
   (the picture), `0x400449b8` (the number), `0x40044abe` (the marks),
   `0x4004d442`, `0x4004fde4` and `0x40050254` (the index: key + 12 *
   word). At boot the word read 0 and the number `0`; FUNC + RIGHT made it

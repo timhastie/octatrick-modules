@@ -133,8 +133,12 @@ that command's output).
 
 | offset | symbol | reached from | displaced (replayed first) |
 |---|---|---|---|
-| `+0x000` | `dj_queue` | `jsr` planted at **`0x400a06d6`** (`hook_addr`), 12 bytes | `13c4 800065bf` `13c5 800065c0` — `move.b %d4,0x800065bf; move.b %d5,0x800065c0` |
-| `+0x100` | `dj_apply` | `jsr` planted at **`0x400a44e2`** by `emit()` + 6 `nop`s, 18 bytes | `2039 80006630` `23c0 80006638` `23c0 80006628` — the three longword moves that latch the start step |
+| `+0x000` | `dj_queue` | `jsr` planted at **`0x400a06d6`** (`hook_addr`), 12 bytes | the setter's two byte stores that queue the selection: the new bank to `0x800065bf` and the new pattern to `0x800065c0` (two instructions, 12 bytes) |
+| `+0x100` | `dj_apply` | `jsr` planted at **`0x400a44e2`** by `emit()` + 6 `nop`s, 18 bytes | the three longword moves that latch the start step: `0x80006630` read once and written to `0x80006638` and `0x80006628` (three instructions, 18 bytes) |
+
+The displaced instructions are not in this repository: the manifest reads
+both spans from your own OS through `stock_guard(site, length)` (12 and 18
+bytes) and refuses to build when they differ from 1.40C's.
 
 (The 13 Sep form also carried `dj_lens` at `+0x180` and `dj_labels` at
 `+0x200`, 18-entry copies of the step and label tables that eight `lea`
@@ -164,19 +168,23 @@ Register discipline: `dj_queue` uses the setter's scratch `d0` and saves
 `-(sp)` form, so the saves are plain pushes; `remu.l` is written with
 distinct `Dr`/`Dq` (the same register would encode `divu.l`).
 
-Pokes (asserted against the stock bytes before every write; all in
+Pokes (each site's stock value is read from your OS through
+`stock_guard(site, length)` and asserted before the write; all in
 `manifest.py`, fixed addresses):
 
-| site | stock | written | what |
-|---|---|---|---|
-| `0x400d80e0` | `00000001` | `ffffffff` | step table `0x400d80dc` entry 1: DIRECT reads as PAT.LEN in every stock reader — the tick handler (`0x400a4154`, `0x400a4310`), the chain advance, PATTERN SETTINGS' "exceeds the pattern" blink (`0x4006e85c`, `0x40081c60`, `0x40081fb2`, `0x40082726`), the countdown/LED page (`0x400a29c2`, `0x400a3668`) |
-| `0x400b27ec` | `400b5771` (`1/16`) | `400b6912` (`DIRECT`) | the SEQUENCER getter's label table `0x400b27e8` entry 1 |
-| `0x40065a26` | `6604` (`bne`) | `6004` (`bra`) | the setter `0x400659ec` no longer replaces a result of 1 by `delta + 1` |
-| `0x40087826` | `6600` (`bne.w`) | `6000` (`bra.w`) | the loader `0x400877e0` no longer bumps a loaded 1 to 2 |
+| site | length | stock (in words) | written | what |
+|---|---|---|---|---|
+| `0x400d80e0` | 4 B | step table `0x400d80dc` entry 1, the 1/16 step count | -1, which every reader takes as PAT.LEN | step table entry 1: DIRECT reads as PAT.LEN in every stock reader — the tick handler (`0x400a4154`, `0x400a4310`), the chain advance, PATTERN SETTINGS' "exceeds the pattern" blink (`0x4006e85c`, `0x40081c60`, `0x40081fb2`, `0x40082726`), the countdown/LED page (`0x400a29c2`, `0x400a3668`) |
+| `0x400b27ec` | 4 B | label table entry 1, the pointer to stock's `1/16` label | the address of stock's own `DIRECT` label, `0x400b6912` | the SEQUENCER getter's label table `0x400b27e8` entry 1 |
+| `0x40065a26` | 2 B | the setter's short conditional branch | the same branch made unconditional | the setter `0x400659ec` no longer replaces a result of 1 by `delta + 1` |
+| `0x40087826` | 2 B | the loader's word conditional branch | the same branch made unconditional | the loader `0x400877e0` no longer bumps a loaded 1 to 2 |
 
 `PINNED` in the manifest is the ratified cave (`m68k-elf-as -mcpu=5475`,
-linked at `0x400d7000` and `0x400d7300`, identical, 358 bytes); the build
-links the source at the address it lands on and refuses on any difference.
+linked at `0x400d7000` and `0x400d7300`, identical, 358 bytes). It is put
+together at build time: the two displaced spans come from your OS through
+`stock_guard`, the rest is this module's own code, its flag bytes and the
+`.org` padding. The build links the source at the address it lands on and
+refuses on any difference.
 
 ## Measurements (the logs, scripts and screens are in the author's workspace, not in this repository)
 

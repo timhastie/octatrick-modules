@@ -476,13 +476,13 @@ the card and the settings) and its numbers.
 been released while the keys were still down.
 
 **The cause.** BUILD 32 (2.9) added `po_stop`, a detour at the frame
-builder's `clrl 0x46c80350` (0x4000b2c8), on the reading that the global
+builder's clear of the word 0x46c80350 (0x4000b2c8), on the reading that the global
 mailbox word 0x46c80350 was the sequencer's STOP / restart word and the byte
 the builder posts from it (0x46104d14) the DSP's all-off. Both are the
 METRONOME's. While the sequencer plays, the beat code writes the word -- 3 on
 the first beat of each bar (0x4009c3a0 at PLAY, 0x400a4d8c), 1 on the other
 beats (0x400a4d96); 0x4009bbb8 / 0x4009c3aa are the transport-start forms --
-and every writer sits behind `tst.b 0x80000060`, the project's
+and every writer sits behind a test of the byte 0x80000060, the project's
 METRONOME_ENABLED (parsed at 0x40087c20, edited in PROJECT > CONTROL >
 METRONOME). The frame builder turns a nonzero word into the DSP-wide command
 byte 0x46104d14 = 0x10 | [0x80001810] (0x30 | .. on the accent) -- the click --
@@ -617,8 +617,8 @@ and, for the Analog BD chooser it derives from, `Copyright (c) 2026 Sam Banks`
 
 `synth/machine.s` (a DRAM unit, 956 B) holds the chooser: Modwerk's
 `machine.s` and its `registration.c` helpers written out in assembly. The
-lists grow from five rows to six (six pokes: `pea 5 -> 6` at `0x40079248` and
-`0x400585fa`, `moveq #4 -> #5` at `0x4003c950`, `0x40078678`, `0x400786ce`,
+lists grow from five rows to six (six pokes: the pushed row count 5 -> 6 at `0x40079248` and
+`0x400585fa`, the last-row index 4 -> 5 at `0x4003c950`, `0x40078678`, `0x400786ce`,
 `0x40079904`); row 5 prints `FM SYNTH` (`0x400334d8`; SRC SETUP's name table,
 `0x4003c928`, copied from the stock one at run time); a chosen track's row is
 highlighted and the lists open on it (`0x4003c980`, `0x400786c8`,
@@ -743,8 +743,8 @@ copied from the stock one at run time instead of carrying its five addresses.
   956 B; every source assembles at -mcpu=5475 and 54455.
   `tools/stock_scan.py`: no stock bytes beyond the displaced instructions and
   the idioms the tool allows -- 35 runs against 32 before; the three new
-  ones are the Part-address idiom `movea.l 0x46c82456; mvz.b 0x100b14cf;
-  move.l #6322; muls.l` twice in machine.s (16 B each, the second with other
+  ones are the Part-address idiom (the Part base read from 0x46c82456, the
+  active Part byte read from 0x100b14cf, times the Part stride 6322) twice in machine.s (16 B each, the second with other
   registers; the same idiom as poly.s's own run) and an 18-byte save/restore
   idiom in poly.s (the same stock list as five of the runs before).
 
@@ -1343,7 +1343,7 @@ STOP, a pattern change, a slot or project change and the sample preview stop
 all end a stock voice HARD through the one VOICE KILL `0x40006820(t)`, whose
 CF voice-byte clear carries `po_kill` (BUILD 33, below): the killed track's
 engine voices end at that instant. (Until 2.11 `po_stop` at 0x4000b2c8, the
-frame builder's `clrl 0x46c80350`, was kept as belt-and-braces for "a STOP that
+frame builder's clear of the word 0x46c80350, was kept as belt-and-braces for "a STOP that
 posts the word without a kill"; that word is the metronome's click, so
 `po_stop` released every voice at every click -- removed in 2.12, see "The
 metronome no longer releases a held note (2.12)".) Mute stays the DSP's output
@@ -1377,8 +1377,8 @@ sample preview stop (`0x40093ec0` / `0x40096ad4`), the loaders (`0x4007eb3e` /
 `0x4008044e` / `0x4000f518`: a slot or project change) and the frame builder's
 own end mask (`0x4000d45a`); `t >= 8` recurses through the entry for every
 track. Its track path masks interrupts, clears the CF voice byte
-`0x800049d8 + 168 t` (`0x4000685c`, `clrb %d0; moveb %d0,%a1@(0,%a0:l)`, 6
-bytes) and posts the DSP the voice's end. `po_kill` is a jmp detour at that
+`0x800049d8 + 168 t` (`0x4000685c`, 6 bytes: a zero byte stored at the track's
+voice-byte index) and posts the DSP the voice's end. `po_kill` is a jmp detour at that
 clear: for the killed track it zeroes `S_GAIN` / `S_GPREV` / `S_HTIM` and
 `S_ON` (the mono voice: silent, no synth playing), frees the four paraphonic
 voices (`po_free`: state 0, `V_GAIN` / `V_GPREV` 0) and clears their `V_KEY` /
@@ -1547,8 +1547,9 @@ earlier detours -- po_trig at the consumer `0x4000b4dc`, po_pre and
 po_trigless at `0x40005030` -- sat on the key / MIDI path, which a playback
 trig never takes; that is why their takes were byte-identical to BUILD 33.)
 
-**The fix.** `po_retrig`, a jmp detour at `0x4000c634` (the 8 displaced bytes
-`moveal 114(sp),a1; moveb (a0,a1.l),d0`, a0 = `0x46104d15`), the one funnel
+**The fix.** `po_retrig`, a jmp detour at `0x4000c634` (8 displaced bytes, two
+instructions: a1 := the frame's argument at sp+114, then the byte at a0 +
+a1 read into d0, a0 = `0x46104d15`), the one funnel
 every START form passes on its way to the DSP and the packer: on a track
 whose engine voice is on (`S_ON != 0`) every START byte (bit 4 or 5 set) is
 rewritten to exactly the key's clean form `0x30` before the copy. The DSP
@@ -2257,10 +2258,10 @@ its setup names poked to markers, changes nothing in the window). Its third row 
 
 **The change** (`poly.s` "THE LFO SETUP WINDOW'S V/C COLUMN", four 6-byte detours). On an FM
 SYNTH track only (`po_sig` on the current Part's UI track):
-- `po_lfsstage` at `0x40058488` (`pea 0x400d37f6`, the staging at the window's open) and
+- `po_lfsstage` at `0x40058488` (the push of the LFO descriptor `0x400d37f6`, the staging at the window's open) and
   `po_lfsmove` at `0x4003a45c` (the staging at every list move) push `po_lfs_desc`'s descriptor;
-  `po_lfsdraw` at `0x400574cc` (`lea 0x400d37f6,%a4`, the drawer) and `po_lfsedit` at `0x40039020`
-  (`lea 0x400d37f6,%a3`, the setup editor) take `a4` / `a3` from it too.
+  `po_lfsdraw` at `0x400574cc` (the load of the descriptor's address `0x400d37f6` into a4, the drawer) and `po_lfsedit` at `0x40039020`
+  (the same address into a3, the setup editor) take `a4` / `a3` from it too.
 - `po_lfs_desc` answers the VOIC / CHRD clone (built by `po_lfo_build`, shared with `po_lfopage`):
   with the selected LFO the third row, the stock SPD / DEP DIALS are RENAMED -- slot 10 VOIC
   (`po_fmt_voic`: "1".."4", a byte outside 1..4 shown "1", the mono voice, exactly as the LFO page
@@ -2294,9 +2295,9 @@ SYNTH track only (`po_sig` on the current Part's UI track):
   detour `fm_tick` can redraw it while the window is open on an FM SYNTH track).
 - The third row's label `V/C` is DRAWN by the drawer's detour over the stock's (`po_lfsdraw` ->
   `po_lfs_vc`). Measured on 2.15 (19 Oct 2026, a PC watch on the stock's own text and box primitives
-  with full records): the function the `lea 0x400d37f6,%a4` sits in draws the four list rows first
+  with full records): the function the descriptor load (into a4) sits in draws the four list rows first
   (the small font at x 4, y 48 / 41 / 34 / 27, from its row table), the cursor's bar right after the
-  cursor's row (x 3..50 over the row's rows, inverted), THEN runs the lea and the six boxes, with the
+  cursor's row (x 3..50 over the row's rows, inverted), THEN runs that load and the six boxes, with the
   window's surface in d5 -- so at the detour the stock's `LFO 3` is already on the surface and nothing
   after it touches the list. The detour clears the row's field (x 4..50, y 34..39: BOX, mode 0), draws
   `V/C` at the row's origin with the stock's font and TEXT primitive (the ones `tuner.s` and
@@ -2547,17 +2548,17 @@ apply path `0x400796a0` at `0x40079770` and the sample-list window's at
 `0x46c8d19c`), exits at `0x40079672` when the Part already holds that slot
 in that machine's column, otherwise writes the machine byte (`0x40079522`,
 the old one saved in d4 and pushed at `0x4007956c` for `0x400972fc(part,
-track, old machine)`) and then the slot byte -- `addal #0x8f04a,%a0; moveb
-%d1,%a0@` at **`0x400795ba`** with a0 = the Part's slot byte of the new
+track, old machine)`) and then the slot byte -- the store of d1 at the Part's slot-byte
+offset `0x8f04a` (added to a0) at **`0x400795ba`** with a0 = the Part's slot byte of the new
 machine (a3) and d1 = the new slot -- and its shadow. `po_assign` reads the
 old slot of that column before the displaced store, takes the old machine
 from the stack (`8(sp)`, the three arguments still parked there) and the
 track from `4(sp)`, and calls `po_became`. When only the machine changes
 (the column's slot equal) the assigner writes nothing and each window
 writes the machine byte on a path of its own: the machine window at
-**`0x40079816`** (`addal #0x8eda2,%a0; mvsb %a0@,%d3`, `0x400797cc`: d3 :=
+**`0x40079816`** (the read of the machine byte at offset `0x8eda2` into d3, `0x400797cc`: d3 :=
 the old machine, d4 = the new, d1 = the track) and the sample-list window
-at **`0x4005a848`** (`addal #0x8eda2,%a0; mvsb %a0@,%d4`, `0x4005a826`: d4
+at **`0x4005a848`** (the read of the machine byte at offset `0x8eda2` into d4, `0x4005a826`: d4
 := the old machine, the new one at `0x460d5c30`, d2 = the track); there the
 FLEX column's slot is read from the Part (`po_flex_slot`). The one other
 writer of the machine and slot bytes, the paste of a copied track record
@@ -2634,10 +2635,10 @@ reproduces it with the load completing at once, so the ATA latency (`+8 ==
 
 **The site.** The file browser's select `0x40022610(machine, slot, path)`
 (from `0x400226f4`, both windows' browsers) writes the path into the slot's
-settings record with `jsr 0x40013a08` (sprintf) at **`0x40022686`** --
+settings record with a call of `0x40013a08` (sprintf) at **`0x40022686`** --
 the one place a FLEX slot's file changes under a track that keeps its
 machine and slot (a project load fills the records another way). The
-`jsr` is rewritten to `jsr po_loadsel` (`manifest.py` LOADSEL_HOOK, kind
+call is retargeted to `po_loadsel` (`manifest.py` LOADSEL_HOOK, kind
 `jsr`, 6 bytes, no displaced instruction: the stub calls the sprintf
 itself with the three arguments re-pushed). `po_loadsel`: when the list is
 FLEX (d4 == 1), the slot's marker state is read BEFORE the write
@@ -2701,7 +2702,7 @@ every slot empty (`+8` = 1, path '').
   LEG MONO + GLIDE 64 one onset, t63 90 ms; the tuner opens and closes;
   CHAIN AFTER +1 = DIRECT; the warm boot (the battery-RAM dump, no load)
   keeps SCALE / ROOT / GLIDE. Placements on Sam's current layout: the
-  detour `jsr 0x40022686 -> poly:po_loadsel` in octatrick-usb (3,236 B of
+  call detour at `0x40022686` -> `poly:po_loadsel` in octatrick-usb (3,236 B of
   cave left), octatrick-tuner (3,236 B) and cfmeter with DIRECT JUMP
   (2,852 B). The unit grew 102 B.
 
@@ -2816,7 +2817,7 @@ hardware).
   `0x400359ac`). This is why a short FUNC + DOWN on stock opens the list
   without changing the mode, and a held one steps it: the repeat does.
 - **The hook** (`modules/synth/manifest.py`, one 6-byte jmp detour at the
-  handle test `0x40051fce`, `tstl 0x400bebae`; `poly.s` `po_octave`,
+  handle test `0x40051fce`, the test of the word at `0x400bebae`; `poly.s` `po_octave`,
   published at **-32** before `sy_render`) takes a press with the window
   CLOSED when the lock editor's own state says a trig is held for locking:
   the held-trig mask `0x460d174a` (a word, bit n = [TRIG n + 1]; the PTCH
@@ -2937,7 +2938,7 @@ a note's envelope is the same with the byte at 2). What the DSP would do
 with the byte is unknown; a stock unit never sets it.
 
 **The clone, and the hooks.** The AMP SETUP window does not ask the page
-resolver for its descriptor: its staging (`0x40059d56`, `pea 0x400d3988`),
+resolver for its descriptor: its staging (`0x40059d56`, the push of `0x400d3988`),
 its drawer (`0x40036794`: the names at `0x400d39c2`, the formatters and
 widgets at `0x400d3a6a`, the enable pair `0x400d3b12/16`) and the page-2
 editor (`0x4003ae40`: the handler, min and count) all address the stock
@@ -3233,14 +3234,14 @@ key handler `0x4004fb94` with key = note - 72: the 25-key paraphony of
 quantizer's `qz_midi` at `0x4000e74c` is gone; ROM cave unchanged at 168 B
 left on the octatrick-tuner remix):
 
-| site | displaced | stub | a sample track |
+| site | displaced (in words; read from your OS by `stock_guard`) | stub | a sample track |
 |---|---|---|---|
-| `0x4000e746` the chromatic block's START `moveq #29,%d1; move.l %d1,(%a5,%d2.l*4)` | 6 B | `po_mon` | the START, then the stock mapping at `0x4000e74c` |
-| `0x4000dfd4` the note-off's compare `mvs.b (%a0),%d1; mvs.b (%a3),%d0; cmp.l %d1,%d0; bne` | 8 B (+ nop) | `po_moff` | replayed |
-| `0x4000e452` the note-on's octave switch `move.l %d6,%d0; subq.l #2,%d0; moveq #5,%d2; cmp.l %d0,%d2` | 8 B | `po_mgate` | replayed |
-| `0x4000de10` the note-off's octave switch `subq.l #2,%d0; moveq #5,%d3; cmp.l %d0,%d3` | 6 B | `po_mogate` | replayed |
-| `0x400625e0` the `0x41` event's recorder entry `move.l 4(%a2),%d0; move.l %d0,0x46c7e956` | 10 B | `po_mrec` | replayed, `jmp 0x400625ea` |
-| `0x4006262a` its trig-held branch `mvs.b 2(%a2),%d2; movea.l %d2,%a0; lea (%a0,%d2.l*4),%a0` | 8 B | `po_mtrig` | replayed |
+| `0x4000e746` the chromatic block's START: the START code 29 put in d1 and stored to the track's long in the event table (a5, indexed by d2) | 6 B | `po_mon` | the START, then the stock mapping at `0x4000e74c` |
+| `0x4000dfd4` the note-off's compare: the two note bytes (at a0 and a3) read sign-extended into d1 and d0, compared, and the branch when they differ | 8 B (+ nop) | `po_moff` | replayed |
+| `0x4000e452` the note-on's octave switch: d0 := d6 - 2, compared with 5 (through d2) | 8 B | `po_mgate` | replayed |
+| `0x4000de10` the note-off's octave switch: d0 - 2, compared with 5 (through d3) | 6 B | `po_mogate` | replayed |
+| `0x400625e0` the `0x41` event's recorder entry: the event's long at a2+4 read into d0 and stored to `0x46c7e956` | 10 B | `po_mrec` | replayed, `jmp 0x400625ea` |
+| `0x4006262a` its trig-held branch: the event's byte at a2+2 read sign-extended into d2, and a0 := 5 × d2 (through a0) | 8 B | `po_mtrig` | replayed |
 
 The engine side (`poly.s`): `po_is_synth` / `po_polytrack` (the quantizer's
 predicates, read here from the Part and the settings table), the list
@@ -3346,11 +3347,11 @@ off here as it does on stock pages.
   now moot and documented so).
 - **The flags, read as the stock handlers read them** (`0x40032d08`, the
   sample tracks' PTCH, and `0x4003240c`, both in `docs/firmware/PARAM_PAGES.md`
-  §4 terms): [FUNCTION] = `tst.l 0x46c7dd26`; the encoder's push switch =
+  §4 terms): [FUNCTION] = the long word at `0x46c7dd26`, tested; the encoder's push switch =
   the key record of code `0x38 + slot` (`0x46c7d8de + code * 0x18`,
   PANEL.md; `+0x10` nonzero while held -- the push switches are key-matrix
   row 0x27, bits 0..5, `tools/panel/KEYMAP.md`); DISABLE FUNCTION + ENCODER
-  = `tst.l 0x800000a0` (the stock handlers take their FUNC path only while
+  = the long word at `0x800000a0`, tested (the stock handlers take their FUNC path only while
   it is 0). Nothing is copied: 92 instructions of our own.
 - **Stock, for the record** (read in the listing): the sample tracks' PTCH
   handler with FUNC jumps among three fixed values (a table at
@@ -3557,7 +3558,7 @@ has the format/reserve rows; SYSTEM > STATUS has no RAM figure).
 symbol. `Detour(kind="ptr")` (`tools/build/build_bus.py`, `tools/remix/
 schema.py`, `docs/remixer/MODULES.md`) rewrites a 4-byte pointer in a stock
 table to a symbol's address, `expect` being the stock pointer -- the FLEX
-entry `0x400d6438` (`40004008` -> `sy_render`), asserted like every other
+entry `0x400d6438` (the stock sample renderer's address -> `sy_render`), asserted like every other
 detour. The ROM cave (`synth.s`) and its `PINNED` bytes are gone from the
 manifest (the source stays beside `poly.s` for the record); `page.s` is
 untouched. **The third zero run has 1,704 B free** (was 168 B): direct-jump
@@ -3917,7 +3918,7 @@ tables at `0x400d7480..0x400d7594`.
 | `po_frame` | paraphonic, the second call: the key mask diff (`qz_pmask`, released keys -> their voices release), the start (`po_start`: fold the PTCH delta into the sounding voices, read `qz_pkey`, a sequencer trig releases everything, the scale mask through `SCALE_AT` (only if a `jmp` is there: a remix without the quantizer snaps nothing), VOIC, the chord byte, the cap: k = min(shape notes, VOIC), the oldest active + k - VOIC voices cut through `po_steal` (releasing before sounding), then the first k notes of the shape each snapped by `po_snap` and given a voice through `po_alloc`: free, else the oldest releasing, else the oldest sounding), then per voice: target = `V_ROOT + (PTCH word - T_REF)`, `sy_slew` on the voice's own `V_CUR`, the word folded into `0x0400..0x7c00` by octaves and the increment shifted back, ratio, index envelope, the amplitude envelope (Q15, full = `T_GMAX` = 32768 / VOIC latched at the start; ramp `T_GMAX / 8` a frame = 8 frames; release `gain -= gain * k`, `po_relk[REL]`: tau = 5 ms * 1000^(rel/126), 5 ms .. 5 s, 127 = INF, clamped to `T_GMAX`; freed below 64 = -54 dB re the mono voice) |
 | `po_fill` | both calls: clear, every sounding voice adds `c * gain` (gain Q15, at most 32768 / VOIC), the sum doubled into the mono format as the mono path does (`c * g << 1`) and saturated -- a guard, since VOIC voices in phase sum to at most the mono voice's full scale -- L and R |
 | `po_snap` | a note's word snapped onto the SCALE the quantizer's way (`qz_chrom`): its semitone number from PTCH raw 64 (the scale's root) mod 12, moved to the nearest degree of the mask, the lower candidate first at each distance; whole semitones only, the word's fraction kept. The mask comes from `qz_scale_mask` through the pinned trampoline `SCALE_AT = 0x400d2ca8` (`modules/quantizer/scale.s`) -- one copy of the table |
-| `po_lfopage` | the page resolver's kind-1 load `movel #0x400d37f6,%d0; bras` at `0x40031e62`: for a FLEX track whose assigned slot is a SYNTH* sample (page.s's test) a clone of the LFO descriptor built from the stock record on first use (no Elektron bytes in the repo): slot 2 VOIC (formatter `po_fmt_voic`, range 1..4, default 1, handler 0), slot 5 CHRD (formatter `po_fmt_chord`), both always shown (nibbles 2 and 5 = 5) |
+| `po_lfopage` | the page resolver's kind-1 load at `0x40031e62` (6 B: d0 := the LFO descriptor `0x400d37f6`, then the short branch to the epilogue): for a FLEX track whose assigned slot is a SYNTH* sample (page.s's test) a clone of the LFO descriptor built from the stock record on first use (no Elektron bytes in the repo): slot 2 VOIC (formatter `po_fmt_voic`, range 1..4, default 1, handler 0), slot 5 CHRD (formatter `po_fmt_chord`), both always shown (nibbles 2 and 5 = 5) |
 | state | 8 track records x 128 B (the mono voice's 44 + `T_REF T_LAST T_MASK T_DK T_RK T_RATIO T_I T_W T_SCALE T_POLY`), 32 voice records x 64 B (`V_PHC V_PHM V_ENV V_INC V_INCM V_IEFF V_GAIN V_FB V_LASTM V_STATE V_KEY V_CUR V_ROOT V_AGE`), the LFO descriptor clone |
 
 The keys come from the quantizer's hooks (`modules/quantizer/README.md`
@@ -4330,7 +4331,7 @@ envelopes are not retriggered). A voice START snaps to its own pitch: a
 fresh note never slides in from the previous one.
 
 **Where.** `sy_slew`, called once a frame on the second call right after
-the PTCH word is read (`mvz.w (%a4),%d6; bsr sy_slew`), returns the slewed
+the PTCH word is read into d6, returns the slewed
 word in d6, and everything after it -- the stock rate arithmetic
 (`0x4000409e..` copied), RATE, the carrier and modulator increments -- runs
 on the slewed word, so RATE and the locks keep working. The per-track state
@@ -4479,7 +4480,7 @@ a slot, formatters `P+0xca`, widgets `P+0xfa`, enable nibbles `P+0x18e` /
 and page kind — which tail-calls the resolver `0x40031da4`: for an audio
 track and page kind 0 (PLAYBACK) it returns `0x400d5f38[machine]` at
 `0x40031ece`. Callers: the generic parameter-page renderer `0x4004e0xx`
-(`lea 0x40031ee0` at `0x4004e1da`; names `P+22` at `0x4004e4ea`, formatters
+(the address load of `0x40031ee0` at `0x4004e1da`; names `P+22` at `0x4004e4ea`, formatters
 `P+202` at `0x4004e4f6`, the widget from `+48` past the formatter = `P+0xfa`,
 the enable nibble through `0x400a6994(P+0x18a, P+0x18e, slot)`), the footer
 (`0x4003d64e`: `sprintf("%s%s%s", P+9, "\x07", 0x400a78c8[machine])` =
@@ -4501,9 +4502,9 @@ RTIM: STRT-LEN, RTRG-RTIM), bit 2 = always show the value. The clone uses
 are not pairs). The first build's 0x55715751 had RATE's always-show bit
 instead of FDBK's and kept the arches; both fixed 23 Sep 2026.
 
-| site | stock bytes (displaced) | written | stub |
+| site | displaced (in words; read from your OS by `stock_guard`) | written | stub |
 |---|---|---|---|
-| `0x40031ece` in the resolver `0x40031da4` | `2030 0c00 6002` — `movel %a0@(0,%d0:l:4),%d0; bras 0x40031ed6` | `4ef9 400d 24d0` — `jmp pg_resolve` | replays the load; if it produced the FLEX descriptor `0x400d31ae` and the track's assigned FLEX slot is a SYNTH, `d0 :=` the runtime clone (`poly.s`'s `po_pgdesc`, reached through the long before `sy_render`, whose address the kind table's FLEX entry `0x400d6438` holds; `a1` = `pg_over`); `jmp 0x40031ed6` (the resolver's epilogue restores d2–d5; d1/a0/a1 are C scratch, d6/d7/a2–a6 untouched) |
+| `0x40031ece` in the resolver `0x40031da4` | 6 B, two instructions: the load of the kind's descriptor from the table at a0 (indexed by d0 × 4) into d0, then the short branch to the epilogue `0x40031ed6` | a `jmp pg_resolve` (6 B) | replays the load; if it produced the FLEX descriptor `0x400d31ae` and the track's assigned FLEX slot is a SYNTH, `d0 :=` the runtime clone (`poly.s`'s `po_pgdesc`, reached through the long before `sy_render`, whose address the kind table's FLEX entry `0x400d6438` holds; `a1` = `pg_over`); `jmp 0x40031ed6` (the resolver's epilogue restores d2–d5; d1/a0/a1 are C scratch, d6/d7/a2–a6 untouched) |
 
 The marker test is phase 1's, on the **Part's assignment** rather than the
 playing voice: slot = `blob + part·6322 + 0x8f04a + track·5 + 1` (0-based;
@@ -4796,9 +4797,9 @@ t of ping p is `0x80000510 + 384·p + 48·t`). The layout was measured by
 poking the Part bytes `0x40171062..67` (T8: PTCH STRT LEN RATE RTRG RTIM)
 to `64 11 22 100 33 44` and reading both ping records: `4000 0b00 1600
 6400 2100 2c00` (`rec_poked.log`; defaults `4000 0000 0000 7f00 0000
-4f00`). **This corrects phase 1's guess**: the stock renderer's `fp@(0)` is
-PTCH (0x4000 = 0 semitones), `fp@(6)` is RATE (0x7f00 = ×1, applied when
-the mode byte `fp@(27)` is 0), and `fp@(10)` — which phase 1 read as PTCH —
+4f00`). **This corrects phase 1's guess**: the stock renderer's `fp+0` is
+PTCH (0x4000 = 0 semitones), `fp+6` is RATE (0x7f00 = ×1, applied when
+the mode byte `fp+27` is 0), and `fp+10` — which phase 1 read as PTCH —
 is RTIM, feeding the retrig-interval table `0x400aae0c` into `state+24`.
 
 ### The design, and why
@@ -4839,9 +4840,9 @@ the phase-1 256+1-entry s16 table with linear interpolation (`mvs.w` ×2,
 fb` the same way, the output `(c × gain) << 1` whose high word is the
 sample (`clr.w`, two `move.l` for L and R). 39 instructions per sample.
 The EMAC is used only in the per-frame rate arithmetic, in the same
-fractional mode and instruction forms as the stock renderer (`msac.l
-%d1,%d2,(%a0)+,%d2,%acc0` / `mac.l` / `movclr.l`; the encodings match the
-stock bytes). Level: the carrier is ±0x4000 (−6 dBFS source) and the gain
+fractional mode and instruction forms as the stock renderer (the EMAC's
+multiply-subtract with a parallel load, its multiply-accumulate and its
+move-and-clear of the accumulator; the encodings match the stock forms). Level: the carrier is ±0x4000 (−6 dBFS source) and the gain
 is ≤ 1.0, so the sample never exceeds it — nothing to saturate; measured
 −24.0 dBFS at the fixture's track/main levels, as phase 1.
 
@@ -5073,7 +5074,7 @@ disassembly says about (A):
   machine·6 + slot`) and the sample slots as **five bytes per track**
   (`base + 0x8f04a + track·5 + machine`): a machine index 5 indexes the
   NEXT track's blocks. Every reader computes that itself — 40 sites read
-  the machine byte (`addal #585122` in the listing), 26 read the parameter
+  the machine byte (adding the offset 585122 = 0x8eda2 in the listing), 26 read the parameter
   base, in the knob handler, the p-lock editor, the trig routine, the
   frame builder, the pages, the MIDI paths and the project code. Aliasing
   5 → 1 everywhere is a large, error-prone patch set; the descriptor
@@ -5101,7 +5102,7 @@ the cave at all.
 |---|---|
 | the record packer | `0x4000d3fc..0x4000d55e`: for each of 8 tracks, cursor `0x80001c80 := 0x80001c90 + ping·0xa80 + 336·track` (T1–T4's records go to core 1, T5–T8's to core 0 via eDMA ch 0), then TWO renderer calls, `renderer(track, ping, 0, n)` from the current table `0x400d61d0[track]` and `renderer(track, ping, n, 16)` from the next-frame table `0x400d61f0[track]`, where **n = the low nibble of the per-track event byte `0x46104d0c + track`** — the sub-frame position of this frame's event — and **bit 4 of that byte = a voice starts this frame**: the packer then calls the start handler (`0x400d6454[kind]`, `0x4000f450` for STATIC/FLEX), installs the new renderer from the kind table, resets the render state (`0x80004898 + 40·track`) and clears bits 4–7 AFTER the second call |
 | the kind table | `0x400d6434`, 8 longs, index = the machine type (byte `0x80000eb4 + ping·8 + track`): 0 STATIC / 1 FLEX / 4 PICKUP → `0x40004008` (the sample renderer), 2 THRU → `0x40004424`, 3 NEIGHBOR → `0x4000466c`, 5–7 → `0x400047f0` (silent). The renderer for track t is installed at `0x4000c004` (`0x400d61f0[t] := table[kind & 7]`) |
-| the sample renderer | `0x40004008(track, ping, start, end)`, C convention, d0/d1/a0/a1 scratch: writes a 16-byte header at the cursor, recomputes the rate on the frame's second call (`btst #4` on the `end` argument's low byte — 16 = the full frame), ships the source samples through `0x40007960` in sub-segments (retrigs), advances the cursor. The rate: **[corrected in phase 2: `fp@(0)` is PTCH, `fp@(6)` RATE, `fp@(10)` RTIM — the retrig interval; the text below is kept as written]** the pitch word `fp@(10)` of the DSP parameter record (`fp = 0x80000510 + ping·384 + 48·track`) interpolated through the table `0x400aae0c` (a 2^(x/12) curve) into `state+24`, times the RATE word `fp@(0)` through `0x400aa294`, into `state+36`, Q26 (`0x04000000` = 1.0) |
+| the sample renderer | `0x40004008(track, ping, start, end)`, C convention, d0/d1/a0/a1 scratch: writes a 16-byte header at the cursor, recomputes the rate on the frame's second call (bit 4 of the `end` argument's low byte — 16 = the full frame), ships the source samples through `0x40007960` in sub-segments (retrigs), advances the cursor. The rate: **[corrected in phase 2: `fp+0` is PTCH, `fp+6` RATE, `fp+10` RTIM — the retrig interval; the text below is kept as written]** the pitch word `fp+10` of the DSP parameter record (`fp = 0x80000510 + ping·384 + 48·track`) interpolated through the table `0x400aae0c` (a 2^(x/12) curve) into `state+24`, times the RATE word `fp+0` through `0x400aa294`, into `state+36`, Q26 (`0x04000000` = 1.0) |
 | the record a call writes (measured, `stock_explore2.log`) | header `+0` = source count (bits 0–7) \| out count << 8 [\| out2 << 16 \| out3 << 24], `+4` fractional phase, `+8` rate Q26, `+12` tag; then `src` samples of 8 bytes: L long, R long; **the DSP takes the top 24 bits of each long** (a 16-bit sample sits at bits 31..16). Silent T8 at n = 0: `[0,0,0x04000000,0]` then `[0x1010, 0x20, 0x04000000, 0x8000]` + 16 zero pairs; a sounding track at n = 4: `[0x404, 0x3c, 1.0, 0xf0000000]` + 4 pairs, `[0xc0c, 0, 1.0, 0]` + 12 pairs (`ffbe0084 ffb000a0 …`) |
 | the voice struct | `0x800049d8 + 0xa8·track`: `+0` active byte (`0xff` while the CF voice runs, 0 when it ended — after which the renderer ships zeros), `+4` the slot's state record (`0x46c922c4 + 44·slot` FLEX, `0x46c90a78 + 44·slot` STATIC), `+8` its settings record (`0x100b14f0 + 0x448·slot` FLEX, `0x100d5b30 + …` STATIC), both written by the start handler `0x4000f450` at `+0x4dc/+0x4e0` unconditionally, i.e. before the start frame's second call. **The settings record's path string is at `+0`** (`"../AUDIO/SYNTH.wav"` for a slot the unit's own browser loaded; slot numbers are 0-based: FLEX slot 5 = index 4 = `0x100b2610`) |
 | the trig → voice path | `0x40005030(track, cmd, flags, slot)`: reads the machine byte, the Part's slot byte (`+0x8f04a + track·5 + type`, or the argument), the settings record (`≤ 128` STATIC, `≤ 135` FLEX/PICKUP), refuses an unloaded slot (`+0x129 == −1`), posts `0x8000186e/0x8000188e/0x800018ae[track]` (`slot \| type << 10`); the frame builder (`0x4000b2ee..`) checks the type against the Part's machine byte and posts the mailbox `0x46c80354[track]` and the slot byte `0x46c80282[track]`; `0x400068e4(track, ping, start, end)` is the per-track voice state machine the packer runs before rendering (`0x4000d322`), not a renderer |
