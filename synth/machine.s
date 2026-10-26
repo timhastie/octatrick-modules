@@ -1750,7 +1750,7 @@ fm_row:
         .byte   'F', 'M', 1, 1           | the signature "FM", 1; engine kind 1
         .long   fm_name
         .long   fm_defaults
-        .long   FM_DESC                  | page.s's fm_descriptor: the FM SYNTH page (built on first use)
+        .long   fm_descriptor            | page.s's exported DRAM entry (built on first use)
         .byte   0, 0, 0, 0               | flags: its SETUP bytes are FLEX's (kept when it is left, as 2.10)
 | THE ROWS after the stock five, in list order (2.11): FM SYNTH, then each machine module
 | on this engine the remix carries -- SY DRUM's descriptor is its own unit's sd_row.

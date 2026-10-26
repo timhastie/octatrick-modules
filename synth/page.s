@@ -1,7 +1,7 @@
-| SYNTH MACHINE -- ColdFire code cave, phase 3: the page (22 Sep 2026). GNU as,
-| -mcpu=5475. PINNED at 0x400d24d0 (the second zero run): the override list
-| below (pg_over) carries absolute pointers to the formatters and widgets, so
-| the bytes depend on the address.
+| SYNTH MACHINE -- the page, linked into the platform runtime in DRAM. GNU as.
+| The override list carries symbolic pointers to this unit's formatters and
+| widgets; the runtime link relocates them together. The manifest retains the
+| authored-page digest at its historical oracle origin, not as image placement.
 |
 | WHAT: when FM SYNTH is chosen in the track's machine list (2.10: FLEX with the Part's
 | "FM", 1, machine.s; until 2.14 also when the current track's FLEX slot held an FMSYNTH*-
@@ -43,8 +43,8 @@
 | synth's descriptor: a RUNTIME CLONE of the stock FLEX record (P..P+0x192),
 | built on first use by poly.s's po_pgdesc (the DRAM unit: the copy of the
 | stock record from the image and the 402 B of RAM it needs live there; this
-| cave has no room for them and, pinned at a fixed address, no way to name the
-| unit -- so it takes the builder's address from the long before sy_render,
+| page uses the established engine interface: the builder's address is the
+| long before sy_render,
 | whose own address the kind table's FLEX entry 0x400d6438 holds) with only
 | the fields pg_over lists changed: the names, the title, the six A
 | formatters (P+0xca), the four B widgets (P+0xfa), the enable nibbles
@@ -71,6 +71,7 @@
 | Formatters have the stock signature fmt(buf, value) -> sprintf.
 
         .text
+        .global fm_descriptor, pg_resolve
         .set    RESOLVER_RET, 0x40031ed6
         .set    FLEX_P, 0x400d31ae       | the stock FLEX PLAYBACK descriptor (P form)
         .set    KIND_FLEX, 0x400d6438    | the kind table's FLEX entry: sy_render's address (the manifest's SymbolRef)
@@ -81,9 +82,9 @@
         .set    FMT_D, 0x400b465d        | "%d"
         .set    FMT_PLAIN, 0x4003c178    | the stock formatter fmt(buf, value) -> sprintf(buf, "%d", value)
 
-| ---- the FM SYNTH machine's descriptor (machine.s, at the cave's first byte) ---
-| fm_descriptor() -> d0 = the FM SYNTH PLAYBACK descriptor (po_pgdesc with this cave's
-| list; built on first use). machine.s calls it at this fixed address: the UI tick
+| ---- the FM SYNTH machine's exported descriptor entry -------------------------
+| fm_descriptor() -> d0 = the FM SYNTH PLAYBACK descriptor (po_pgdesc with this unit's
+| list; built on first use). machine.s names this exported symbol: the UI tick
 | publishes it as the machine table's sixth entry for SRC SETUP's FM SYNTH row (after
 | Modwerk's dedicated chooser, MIT). d0/d1/a0/a1 clobbered (C scratch).
 fm_descriptor:
@@ -94,7 +95,7 @@ fm_descriptor:
 
 | ---- the resolver detour ------------------------------------------------------
 | 0x40031ece: the long at a0 + 4 * d0 loaded into d0 and a short branch to 0x40031ed6 -> `jmp pg_resolve` (the
-| cave's +16 since 2.10: fm_descriptor is first; the manifest's PG_RESOLVE_AT).
+| exported resolver entry; the manifest detour resolves its symbol).
 | d0 = machine type, a0 = the table 0x400d5f38, d3 = track, d1 = part index,
 | a1 = the bank blob; d2-d5 are restored by the resolver's epilogue, d1/a0/a1
 | are C scratch, d6/d7/a2-a6 are left alone.
@@ -126,7 +127,7 @@ pg_r_done:
         .align  4
 | ---- what the clone changes: {offset.w, length.w, source.l} into the stock FLEX
 | record, applied by po_pgdesc over its copy; a negative offset ends the list.
-| Absolute pointers throughout: the cave is pinned.
+| Symbolic absolute pointers throughout: the runtime link relocates this unit.
 pg_over:
         .short  0x009, 9
         .long   pg_title                 | P+0x009: the title, "FM SYNTH" (the footer reads FM SYNTH>FLEX)

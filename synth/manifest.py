@@ -59,9 +59,9 @@ po_pgdesc: the stock record copied out of the image into the unit's RAM,
 then the fields page.s lists -- title, the four names, four formatter and
 four widget pointers, the enable nibbles -- written over the copy; the stock
 record is never touched, a non-synth track gets it as before, and the flag
-and buffer are zero after every boot). The pinned page cave (page.s,
-0x400d24d0) holds the resolver stub, the override list, the formatters, the
-widgets and the icon data, and reaches the builder through the long
+and buffer are zero after every boot). The page DRAM unit (page.s) holds
+the resolver stub, the override list, the formatters, the widgets and the
+icon data, and reaches the builder through the long
 published before sy_render (whose address the kind table's FLEX entry
 holds) -- so no stock bytes are in the repository (26 Sep 2026; until then
 page.s carried a patched copy of the 402-byte stock record). Ranges,
@@ -347,10 +347,9 @@ Verified in ot_emu through the virtual panel and the pipe (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 """
 
-import hashlib
 import os
 
-from remix.schema import CavePatch, Detour, DramRegion, Kind, Linked, Module, SymbolRef
+from remix.schema import CavePatch, Detour, DramRegion, Keep, Kind, Linked, Module, SymbolRef
 import importlib.util
 
 # This module's own directory, relative to the build's cwd (octabam's repo
@@ -630,14 +629,14 @@ FLEX_START = 0x4000f450
 # sideband spectrum, the feedback loop and the index envelope over the stock
 # dial -- when FM SYNTH is chosen in the track's machine list (until 2.14 also when its
 # assigned FLEX sample was named FMSYNTH* or SYNTH*: the marker path is off since 2.15).
-# The clone itself is built at runtime by poly.s (po_pgdesc, first use) from
-# the stock record in the image plus the override list in page.s; the cave
-# carries no stock bytes. Pinned at the second zero run: the override list
-# holds absolute pointers into the cave. One 6-byte poke: the table load and
-# the short branch after it become a jmp to pg_resolve, which replays the load.
-PAGE_AT = 0x400d24d0
+# The clone is built at runtime by poly.s from the stock record plus page.s's
+# authored override list. The page is a DRAM Linked unit; its internal absolute
+# pointers relocate in the shared runtime link. No page payload remains in a ROM cave.
+# The descriptor row, SY DRUM call and resolver detour all name exported symbols.
+PAGE_REFERENCE_AT = 0x400d24d0             # historical oracle origin only, never an image placement
+DELAY_TAIL_AT = 0x400d24d0
+DELAY_TAIL_LEN = 16
 PAGE_LEN = 1752
-PG_RESOLVE_AT = 16                       # pg_resolve's offset in the cave (fm_descriptor, 16 B, is first)
 RESOLVER_HOOK = 0x40031ece
 
 # 2.10 (6 Oct 2026, poly.s "THE LFO DESTINATION LIST"): LFO SETUP's PMTR. The
@@ -652,59 +651,13 @@ LFD_LFO_HOOK = 0x4003bffa                # the address 0x400d37f6 into a2 and a 
 
 LFD_EDIT_HOOK = 0x400392cc               # d3 copied into d0 and divided by 6, the remainder into d7 (the audio PMTR edit after its branches)
 
-# The ratified page: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT, held as its length
-# and sha256; the manifest carries no precompiled page (until 2.20 its 1752 bytes were a hex
-# literal here, PINNED_PAGE). The build links page.s at PAGE_AT, writes those bytes, and
-# compares them with this digest through CavePatch.reference (octabam's oracle: the link must
-# equal the ratified form, or the build refuses), so a drifted source or toolchain cannot pass.
-# Its history (26 Sep 2026: the runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of
-# the stock descriptor is gone, and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B
-# with the tuning system's PTCH and FINE formatters and the range / handler overrides; 30 Sep
-# 2026: 1812 B, the FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare;
-# 5 Oct 2026: still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the
-# compare; 8 Oct 2026: 1868 B, the FM SYNTH machine -- fm_descriptor (16 B) first, so pg_resolve
-# is at +16, and pg_resolve's test of the Part's "FM", 1 ahead of the marker scan; still inside
-# the zero run 0x400d24d0..0x400d2ce0, 2064 B; 15 Oct 2026 (2.15): 1752 B, the marker scan gone
-# -- the page is FM SYNTH's for a track chosen in the list only). Re-ratify deliberately: a
-# changed page.s gets its new length and digest here.
+# Ratification remains the authored 1752-byte page linked at its historical origin.
+# Linked.reference makes the builder link an independent oracle there and compare
+# PAGE_SHA256; the image carries a separate copy relocated in DRAM. Exporting the
+# two entry labels changes symbol visibility only, not the ratified page data.
+# The original oracle used CPU 5475; the platform's DRAM oracle uses CPU 54455.
+# The digest stays unchanged and the build refuses any encoding or source drift.
 PAGE_SHA256 = "2dd08c912513487d76c34c1c63d3c748271f6efdbd0475cb5c38f13c610d5607"
-assert PAGE_AT + PAGE_LEN <= 0x400d2ce0                  # the zero run's end
-
-
-class _RatifiedPage:
-    """The ratified page as CavePatch.reference returns it: its length and PAGE_SHA256, no
-    bytes. octabam's oracle test `linked != reference` defers to this object (bytes do not
-    compare with it), which compares the linked bytes' sha256 with PAGE_SHA256; the build's
-    refusal message reads its length."""
-
-    __slots__ = ()
-    __hash__ = None
-
-    def __len__(self):
-        return PAGE_LEN
-
-    def __bool__(self):
-        return True
-
-    def __eq__(self, other):
-        if not isinstance(other, (bytes, bytearray)):
-            return NotImplemented
-        return len(other) == PAGE_LEN and hashlib.sha256(bytes(other)).hexdigest() == PAGE_SHA256
-
-    def __ne__(self, other):
-        equal = self.__eq__(other)
-        return equal if equal is NotImplemented else not equal
-
-
-RATIFIED_PAGE = _RatifiedPage()
-
-
-def emit_page(addr: int):
-    """The source is the only truth for the bytes (b""); the resolver's kind-0
-    table load becomes a jmp to pg_resolve (+16, after fm_descriptor)."""
-    assert addr == PAGE_AT, "the page cave is pinned"
-    return b"", ((RESOLVER_HOOK, stock_guard(RESOLVER_HOOK, 6),
-                  bytes.fromhex("4ef9") + (addr + PG_RESOLVE_AT).to_bytes(4, "big")),)
 
 
 MODULE = Module(
@@ -724,6 +677,8 @@ MODULE = Module(
     linked=(
         Linked("poly", os.path.join(_HERE, "poly.s"), cpu="5475", dram=True, include=poly_include),
         Linked("fmmachine", os.path.join(_HERE, "machine.s"), cpu="5475", dram=True, include=machine_include),
+        Linked("fmpage", os.path.join(_HERE, "page.s"), cpu="5475", dram=True,
+               reference=(PAGE_REFERENCE_AT, PAGE_SHA256)),
     ),
     dram_regions=(DramRegion("fl_work_table", 2097152),
                   DramRegion("fl_scene_table", 32768),
@@ -745,6 +700,9 @@ MODULE = Module(
                   "machine list starts its voice without a sample; every other FLEX track the stock callback"),
     ),
     detours=(
+        Detour(RESOLVER_HOOK, stock_guard(RESOLVER_HOOK, 6), "fmpage", "pg_resolve",
+               "Resolve the selected FM playback page through its DRAM entry",
+               kind="jmp"),
 
         Detour(LFO_DEPTH_HOOK, stock_guard(LFO_DEPTH_HOOK, 8), "poly", "lf_lfo_standalone",
                "Route module PMTR destinations into safe private LFO output words in the standalone engine",
@@ -951,18 +909,12 @@ MODULE = Module(
     # 2.11: the six row-count / row-bound constants were pokes (5 -> 6) until 2.10; a poke is
     # static, the number of rows is the remix's (FM SYNTH, + SY DRUM): six detours read it.
     pokes=(),
-    cf_patches=(
-        CavePatch(
-            label="synth page",
-            cave_addr=PAGE_AT,                # pinned: the descriptor clone's pointers
-            pinned=b"",                       # no precompiled page: page.s linked at PAGE_AT is written
-            reserve=PAGE_LEN,                 # the ledger's claim, as the 1752 B pinned bytes made it
-            source=os.path.join(_HERE, "page.s"),
-            emit=emit_page,
-            reference=lambda addr: RATIFIED_PAGE,   # the link's bytes must have PAGE_SHA256
-            report_note=" (page-descriptor resolver 0x40031ece -> pg_resolve: the "
-                        "PLAYBACK page of a SYNTH track reads RATIO/INDEX/FDBK/DECAY "
-                        "with icons; title FM SYNTH)",
-        ),
-    ),
+    # Keep validates the original and finished image but does not move the allocator.
+    # An empty pinned cave at the tail's end raises the overflow cursor before any
+    # floating placement. Its write length is zero: no payload, emit, source or hook.
+    # Only these 16 bytes stay unavailable; the former page reservation is removed.
+    keeps=(Keep(DELAY_TAIL_AT, stock_guard(DELAY_TAIL_AT, DELAY_TAIL_LEN),
+                "DELAY over-read tail remains stock"),),
+    cf_patches=(CavePatch(label="DELAY tail boundary",
+                         cave_addr=DELAY_TAIL_AT + DELAY_TAIL_LEN, pinned=b""),),
 )
