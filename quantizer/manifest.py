@@ -234,13 +234,15 @@ from remix.schema import Detour, Kind, Linked, Module, Poke, TableGrow
 # timhastie/octatrick-modules. Every source path below is built from it,
 # so one manifest serves both layouts.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
-# (2.18) a new detour's displaced bytes are read from the build's own MAIN OS section
-# (stock_guard.py, the synth module's reader): no stock bytes in this file.
+# Read every detour guard and poke expectation from the build's MAIN OS section.
+# The hook notes describe the guarded operations in words; stock_guard.py is the
+# same local reader used by the synth module. No stock bytes are embedded here.
 _guard_spec = importlib.util.spec_from_file_location("qz_stock_guard", os.path.join(_HERE, "stock_guard.py"))
 _guard_module = importlib.util.module_from_spec(_guard_spec)
 _guard_spec.loader.exec_module(_guard_module)
 stock_guard = _guard_module.stock_guard
 
+# Only the authored replacement uses H; stock expectations use stock_guard.
 H = bytes.fromhex
 
 # The SCALE, GLIDE and ROOT bytes: battery-backed RAM (core.s NV_SCALE /
@@ -293,23 +295,23 @@ MODULE = Module(
         Linked("qz", os.path.join(_HERE, "quantizer.s"), cpu="5475", dram=True, include=_qz_include),
     ),
     detours=(
-        Detour(0x40055170, H("1482" "1a82" "320e"), "qz", "qz_knob",
+        Detour(0x40055170, stock_guard(0x40055170, 6), "qz", "qz_knob",
                "knob handler 0x40055008: the store -- PTCH steps by scale degree",
                kind="jsr"),
-        Detour(0x40050e60, H("13848859" "73b9100b14cc"), "qz", "qz_plock",
+        Detour(0x40050e60, stock_guard(0x40050e60, 10), "qz", "qz_plock",
                "p-lock editor (TRIG held): the lock store -- PTCH steps by scale degree",
                kind="jsr", pad_to=10),
-        Detour(0x40055382, H("2400" "b280" "6c02" "2401"), "qz", "qz_mknob",
+        Detour(0x40055382, stock_guard(0x40055382, 8), "qz", "qz_mknob",
                "knob handler, the MIDI tracks' branch: the clamp to the max just before the store 0x4005538a -- a MIDI "
                "track's NOTE steps by scale degree from ROOT (2.13; not with its MIDI n SCALE OFF, 2.15); the store stays stock, so MIDI SCENES' detour there composes",
                kind="jsr", pad_to=8),
-        Detour(0x40050b98, H("11444900" "73b9100b14cc"), "qz", "qz_mplock",
+        Detour(0x40050b98, stock_guard(0x40050b98, 10), "qz", "qz_mplock",
                "MIDI p-lock editor (TRIG held): the lock store -- a NOTE lock steps by scale degree from ROOT (2.13; not with the track's MIDI n SCALE OFF, 2.15)",
                kind="jsr", pad_to=10),
-        Detour(0x400436a8, H("48780001" "73b9100b14cf"), "qz", "qz_mkey",
+        Detour(0x400436a8, stock_guard(0x400436a8, 10), "qz", "qz_mkey",
                "MIDI track CHROMATIC key press: the note + ROOT snapped to the nearest scale note (key 1 sounds the root); the note-on, the arp, the held note (so the note-off) and the recorder take it (2.13; not with the track's MIDI n SCALE OFF, 2.15)",
                kind="jmp", pad_to=10),
-        Detour(0x4009fb80, H("1212" "6d0001a6"), "qz", "qz_mnote",
+        Detour(0x4009fb80, stock_guard(0x4009fb80, 6), "qz", "qz_mnote",
                "the sequencer's MIDI note stage, after TRAN and ARP SETUP KEY, before the active-note test: a note of a "
                "following MIDI track snapped to the nearest scale note -- chords, TRAN, the arpeggiator; the note-on and "
                "its stored note-off carry it (2.15)",
@@ -319,41 +321,41 @@ MODULE = Module(
                "SCALE ON, a STATIC / FLEX track's PTCH as the trig resolved it (lock or Part) snapped to the nearest degree "
                "and applied as a lock of that value is (2.19)",
                kind="jmp"),
-        Detour(0x400439d6, H("4aaf0028" "67000140"), "qz", "qz_mprev",
+        Detour(0x400439d6, stock_guard(0x400439d6, 8), "qz", "qz_mprev",
                "GRID RECORDING, a held [TRIG] key's chord preview on a MIDI track: its four notes snapped, press and "
                "release alike (2.15)",
                kind="jmp", pad_to=8),
-        Detour(0x4004fc58, H("45f2ac04" "71b9100b14cf"), "qz", "qz_chrom",
+        Detour(0x4004fc58, stock_guard(0x4004fc58, 10), "qz", "qz_chrom",
                "CHROMATIC trig key -> pitch: transpose the key index by ROOT (a sample track: within -12..+12 st, the other position an octave below for ROOT G..B) and snap it to the scale",
                kind="jsr", pad_to=10),
-        Detour(0x4004fbde, H("73b02800" "200a"), "qz", "qz_leg0",
+        Detour(0x4004fbde, stock_guard(0x4004fbde, 6), "qz", "qz_leg0",
                "CHROMATIC key release on a paraphonic synth track (VOIC 2..4): the held-key mask decides the note-off",
                kind="jmp"),
-        Detour(0x4004fbfe, H("4ab946c7dd26" "663e"), "qz", "qz_leg1",
+        Detour(0x4004fbfe, stock_guard(0x4004fbfe, 8), "qz", "qz_leg1",
                "CHROMATIC key held + a new key: the LEG gate (the engine's po_legmode) -- mono legato keeps the held key with no voice note-off, paraphonic ends nothing, LEG OFF ends the note as stock",
                kind="jmp", pad_to=8),
-        Detour(0x4004fc94, H("4ab946c7dd26" "6716"), "qz", "qz_leg2",
+        Detour(0x4004fc94, stock_guard(0x4004fc94, 8), "qz", "qz_leg2",
                "CHROMATIC key: mono legato = the trigless trig, the new key becomes the held key; paraphonic = a fresh voice, the key posted for the engine; paraphonic legato (LEG POLY) = the key joins the held set, po_legkey, the trigless trig",
                kind="jmp", pad_to=8),
-        Detour(0x4004fce0, H("4ab946c7dd26" "6710"), "qz", "qz_leg3",
+        Detour(0x4004fce0, stock_guard(0x4004fce0, 8), "qz", "qz_leg3",
                "CHROMATIC key -> the live recorder: a legato press records a trigless trig, as FUNC + key does",
                kind="jmp", pad_to=8),
-        Detour(0x4004fd06, H("508f" "4a80" "6d32"), "qz", "qz_leg4",
+        Detour(0x4004fd06, stock_guard(0x4004fd06, 6), "qz", "qz_leg4",
                "CHROMATIC key recorded: note the step and the time; the release writes the note length as the HOLD lock",
                kind="jmp"),
-        Detour(0x4004fd20, H("4fef0014" "6018"), "qz", "qz_leg5",
+        Detour(0x4004fd20, stock_guard(0x4004fd20, 6), "qz", "qz_leg5",
                "CHROMATIC key recorded, after its PTCH lock: the synth engine's po_keyrec recognises a fingered chord (PTCH root, CHRD, VOIC locks on the first key's step)",
                kind="jmp"),
-        Detour(0x40050254, H("2039460d16fc" "2200"), "qz", "qz_keyidx",
+        Detour(0x40050254, stock_guard(0x40050254, 8), "qz", "qz_keyidx",
                "CHROMATIC key -> index: a synth track's index is the key itself (the octave is qz_oct)",
                kind="jmp", pad_to=8),
-        Detour(0x40045918, H("7401" "b5b9460d16fc"), "qz", "qz_octkey",
+        Detour(0x40045918, stock_guard(0x40045918, 8), "qz", "qz_octkey",
                "FUNC + LEFT/RIGHT in CHROMATIC mode: a synth track's octave steps -4..+4 (qz_oct), stock's word stays 0",
                kind="jmp", pad_to=8),
-        Detour(0x40044968, H("7201" "b2b9460d16fc"), "qz", "qz_octdraw",
+        Detour(0x40044968, stock_guard(0x40044968, 8), "qz", "qz_octdraw",
                "CHROMATIC drawer: a synth track draws the keyboard at stock octave 0 (the word is cleared)",
                kind="jmp", pad_to=8),
-        Detour(0x400449be, H("2f00" "4879400b465d"), "qz", "qz_octnum",
+        Detour(0x400449be, stock_guard(0x400449be, 8), "qz", "qz_octnum",
                "CHROMATIC drawer, the common push of the octave number both branches reach (2.13, Modwerk #264: the MIDI branch "
                "jumps here, so the push is never skipped): a MIDI track keeps stock's number, a synth track prints qz_oct, a sample "
                "track the position 0 / 1 / -1, with ROOT's name before it when a scale is on",
@@ -362,22 +364,22 @@ MODULE = Module(
                "CHROMATIC drawer, an audio track's held-key mark (the byte load and the octave word load): with a scale on "
                "the mark goes on the note the key sounds (qz_chrom's rule), not the physical key (2.18)",
                kind="jmp", pad_to=8),
-        Detour(0x40065bca, H("4282" "4fef0020"), "qz", "qz_draw",
+        Detour(0x40065bca, stock_guard(0x40065bca, 6), "qz", "qz_draw",
                "SEQUENCER window draw loop: index the row tables from the scroll offset",
                kind="jmp"),
-        Detour(0x400866cc, H("2c2f05c0" "202f05c4"), "qz", "qz_ld_entry",
+        Detour(0x400866cc, stock_guard(0x400866cc, 8), "qz", "qz_ld_entry",
                "project loader entry: a storing load starts from SCALE = OFF, ROOT = C, GLIDE = OFF, every MIDI track following (2.15)",
                kind="jmp", pad_to=8),
-        Detour(0x400867a2, H("122f048f" "7101" "7a23"), "qz", "qz_ld_line",
+        Detour(0x400867a2, stock_guard(0x400867a2, 8), "qz", "qz_ld_line",
                "project loader '#' line: read #SEQUENCER_SCALE=n / #SEQUENCER_ROOT=n / #SYNTH_GLIDE=n / #SEQUENCER_MIDI_SCALE_OFF=n (2.15)",
                kind="jmp", pad_to=8),
-        Detour(0x400888aa, H("73398000004f" "2f01"), "qz", "qz_wr",
+        Detour(0x400888aa, stock_guard(0x400888aa, 8), "qz", "qz_wr",
                "project writer: #SEQUENCER_SCALE=n, #SEQUENCER_ROOT=n, #SYNTH_GLIDE=n, #SEQUENCER_MIDI_SCALE_OFF=n (2.15) after PATTERN_CHANGE_CHAIN_BEHAVIOR",
                kind="jmp", pad_to=8),
-        Detour(0x40010212, H("4a39100b14ae"), "qzc", "qz_boot",
+        Detour(0x40010212, stock_guard(0x40010212, 6), "qzc", "qz_boot",
                "boot: stock's sanitiser of the battery-RAM settings block -- SCALE/GLIDE/ROOT out of range -> OFF / C (core.s, ROM)",
                kind="jsr"),
-        Detour(0x40025ac2, H("42b9100b14d4"), "qzc", "qz_defaults",
+        Detour(0x40025ac2, stock_guard(0x40025ac2, 6), "qzc", "qz_defaults",
                "project defaults (cold boot, no project, before a load, new project): SCALE/GLIDE := OFF, ROOT := C, every MIDI track following (core.s, ROM)",
                kind="jsr"),
     ),
@@ -400,7 +402,7 @@ MODULE = Module(
                         (0x40065d58, 0x400b282c), (0x40065d72, 0x400b282c))),
     ),
     pokes=(
-        Poke(0x40065c7c, expect=H("48780003"), write=H("48780016"),
+        Poke(0x40065c7c, expect=stock_guard(0x40065c7c, 4), write=H("48780016"),
              note="SEQUENCER window: 3 -> 22 rows (SCALE, ROOT, GLIDE, MIDI 1..8 SCALE, AUDIO 1..8 SCALE (2.19); 3 visible, scrolls)"),
     ),
 )
