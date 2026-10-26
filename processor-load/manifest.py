@@ -34,14 +34,22 @@ of the Octatrick diagnostic build (cfdiag loadmeter.s), stripped of
 everything USB and diagnostic and made standalone.
 """
 
+import importlib.util
 import os
 
 from remix.schema import Category, Detour, Kind, Linked, Module, Poke, Proof
 
+# Only the authored poke write uses H; the stock expectations use stock_guard.
 H = bytes.fromhex
 # This module's own directory, relative to the build's cwd (octabam's repo root): the same
 # file serves at modules/processor-load/ and at modules/processor-load/upstream/processor-load/.
 _HERE = os.path.relpath(os.path.dirname(os.path.realpath(__file__)))
+# The displaced bytes of each hook are read from the build's own MAIN OS section (stock_guard.py, the same
+# reader the synth, quantizer and sy-drum modules carry): no stock bytes in this file.
+_guard_spec = importlib.util.spec_from_file_location("pl_stock_guard", os.path.join(_HERE, "stock_guard.py"))
+_guard_module = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(_guard_module)
+stock_guard = _guard_module.stock_guard
 
 VECTOR_INSTALL = 0x4001FBF8      # main: the push of 0x4000aad0 -- the frame handler for vector 0x41
 FRAME_EPILOGUE = 0x4000D9A6      # frame interrupt: the restore of d0-a6, the release of 252 stack bytes and the return from the exception
@@ -68,17 +76,17 @@ MODULE = Module(
     ),
     linked=(Linked("procload", os.path.join(_HERE, "loadmeter.s"), cpu="5475", dram=True),),
     detours=(
-        Detour(VECTOR_INSTALL, H("48794000aad0"), "procload", "pl_isr",
+        Detour(VECTOR_INSTALL, stock_guard(VECTOR_INSTALL, 6), "procload", "pl_isr",
                "frame vector install: an entry stamp in front of the stock handler", kind="lea"),
-        Detour(FRAME_EPILOGUE, H("4cd77fff4fef00fc4e73"), "procload", "pl_tail",
+        Detour(FRAME_EPILOGUE, stock_guard(FRAME_EPILOGUE, 10), "procload", "pl_tail",
                "frame interrupt epilogue, every exit: the exit stamp, then the stock restore and RTE", pad_to=10),
-        Detour(UI_MESSAGE, H("20464e9051fc"), "procload", "pl_ui",
+        Detour(UI_MESSAGE, stock_guard(UI_MESSAGE, 6), "procload", "pl_ui",
                "UI task, type-1 message path: the meter's tick, then the stock countdown call"),
-        Detour(TEMPO_DRAW, H("4e56ffe848d7041c"), "procload", "pl_tempo_draw",
+        Detour(TEMPO_DRAW, stock_guard(TEMPO_DRAW, 8), "procload", "pl_tempo_draw",
                "TEMPO draw: the stock popup, then the meter's overlay", pad_to=8),
     ),
     pokes=(
-        Poke(TEMPO_HEADER_Y, H("48780025"), H("48780023"),
+        Poke(TEMPO_HEADER_Y, stock_guard(TEMPO_HEADER_Y, 4), H("48780023"),
              note="TEMPO / EXT SYNC / PICKUP SYNC header two pixels down: the meter's band above it"),
     ),
 )
