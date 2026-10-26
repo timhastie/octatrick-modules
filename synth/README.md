@@ -2817,7 +2817,7 @@ hardware).
   `0x400359ac`). This is why a short FUNC + DOWN on stock opens the list
   without changing the mode, and a held one steps it: the repeat does.
 - **The hook** (`modules/synth/manifest.py`, one 6-byte jmp detour at the
-  handle test `0x40051fce`, the test of the word at `0x400bebae`; `poly.s` `po_octave`,
+  handle test `0x40051fce`, the test of the long word at `0x400bebae`; `poly.s` `po_octave`,
   published at **-32** before `sy_render`) takes a press with the window
   CLOSED when the lock editor's own state says a trig is held for locking:
   the held-trig mask `0x460d174a` (a word, bit n = [TRIG n + 1]; the PTCH
@@ -3918,7 +3918,7 @@ tables at `0x400d7480..0x400d7594`.
 | `po_frame` | paraphonic, the second call: the key mask diff (`qz_pmask`, released keys -> their voices release), the start (`po_start`: fold the PTCH delta into the sounding voices, read `qz_pkey`, a sequencer trig releases everything, the scale mask through `SCALE_AT` (only if a `jmp` is there: a remix without the quantizer snaps nothing), VOIC, the chord byte, the cap: k = min(shape notes, VOIC), the oldest active + k - VOIC voices cut through `po_steal` (releasing before sounding), then the first k notes of the shape each snapped by `po_snap` and given a voice through `po_alloc`: free, else the oldest releasing, else the oldest sounding), then per voice: target = `V_ROOT + (PTCH word - T_REF)`, `sy_slew` on the voice's own `V_CUR`, the word folded into `0x0400..0x7c00` by octaves and the increment shifted back, ratio, index envelope, the amplitude envelope (Q15, full = `T_GMAX` = 32768 / VOIC latched at the start; ramp `T_GMAX / 8` a frame = 8 frames; release `gain -= gain * k`, `po_relk[REL]`: tau = 5 ms * 1000^(rel/126), 5 ms .. 5 s, 127 = INF, clamped to `T_GMAX`; freed below 64 = -54 dB re the mono voice) |
 | `po_fill` | both calls: clear, every sounding voice adds `c * gain` (gain Q15, at most 32768 / VOIC), the sum doubled into the mono format as the mono path does (`c * g << 1`) and saturated -- a guard, since VOIC voices in phase sum to at most the mono voice's full scale -- L and R |
 | `po_snap` | a note's word snapped onto the SCALE the quantizer's way (`qz_chrom`): its semitone number from PTCH raw 64 (the scale's root) mod 12, moved to the nearest degree of the mask, the lower candidate first at each distance; whole semitones only, the word's fraction kept. The mask comes from `qz_scale_mask` through the pinned trampoline `SCALE_AT = 0x400d2ca8` (`modules/quantizer/scale.s`) -- one copy of the table |
-| `po_lfopage` | the page resolver's kind-1 load at `0x40031e62` (6 B: d0 := the LFO descriptor `0x400d37f6`, then the short branch to the epilogue): for a FLEX track whose assigned slot is a SYNTH* sample (page.s's test) a clone of the LFO descriptor built from the stock record on first use (no Elektron bytes in the repo): slot 2 VOIC (formatter `po_fmt_voic`, range 1..4, default 1, handler 0), slot 5 CHRD (formatter `po_fmt_chord`), both always shown (nibbles 2 and 5 = 5) |
+| `po_lfopage` | the page resolver's kind-1 load at `0x40031e62` (8 B, as `stock_guard(LFO_PAGE_HOOK, 8)`: the 6-byte load of the LFO descriptor `0x400d37f6` into d0, then the 2-byte short branch to the epilogue): for a FLEX track whose assigned slot is a SYNTH* sample (page.s's test) a clone of the LFO descriptor built from the stock record on first use (no Elektron bytes in the repo): slot 2 VOIC (formatter `po_fmt_voic`, range 1..4, default 1, handler 0), slot 5 CHRD (formatter `po_fmt_chord`), both always shown (nibbles 2 and 5 = 5) |
 | state | 8 track records x 128 B (the mono voice's 44 + `T_REF T_LAST T_MASK T_DK T_RK T_RATIO T_I T_W T_SCALE T_POLY`), 32 voice records x 64 B (`V_PHC V_PHM V_ENV V_INC V_INCM V_IEFF V_GAIN V_FB V_LASTM V_STATE V_KEY V_CUR V_ROOT V_AGE`), the LFO descriptor clone |
 
 The keys come from the quantizer's hooks (`modules/quantizer/README.md`
@@ -4387,9 +4387,10 @@ Read from the stock disassembly for the question "could the AMP page's
 slot F hold a per-track parameter?" (24 Sep 2026; nothing here is changed
 by this build). The AMP descriptor is P = `0x400d3988` (E = `0x400d3950`,
 page kind 2 in the resolver `0x40031da4`; kind 1 is LFO): names `ATK HOLD
-REL VOL BAL XVOL` / `AMP SYNC ATCK FX1 FX2 TRIG`, defaults `0 127 127 64 64
-127`, counts 128 ×6, minimums 0, enable nibbles `P+0x18e = 0x11811111` and
-`P+0x18a = 0x111` — slot 5's nibble is **8** (bit 3 only: bit 0 "encoder
+REL VOL BAL XVOL` / `AMP SYNC ATCK FX1 FX2 TRIG`, defaults ATK at the bottom
+of its range, HOLD, REL and XVOL at the top, VOL and BAL in the middle, counts 128 ×6, minimums 0, enable nibbles: `P+0x18e` has bit 0 alone
+("encoder live") in every nibble but slot 5's, `P+0x18a` bit 0 alone in its
+three low nibbles and nothing above them — slot 5's nibble is **8** (bit 3 only: bit 0 "encoder
 live" clear, bit 2 "always show" clear), formatter A[5] = `0x4003b484`
 (prints `MIN` for 0, `MAX` otherwise), widget B[5] = `0x400475f8`, knob
 handler `P+0x12a+20` = `0x40032ba4` (a two-state switch through the
@@ -4496,8 +4497,9 @@ garbled the half-height boxes (23 Sep 2026).
 
 The enable nibble of slot s (P+0x18e, nibble s from the LOW end): bit 0 =
 the encoder is live, bit 1 = the renderer's small arch bridging the slot to
-the one before it across the divider (stock 0x55311311 sets it on LEN and
-RTIM: STRT-LEN, RTRG-RTIM), bit 2 = always show the value. The clone uses
+the one before it across the divider (the stock record sets it on LEN and
+RTIM only: STRT-LEN, RTRG-RTIM; it sets bit 0 on all six slots, so every
+encoder is live, and bit 2 on none of them), bit 2 = always show the value. The clone uses
 0x55551551: always-show on RATO INDX FDBK DEC, no arches (the synth's slots
 are not pairs). The first build's 0x55715751 had RATE's always-show bit
 instead of FDBK's and kept the arches; both fixed 23 Sep 2026.
@@ -4540,8 +4542,8 @@ source.l}` records ending at a negative offset, `page.s` owning the layout:
 the full name `P+9` = `FM SYNTH` (the footer), the names of slots 1/2/4/5,
 the four A formatters (INDX and FDBK through the stock's own `"%d"`
 formatter `0x4003c178`, which this cave's copy of it had duplicated byte
-for byte), the four B widgets, and the enable nibbles `0x55311311 →
-0x55551551`. `pg_resolve` reaches the builder through the long published
+for byte), the four B widgets, and the enable nibbles (the stock's two
+arches cleared, always-show set on slots 1/2/4/5: `0x55551551`). `pg_resolve` reaches the builder through the long published
 before `sy_render` (`movea.l 0x400d6438,%a0; movea.l -4(%a0),%a0; jsr
 (%a0)`): the kind table's FLEX entry holds `sy_render`'s address (the
 manifest's SymbolRef), the one address of the unit the ROM knows. The stock
