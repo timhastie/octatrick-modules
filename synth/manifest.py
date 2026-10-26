@@ -288,9 +288,9 @@ empty; the port boots them STATIC), the first marker is loaded INTO the
 track's own slot, and neither the machine nor the
 slot byte changes (the assigner takes its same-slot exit; the sample-list
 window's LOAD FILE never touches the Part): none of the three sites runs.
-The fourth site is the file browser's select 0x40022610, whose `jsr
-0x40013a08` (sprintf) writes the chosen path into the slot's settings record
--- `jsr po_loadsel` reads the slot's marker state before and after the
+The fourth site is the file browser's select 0x40022610, whose call of
+sprintf (0x40013a08) writes the chosen path into the slot's settings record
+-- po_loadsel, a jsr detour on that call, reads the slot's marker state before and after the
 write and, when it went non-marker -> marker, resets FINE on every FLEX
 track whose FLEX slot is that slot. A marker over a marker, a sample over a
 marker, a STATIC slot, a recorder buffer: untouched.
@@ -347,6 +347,7 @@ Verified in ot_emu through the virtual panel and the pipe (README);
 flashed as OCTATRICK9 on an MKI, 26 Sep 2026 (emulator-verified since).
 """
 
+import hashlib
 import os
 
 from remix.schema import CavePatch, Detour, DramRegion, Kind, Linked, Module, SymbolRef
@@ -472,10 +473,11 @@ def machine_include(modules):
 KIND_TABLE_STATIC = 0x400d6434
 KIND_TABLE_FLEX = 0x400d6438
 
-# Phase 5 (24 Sep 2026, poly.s): the LFO engine's depth read `mvsw %a2@(0x12,
-# %d2:l:2),%d0; lea %a0@(0,%d4:l:2),%a1` (LFO 3 is muted on a synth track)
-# and the page resolver's LFO-descriptor load `movel #0x400d37f6,%d0; bras
-# 0x40031ed6` (the VOIC/CHRD page for a synth track).
+# Phase 5 (24 Sep 2026, poly.s): the LFO engine's depth read (a signed halfword
+# load of the LFO's depth and the address of its output; LFO 3 is muted on a synth
+# track) and the page resolver's LFO-descriptor load (the descriptor's address
+# 0x400d37f6 and a short branch to the resolver's epilogue 0x40031ed6; the
+# VOIC/CHRD page for a synth track).
 LFO_DEPTH_HOOK = 0x40003ca4              # the routine 0x40003b90
 LFO_DEPTH_HOOK2 = 0x4000d03e             # its copy inlined in the frame builder (0x4000cf40..)
 
@@ -484,54 +486,54 @@ LFO_PAGE_HOOK = 0x40031e62
 # MIDI IN (30 Sep 2026, poly.s "MIDI IN"): the STANDARD map's chromatic block
 # and the note-off, the octave switch of the audio-track note-on, and the 0x41
 # event handler's live recorder (docs/firmware/MIDI.md appendix B).
-MIDI_MAP_HOOK = 0x4000e746               # `moveq #29,%d1; movel %d1,%a5@(0,%d2:l:4)`: the START, posted before the lock byte
+MIDI_MAP_HOOK = 0x4000e746               # the START command stored into the track's mailbox long, posted before the lock byte
 
-MIDI_OFF_HOOK = 0x4000dfd4               # `mvsb %a0@,%d1; mvsb %a3@,%d0; cmpl %d1,%d0; bnes 0x4000dff8`
+MIDI_OFF_HOOK = 0x4000dfd4               # two signed byte loads, their compare and a short branch to 0x4000dff8 when they differ
 
-MIDI_GATE_HOOK = 0x4000e452              # `movel %d6,%d0; subql #2,%d0; moveq #5,%d2; cmpl %d0,%d2`
+MIDI_GATE_HOOK = 0x4000e452              # d6 copied into d0, lowered by 2 and compared with 5 (the note-on's octave switch)
 
-RETRIG_HOOK = 0x4000c634                 # the frame builder's per-track copy of the DSP command byte 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t]: `moveal 114(sp),a1; moveb (a0,a1.l),d0` (a0 = 0x46104d15; BUILD 37: po_retrig turns a sequencer START on a sounding synth voice, 0x10 | n, into the key's clean 0x30)
+RETRIG_HOOK = 0x4000c634                 # the frame builder's per-track copy of the DSP command byte 0x46104d15[t] into the packer's nibble byte 0x46104d0c[t]: the track index read from the stack frame into a1 and the indexed byte load into d0 (a0 = 0x46104d15; BUILD 37: po_retrig turns a sequencer START on a sounding synth voice, 0x10 | n, into the key's clean 0x30)
 
-KILL_HOOK = 0x4000685c                   # the stock VOICE KILL 0x40006820(t): `clrb %d0; moveb %d0,%a1@(0,%a0:l)`, the CF voice byte 0x800049d8 + 168 t := 0, interrupts masked; d1 = t (BUILD 33: po_kill ends the engine's voices of the track at that instant)
+KILL_HOOK = 0x4000685c                   # the stock VOICE KILL 0x40006820(t): a cleared byte stored as the CF voice byte 0x800049d8 + 168 t (:= 0), interrupts masked; d1 = t (BUILD 33: po_kill ends the engine's voices of the track at that instant)
 
-REL_HOOK = 0x4000b51a                    # `moveal %sp@(114),%a3; movel %a1@(0,%a3:l:4),%d0` (the frame builder's AMP-release consumer, mailbox bit 6: every note-off path)
+REL_HOOK = 0x4000b51a                    # the track index read from the stack frame into a3 and the indexed long load into d0 (the frame builder's AMP-release consumer, mailbox bit 6: every note-off path)
 
-MIDI_OFFGATE_HOOK = 0x4000de10           # `subql #2,%d0; moveq #5,%d3; cmpl %d0,%d3` (the note-off's octave switch)
+MIDI_OFFGATE_HOOK = 0x4000de10           # d0 lowered by 2 and compared with 5 (the note-off's octave switch)
 
-MIDI_REC_HOOK = 0x400625e0               # `movel %a2@(4),%d0; movel %d0,0x46c7e956`
+MIDI_REC_HOOK = 0x400625e0               # the event record's long at offset 4 read and stored to 0x46c7e956 (the live recorder)
 
-MIDI_TRIG_HOOK = 0x4006262a              # `mvsb %a2@(2),%d2; moveal %d2,%a0; lea %a0@(0,%d2:l:4),%a0`
+MIDI_TRIG_HOOK = 0x4006262a              # the event record's signed byte at offset 2 read into d2 and five times it formed in a0 (an index)
 
 # LEG (2 Oct 2026): the AMP SETUP window (FUNC + AMP) stages, draws and edits
 # the STOCK AMP descriptor by address; five detours hand every audio track the
 # clone with LEG in the sixth box (poly.s po_amp_desc: OFF / MONO / POLY on a
 # synth track, OFF / MONO on any other audio track since 3 Oct 2026; the
 # master track keeps the stock record).
-AMP_STAGE_HOOK = 0x40059d56              # `pea 0x400d3988` (the window's staging of page 2)
+AMP_STAGE_HOOK = 0x40059d56              # the push of the stock AMP descriptor's address 0x400d3988 (the window's staging of page 2)
 
-AMP_DRAW1_HOOK = 0x4003685a              # `lea 0x400d39c2,%a4; lea 0x400d3a6a,%a3` (the drawer: names, formatters)
+AMP_DRAW1_HOOK = 0x4003685a              # the addresses 0x400d39c2 and 0x400d3a6a loaded into a4 and a3 (the drawer: names, formatters)
 
-AMP_DRAW2_HOOK = 0x400368ac              # `movel 0x400d3b16,%sp@-; movel 0x400d3b12,%sp@-` (the enable pair, the widget pass)
+AMP_DRAW2_HOOK = 0x400368ac              # the pushes of the longs at 0x400d3b16 and 0x400d3b12 (the enable pair, the widget pass)
 
 AMP_DRAW3_HOOK = 0x40036946              # the same pair, the name pass
 
-AMP_EDIT_HOOK = 0x4003ae40               # `addil #0x400d3988,%d0; moveal %d0,%a1; moveal %a1@(298),%a0` (the page-2 editor's handler read)
+AMP_EDIT_HOOK = 0x4003ae40               # the descriptor's address 0x400d3988 added to d0, the sum into a1 and its pointer at offset 298 read into a0 (the page-2 editor's handler read)
 
-AMP_LANE_HOOK = 0x4003af0a               # `lea 0x8000083c,%a0; moveb %d2,%a0@(0,%d0:l)` (the page-2 editor's live-lane write)
+AMP_LANE_HOOK = 0x4003af0a               # the lane base 0x8000083c into a0 and the indexed byte store of d2 (the page-2 editor's live-lane write)
 
 # Transposing a held step (4 Oct 2026, poly.s po_octave): the FUNC + UP/DOWN
 # handler 0x40051fc4 (the trig-mode selector; both keys' records in the FUNC
 # layer's tables 0x400bf628 / 0x400bf2b4 name it) tests its window here.
-OCT_HOOK = 0x40051fce                    # `tstl 0x400bebae` (the selector window's handle: closed, a press opens it; open, presses step the mode)
+OCT_HOOK = 0x40051fce                    # the test of the long at 0x400bebae (the selector window's handle: closed, a press opens it; open, presses step the mode)
 
 # FINE defaults to 0c when a track becomes a synth track (28 Sep 2026, poly.s
 # po_assign / po_machwin / po_machlist): the slot assigner's slot-byte write and
 # the two windows' machine-only writes.
-ASSIGN_HOOK = 0x400795ba                 # `addal #0x8f04a,%a0; moveb %d1,%a0@` (the assigner 0x40079424: the Part's slot byte of the new machine)
+ASSIGN_HOOK = 0x400795ba                 # the offset 0x8f04a added to a0 and the byte store of d1 (the assigner 0x40079424: the Part's slot byte of the new machine)
 
-MACHWIN_HOOK = 0x40079816                # `addal #0x8eda2,%a0; mvsb %a0@,%d3` (the machine window's apply path 0x400797cc: the machine byte, the slot equal)
+MACHWIN_HOOK = 0x40079816                # the offset 0x8eda2 added to a0 and the signed byte load into d3 (the machine window's apply path 0x400797cc: the machine byte, the slot equal)
 
-LISTWIN_HOOK = 0x4005a848                # `addal #0x8eda2,%a0; mvsb %a0@,%d4` (the sample-list window's apply path 0x4005a826: the same)
+LISTWIN_HOOK = 0x4005a848                # the same offset added and the signed byte load into d4 (the sample-list window's apply path 0x4005a826: the same)
 
 # The new-project case (Tim, MKI: the FIRST FM machine of a project read +63c;
 # poly.s po_loadsel): the file browser's select 0x40022610 writes the chosen path
@@ -539,9 +541,9 @@ LISTWIN_HOOK = 0x4005a848                # `addal #0x8eda2,%a0; mvsb %a0@,%d4` (
 # under a track that already has that slot (a fresh project: T1 = FLEX slot 1 ..
 # T8 = slot 8, every slot empty; the assigner then takes its same-slot exit and
 # the sample-list window's LOAD FILE never touches the Part).
-LOADSEL_HOOK = 0x40022686                # `jsr 0x40013a08` (sprintf: record, "%s..", path) in the browser's select 0x40022610
+LOADSEL_HOOK = 0x40022686                # the call of sprintf 0x40013a08 (the record, a format, the path) in the browser's select 0x40022610
 
-UNLOAD_HOOK = 0x40022732                 # `jsr 0x40025288` (the slot unload: machine, slot) in the browser's load callback 0x400226f4, before its call of the select
+UNLOAD_HOOK = 0x40022732                 # the call of the slot unload 0x40025288 (machine, slot) in the browser's load callback 0x400226f4, before its call of the select
 
 
 # 2.10 (8 Oct 2026): FM SYNTH IN THE MACHINE LIST (machine.s; after Modwerk's FM Synth
@@ -551,65 +553,65 @@ UNLOAD_HOOK = 0x40022732                 # `jsr 0x40025288` (the slot unload: ma
 # PLAYBACK bytes (the Part + 0x8edbc + 30 * track, and the battery-RAM shadow), so it
 # needs no marker file and no sample. The marker files still select the engine.
 # The machine window's commit shares MACHWIN_HOOK (fm_main_commit, then po_machwin).
-FM_NAME_HOOK = 0x400334d8                # `movel %d2,%sp@-; movel %sp@(8),%d1` (the machine-name formatter name(row))
+FM_NAME_HOOK = 0x400334d8                # the push of d2 and a stack argument read into d1 (the machine-name formatter name(row))
 
-FM_NAMES_HOOK = 0x4003c928               # `lea 0x400a78c8,%a5` (SRC SETUP's name table: five pointers)
+FM_NAMES_HOOK = 0x4003c928               # the name table's address 0x400a78c8 loaded into a5 (SRC SETUP's name table: five pointers)
 
-FM_NAME_A_HOOK = 0x4003d718              # `lea 0x400a78c8,%a0` (a track's machine name, a0 = its machine byte)
+FM_NAME_A_HOOK = 0x4003d718              # the same table's address loaded into a0 (a track's machine name, then indexed by its machine byte)
 
-FM_SETUP_ROW_HOOK = 0x4003c980           # `mvsb %a0@,%d0; lea %sp@(24),%sp` (SRC SETUP's row highlight)
+FM_SETUP_ROW_HOOK = 0x4003c980           # a signed byte load into d0 and the release of 24 stack bytes (SRC SETUP's row highlight)
 
-FM_CHOOSER_ROW_HOOK = 0x400786c8         # `mvsb %a0@,%d0; cmpl %d0,%d2; bnes 0x400786fc` (the machine window's row highlight)
+FM_CHOOSER_ROW_HOOK = 0x400786c8         # a signed byte load into d0, its compare with d2 and a short branch to 0x400786fc when they differ (the machine window's row highlight)
 
-FM_SETUP_OPEN_HOOK = 0x400585dc          # `moveb %a0@,%d3; mvsb %d3,%d4; pea 0x400bb704` (SRC SETUP opens on the track's row)
+FM_SETUP_OPEN_HOOK = 0x400585dc          # a byte load into d3, its sign extension into d4 and the push of 0x400bb704 (SRC SETUP opens on the track's row)
 
-FM_CHOOSER_OPEN_HOOK = 0x40078886        # `mvsb %a0@,%d0; movel %d0,%sp@-; pea 0x460e7386` (the machine window opens on it)
+FM_CHOOSER_OPEN_HOOK = 0x40078886        # a signed byte load into d0, its push and the push of 0x460e7386 (the machine window opens on it)
 
-FM_CHOOSER_COL_HOOK = 0x400788c4         # `mvzb %a0@,%d0; moveq #1,%d2; cmpl %d0,%d2; scs %d0` (the machine window's opening column)
+FM_CHOOSER_COL_HOOK = 0x400788c4         # an unsigned byte load into d0, its compare with 1 and d0 set from the carry (the machine window's opening column)
 
-FM_EDIT6_HOOK = 0x4003a52e               # `movel %d2,%d0; lsll #3,%d0; addl %d2,%d2; subl %d2,%d0` (SRC SETUP's editor: row * 6)
+FM_EDIT6_HOOK = 0x4003a52e               # d0 := d2 * 8 - d2 * 2 in four register operations (SRC SETUP's editor: row * 6)
 
-FM_DRAW6_HOOK = 0x4003cd98               # `movel %d6,%d7; lsll #3,%d7; addl %d6,%d6; subl %d6,%d7` (its drawer: the same)
+FM_DRAW6_HOOK = 0x4003cd98               # d7 := d6 * 8 - d6 * 2, the same four operations (its drawer: the same)
 
-FM_TICK_HOOK = 0x4005221e                # `jsr %pc@(0x4005213c); jsr 0x4007e940` (the UI tick)
+FM_TICK_HOOK = 0x4005221e                # the calls of 0x4005213c and 0x4007e940 (the UI tick)
 
-FM_SRC_COMMIT_HOOK = 0x4005a616          # `movel 0x460d5c30,%d1` (SRC SETUP's machine-byte write: the chosen row)
+FM_SRC_COMMIT_HOOK = 0x4005a616          # the long at 0x460d5c30 read into d1 (SRC SETUP's machine-byte write: the chosen row)
 
 FM_SRC_COMMIT2_HOOK = 0x4005a850         # the same instruction on its second path (after LISTWIN_HOOK, which returns here)
 
-FM_VALIDATE_HOOK = 0x40002318            # `lea %sp@(-96),%sp; moveml %d2-%d7/%a2-%fp,%sp@` (the Part validator's prologue)
+FM_VALIDATE_HOOK = 0x40002318            # a 96-byte stack frame and the save of d2-d7 / a2-a6 into it (the Part validator's prologue)
 
-FM_SOURCE_HOOK = 0x4000d514              # `moveal %a4@+,%a0; movel %a0,%a3@+; pea 0x10` (the frame builder's second supplier call)
+FM_SOURCE_HOOK = 0x4000d514              # a pointer copied from a4's list to a3's, both advanced, and the push of 16 (the frame builder's second supplier call)
 
 # 2.11: the machine list's six row-count / row-bound sites (machine.s ml_*; pokes 5 -> 6 until 2.10)
-ML_WIN_COUNT_HOOK = 0x40079248            # `pea 5; pea 6` (the machine window's list init: rows, visible)
+ML_WIN_COUNT_HOOK = 0x40079248            # the pushes of 5 and 6 (the machine window's list init: rows, visible)
 
-ML_SRC_COUNT_HOOK = 0x400585fa            # `pea 5; pea 5` (SRC SETUP's list init: rows, visible)
+ML_SRC_COUNT_HOOK = 0x400585fa            # the pushes of 5 and 5 (SRC SETUP's list init: rows, visible)
 
-ML_NAME_BOUND_HOOK = 0x4003c950           # `moveq #4,%d1; cmpl %d2,%d1; bcss 0x4003c95a` (SRC SETUP's name lookup)
+ML_NAME_BOUND_HOOK = 0x4003c950           # d2 compared with the bound 4 and a short branch to 0x4003c95a when it is above it (SRC SETUP's name lookup)
 
-ML_DRAW_BOUND_HOOK = 0x40078678           # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786a2` (the machine window's drawer)
-  # ... movel %d2,%sp@-; moveal %d3,%a0; jsr %a0@ (12 B)
-ML_HI_BOUND_HOOK = 0x400786ce             # `moveq #4,%d0; cmpl %d2,%d0; blts 0x400786fc` (its highlight)
+ML_DRAW_BOUND_HOOK = 0x40078678           # d2 compared with the bound 4 and a short branch to 0x400786a2 when it is above it (the machine window's drawer)
+  # ... then the push of d2 and the call through d3 (12 B)
+ML_HI_BOUND_HOOK = 0x400786ce             # the same bound test, its branch to 0x400786fc (its highlight)
 
-ML_CUR_BOUND_HOOK = 0x40079904            # `moveq #4,%d3; cmpl %d4,%d3; bgew 0x400797cc` (its cursor)
+ML_CUR_BOUND_HOOK = 0x40079904            # d4 compared with the bound 4 and a branch to 0x400797cc when it is within it (its cursor)
 
 ML_CLAMP_HOOKS = (0x40078c22, 0x40078cb0, 0x40078d2e, 0x40078dee, 0x40078e7c)  # the machine window's row clamp after a list move
-   # `moveq #5,%d1; cmpl %d0,%d1; bges +2; moveq #5,%d0`
+   # each: d0 compared with 5 and set to 5 when it is above it
 # 2.15: the selection guard's paste guards (machine.s fm_page_store .. fm_preview): stock's copy / paste and
 # undo write the machine byte without the lists -- the SRC page's store, the whole track's and the Part's
 # (each guarded where its paste and its undo call it) -- and the FLEX list's sample preview makes a track FLEX
-PAGE_STORE_HOOK = 0x40027e98              # `moveb %a2@(19),%d3; mvsb %d3,%d6; moveb %a2@(18),%d7` (the SRC page's store 0x40027e4c, page 0)
+PAGE_STORE_HOOK = 0x40027e98              # the record's bytes at offsets 19 and 18 read into d3 (sign-extended into d6) and d7 (the SRC page's store 0x40027e4c, page 0)
 
-TRACK_PASTE_HOOK = 0x4002b99e             # `pea 0x460c8122; jsr %pc@(0x4002b654)` (the whole track's paste calls its store: the clipboard)
+TRACK_PASTE_HOOK = 0x4002b99e             # the push of 0x460c8122 and the call of 0x4002b654 (the whole track's paste calls its store: the clipboard)
 
-TRACK_UNDO_HOOK = 0x4002b962              # `pea 0x460bf218; jsr %pc@(0x4002b654)` (... its undo: the undo buffer)
+TRACK_UNDO_HOOK = 0x4002b962              # the push of 0x460bf218 and the call of 0x4002b654 (... its undo: the undo buffer)
 
-PART_PASTE_HOOK = 0x40029b8a              # `pea 0x460c8122; jsr %pc@(0x40029a4c)` (the Part's paste calls its store: the clipboard)
+PART_PASTE_HOOK = 0x40029b8a              # the push of 0x460c8122 and the call of 0x40029a4c (the Part's paste calls its store: the clipboard)
 
-PART_UNDO_HOOK = 0x40029b54               # `pea 0x460bf218; jsr %pc@(0x40029a4c)` (... its undo: the undo buffer)
+PART_UNDO_HOOK = 0x40029b54               # the push of 0x460bf218 and the call of 0x40029a4c (... its undo: the undo buffer)
 
-PREVIEW_HOOK = 0x40096d22                 # `mvsb %a0@,%d3; movel %d3,0x46105424; moveb #1,%a0@` (the FLEX list's sample preview 0x40096c54)
+PREVIEW_HOOK = 0x40096d22                 # a signed byte load into d3, its store to 0x46105424 and 1 written to that byte (the FLEX list's sample preview 0x40096c54)
 
 KIND_TABLE_FLEX_START = 0x400d6458       # the kind table's FLEX START callback (stock 0x4000f450)
 FLEX_START = 0x4000f450
@@ -631,8 +633,8 @@ FLEX_START = 0x4000f450
 # The clone itself is built at runtime by poly.s (po_pgdesc, first use) from
 # the stock record in the image plus the override list in page.s; the cave
 # carries no stock bytes. Pinned at the second zero run: the override list
-# holds absolute pointers into the cave. One 6-byte poke (`movel
-# %a0@(0,%d0:l:4),%d0; bras` -> `jmp pg_resolve`).
+# holds absolute pointers into the cave. One 6-byte poke: the table load and
+# the short branch after it become a jmp to pg_resolve, which replays the load.
 PAGE_AT = 0x400d24d0
 PAGE_LEN = 1752
 PG_RESOLVE_AT = 16                       # pg_resolve's offset in the cave (fm_descriptor, 16 B, is first)
@@ -644,82 +646,57 @@ RESOLVER_HOOK = 0x40031ece
 # itself, not through the page resolver; the audio edit 0x400392cc walks all 30
 # destinations. On a synth track the names become the FM SYNTH page's and the
 # PLAYBACK clone's. All stock LFO destinations remain available.
-LFD_NAME_HOOK = 0x4003bff2               # `lea 0x400d5f38,%a0; bras 0x4003c054` (page 0: the machine table)
+LFD_NAME_HOOK = 0x4003bff2               # the address 0x400d5f38 into a0 and a short branch to 0x4003c054 (page 0: the machine table)
 
-LFD_LFO_HOOK = 0x4003bffa                # `lea 0x400d37f6,%a2; bras 0x4003c058` (page 1: the LFO descriptor)
+LFD_LFO_HOOK = 0x4003bffa                # the address 0x400d37f6 into a2 and a short branch to 0x4003c058 (page 1: the LFO descriptor)
 
-LFD_EDIT_HOOK = 0x400392cc               # `movel %d3,%d0; moveq #6,%d2; remsl %d2,%d7,%d0` (the audio PMTR edit after its branches)
+LFD_EDIT_HOOK = 0x400392cc               # d3 copied into d0 and divided by 6, the remainder into d7 (the audio PMTR edit after its branches)
 
-# Ratified bytes: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT (26 Sep 2026: the
-# runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of the stock descriptor is gone,
-# and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B with the tuning system's
-# PTCH and FINE formatters and the range / handler overrides; 30 Sep 2026: 1812 B, the
-# FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare; 5 Oct 2026:
-# still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the compare;
-# 8 Oct 2026: 1868 B, the FM SYNTH machine -- fm_descriptor (16 B) first, so pg_resolve is at
-# +16, and pg_resolve's test of the Part's "FM", 1 ahead of the marker scan; still inside the
-# zero run 0x400d24d0..0x400d2ce0, 2064 B; 15 Oct 2026 (2.15): 1752 B, the marker scan gone --
-# the page is FM SYNTH's for a track chosen in the list only).
-PINNED_PAGE = bytes.fromhex(
-    "2079400d64382068fffc43fa00604ed020300c000c80400d31ae66000048243c"
-    "000018b24c012800d48920422803c8fc001ed1c4d1fc0008edbc7bd00c850000"
-    "464d660000207ba800020c8500000001660000122079400d64382068fffc43fa"
-    "000c4e904ef940031ed6000000090009400d259c001c001e400d25a500610001"
-    "400d25c3006a0004400d25c4009a0004400d25c800ca0018400d25cc00fe0008"
-    "400d25e4010a0008400d25ec012a0004400d25c401360004400d25c4018e0004"
-    "400d25f4ffff000000000000464d2053594e5448005241544f0000494e445800"
-    "0046494e4500004644424b0000444543000000400000000000000080400d25f8"
-    "400d263e4003c178400d26244003c178400d26c0400d2758400d275e400d2764"
-    "400d276a55551551202f000804800000004041fa03996e00000841f9400b465d"
-    "2f002f082f2f000c4eb940013a084fef000c4e75202f000804800000004041fa"
-    "03716e00ffdc41fa036e6000ffd42f02202f000ce48802800000001f41fa036e"
-    "73f00a002001e0880281000000ff74644c021000e0896700003e0c8100000032"
-    "6700001c2f012f00487a030a2f2f00144eb940013a084fef0010600000302f00"
-    "487a02fa2f2f00104eb940013a084fef000c600000182f004879400b465d2f2f"
-    "00104eb940013a084fef000c241f4e752f02202f000c727fb081647822004c00"
-    "1000203c000007d04c010000068000001f80223c00003f014c4100000c800000"
-    "03e8641a2f004879400b465d2f2f00104eb940013a084fef000c60000048223c"
-    "000003e824004c41200272644c4100002202e789d282d28290812f002f02487a"
-    "02612f2f00144eb940013a084fef001060000012487a02522f2f000c4eb94001"
-    "3a08508f241f4e7570006000001470016000000e700260000008700360000002"
-    "4fefffd448d77cfc2e002f2f00482f2f00482f2f00482f2f00482f2f00482f2f"
-    "00482f2f00484eb9400479b44fef001c202f004008000001660001902c2f003c"
-    "4a87670000125387670000185387670000b2600000c841fa02d0610001786000"
-    "012641fa03906100016c220670034c001000707f4c401001740b948170087201"
-    "610001742406700a4c002000707f4c40200267000012700672016100015a700a"
-    "72016100015224060482000000146f00002270084c002000706b4c4020026700"
-    "0012700472016100012e700c72016100012624060482000000386f0000aa7006"
-    "4c00200070474c4020026700009a7002720161000102700e7201610000fa6000"
-    "008641fa0268610000cc4a866700007841fa029e610000ce6000006c41fa02d6"
-    "610000b270017201740b610000ca2a3c00007fff707fbc8064102a06700d4c00"
-    "5000707f4c4050055485780b7e0224075382e98a4c4520020c82000000106f00"
-    "0004741041fa00d475b02800264220072202240461000080280b52870c870000"
-    "000f6f00ffca202f0040080000006700001841fa0150701022100a81fff00000"
-    "20c153806c00fff2202f00345e802f00202f003452802f002f2f0050487a00ce"
-    "4eb9400128a84fef00104cd77cfc4fef002c4e7543fa010e701022d853806c00"
-    "fffa4e7543fa00fe70102218839953806c00fff84e7541fa00ec41f00c00263c"
-    "80000000e2ab8790e28b5281b4816c00fff64e7525642e253032640025642e35"
-    "0025642e25647300484f4c44002b2564002b25646300256463000b0907060504"
-    "0303020201010101010101000040008000c0010001030140016a018001c00200"
-    "0203028003000380040004030480050005800600068007000780080009000a00"
-    "0b000c000d000e000f001000000000110000000d00000001400d2a54400d2a10"
-    "fff80000fff80000fff80000fff80000fff80000fff80000fff80000fff80000"
-    "fff80000fff80000fff80000fff80000fff80000fff80000fff80000fff80000"
-    "fff8000000000000000000000000000000000000000000000000000000000000"
-    "0000000000000000000000000000000000000000000000000000000000000000"
-    "000000000000000000000000000000003f80000020800000208000003f800000"
-    "0400000004000000150000000e000000040000003f8000002080000020800000"
-    "3f80000000000000000000000000000000000000000000000000000000000000"
-    "3f80000020800000208000002080000020800000208000003f80000000000000"
-    "00000000000000000000000000000000000000000000000007f000000e100000"
-    "0410000000100000001000000010000000100000001000000010000000100000"
-    "0410000007f00000000000000000000000000000000000008000000080000000"
-    "8000000080000000800000008000000080000000800000008000000080000000"
-    "800000008000000080000000800000008000000000000000"
-)
-assert len(PINNED_PAGE) == PAGE_LEN, len(PINNED_PAGE)
-assert PINNED_PAGE[PG_RESOLVE_AT:PG_RESOLVE_AT + 4] == bytes.fromhex("20300c00")  # pg_resolve replays the table load
+# The ratified page: page.s with m68k-elf-as -mcpu=5475, linked at PAGE_AT, held as its length
+# and sha256; the manifest carries no precompiled page (until 2.20 its 1752 bytes were a hex
+# literal here, PINNED_PAGE). The build links page.s at PAGE_AT, writes those bytes, and
+# compares them with this digest through CavePatch.reference (octabam's oracle: the link must
+# equal the ratified form, or the build refuses), so a drifted source or toolchain cannot pass.
+# Its history (26 Sep 2026: the runtime clone -- 1,672 B, down from 1,948: the 402-byte copy of
+# the stock descriptor is gone, and the "%d" formatter is the stock's own; 27 Sep 2026: 1,800 B
+# with the tuning system's PTCH and FINE formatters and the range / handler overrides; 30 Sep
+# 2026: 1812 B, the FMSYNTH* marker name -- a leading "FM" is skipped before the SYNTH compare;
+# 5 Oct 2026: still 1812 B, DEC's HOLD moved from raw 0 to raw 127 -- short branches pay for the
+# compare; 8 Oct 2026: 1868 B, the FM SYNTH machine -- fm_descriptor (16 B) first, so pg_resolve
+# is at +16, and pg_resolve's test of the Part's "FM", 1 ahead of the marker scan; still inside
+# the zero run 0x400d24d0..0x400d2ce0, 2064 B; 15 Oct 2026 (2.15): 1752 B, the marker scan gone
+# -- the page is FM SYNTH's for a track chosen in the list only). Re-ratify deliberately: a
+# changed page.s gets its new length and digest here.
+PAGE_SHA256 = "2dd08c912513487d76c34c1c63d3c748271f6efdbd0475cb5c38f13c610d5607"
 assert PAGE_AT + PAGE_LEN <= 0x400d2ce0                  # the zero run's end
+
+
+class _RatifiedPage:
+    """The ratified page as CavePatch.reference returns it: its length and PAGE_SHA256, no
+    bytes. octabam's oracle test `linked != reference` defers to this object (bytes do not
+    compare with it), which compares the linked bytes' sha256 with PAGE_SHA256; the build's
+    refusal message reads its length."""
+
+    __slots__ = ()
+    __hash__ = None
+
+    def __len__(self):
+        return PAGE_LEN
+
+    def __bool__(self):
+        return True
+
+    def __eq__(self, other):
+        if not isinstance(other, (bytes, bytearray)):
+            return NotImplemented
+        return len(other) == PAGE_LEN and hashlib.sha256(bytes(other)).hexdigest() == PAGE_SHA256
+
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        return equal if equal is NotImplemented else not equal
+
+
+RATIFIED_PAGE = _RatifiedPage()
 
 
 def emit_page(addr: int):
@@ -978,10 +955,11 @@ MODULE = Module(
         CavePatch(
             label="synth page",
             cave_addr=PAGE_AT,                # pinned: the descriptor clone's pointers
-            pinned=PINNED_PAGE,
+            pinned=b"",                       # no precompiled page: page.s linked at PAGE_AT is written
+            reserve=PAGE_LEN,                 # the ledger's claim, as the 1752 B pinned bytes made it
             source=os.path.join(_HERE, "page.s"),
             emit=emit_page,
-            reference=lambda addr: PINNED_PAGE,
+            reference=lambda addr: RATIFIED_PAGE,   # the link's bytes must have PAGE_SHA256
             report_note=" (page-descriptor resolver 0x40031ece -> pg_resolve: the "
                         "PLAYBACK page of a SYNTH track reads RATIO/INDEX/FDBK/DECAY "
                         "with icons; title FM SYNTH)",
