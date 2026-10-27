@@ -22,14 +22,16 @@ po_tx_accept:
         beq     po_tx_ac_done
         tst.b   11(%a1)
         beq     po_tx_ac_done
-        cmpi.b  #1,10(%a1)
+        mvz.b   10(%a1),%d1
+        cmpi.l  #1,%d1
         bne     po_tx_ac_done
         move.l  4(%a1),16(%a1)
         move.b  8(%a1),20(%a1)
         move.b  9(%a1),21(%a1)
         move.b  10(%a1),23(%a1)
         move.l  12(%a1),24(%a1)
-        move.b  #1,22(%a1)
+        moveq   #1,%d1
+        move.b  %d1,22(%a1)
         clr.b   11(%a1)
 po_tx_ac_done:
         move.w  8(%sp),%d1
@@ -176,7 +178,8 @@ po_tx_sel_found:
         move.l  %d1,8(%a0)
         tst.b   18(%a0)
         beq     po_tx_sel_done
-        cmpi.b  #1,19(%a0)
+        mvz.b   19(%a0),%d1
+        cmpi.l  #1,%d1
         bne     po_tx_sel_done
         move.l  %a0,(%a1,%d2.l*4)
 po_tx_sel_done:
@@ -252,15 +255,17 @@ po_tx_midi_start:
 po_tx_midi_poly_leg:
         lea     -32(%sp),%sp
         movem.l %d0-%d3/%a0-%a2,(%sp)
-        move.b  #1,30(%sp)              | FM poly intent, private until commit
-        move.b  #1,31(%sp)
+        moveq   #1,%d3
+        move.b  %d3,30(%sp)              | FM poly intent, private until commit
+        move.b  %d3,31(%sp)
         moveq   #0,%d3
         bra     po_tx_midi_write
 po_tx_midi_leg:
         lea     -32(%sp),%sp
         movem.l %d0-%d3/%a0-%a2,(%sp)
         clr.b   30(%sp)
-        move.b  #1,31(%sp)
+        moveq   #1,%d3
+        move.b  %d3,31(%sp)
         moveq   #0,%d3
 po_tx_midi_write:
         move.w  %sr,%d0

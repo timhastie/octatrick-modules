@@ -78,8 +78,9 @@ qz_panel_commit:
         move.b  %d0,(%a1,%d1.l)
         move.l  80(%sp),%d0
         move.l  %d0,12(%a0)
-        move.b  #1,10(%a0)
-        move.b  #1,11(%a0)
+        moveq   #1,%d0
+        move.b  %d0,10(%a0)
+        move.b  %d0,11(%a0)
         tst.l   84(%sp)
         jbeq    qz_panel_command
         move.l  %a2,%d1
@@ -95,7 +96,8 @@ qz_panel_other:
         jbeq    qz_panel_invalidate
         tst.b   11(%a0)
         jbeq    qz_panel_invalidate
-        cmpi.b  #1,10(%a0)
+        mvz.b   10(%a0),%d0
+        cmpi.l  #1,%d0
         jbne    qz_panel_invalidate
         lea     qz_pkey,%a1
         clr.b   (%a1,%a2.l)            | only the superseded pending panel publication's identity
@@ -173,8 +175,9 @@ qz_panel_trigless:
         move.b  %d0,9(%a0)
         move.l  28(%sp),%d0
         move.l  %d0,12(%a0)
-        move.b  #1,10(%a0)
-        move.b  #1,11(%a0)
+        moveq   #1,%d0
+        move.b  %d0,10(%a0)
+        move.b  %d0,11(%a0)
         jbra    qz_panel_trigless_stage
 qz_panel_no_fresh:
         clr.b   11(%a0)                | ordinary trigless: no new START and no fresh-key publication

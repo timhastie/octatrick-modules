@@ -1574,7 +1574,8 @@ qz_g2_nofunc:
         move.l  (%sp),%d0
         cmpi.l  #qz_panel_selected,%d0
         jbne    qz_g2_poly_legacy
-        move.l  #1,20(%sp)             | this FM transaction's private deferred legato intent
+        moveq   #1,%d0
+        move.l  %d0,20(%sp)            | this FM transaction's private deferred legato intent
         jbra    qz_g2_poly_record
 qz_g2_poly_legacy:
         .endif
