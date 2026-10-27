@@ -311,6 +311,8 @@
         .set    KR_CONF, 138             | the hand-over check: a join stands once both keys were down 50 ms after it
         .set    LIVEREC_AT, 0x460d172a   | nonzero while the recorder's block runs (LIVE RECORDING, or a trig held); 0 = the records are stale
         .set    QZ_OCT_AT, KEYS_AT+44    | modules/quantizer/keys.s qz_oct: a synth track's CHROMATIC octave, -4..+4 (0 without the quantizer)
+        .set    QZ_ROOT_AT, 0x100b14ee
+        .set    QZ_AUDIO_OFF_AT, 0x100b14eb
         .set    REC_TRIG, 0x40042d1c     | (track, ctx): the live recorder places a sample trig at the context's time -> the step, -1 = none
         .set    PAT_RAM, 0x400e21e0       | the patterns in RAM: + (track * 1165 + bank * 317856 + pattern * 18284) * 2 = the track's record (2330 B)
         .set    PAT_MIR, 0x1001614e       | the current bank's mirror in battery RAM: + (track * 1165 + pattern * 18284) * 2
@@ -2418,7 +2420,8 @@ po_st_panel:
 | as one start and the earlier key never sounded. Every held key that has
 | not had its start yet (T_SMASK: a key is marked at its start, or when the
 | cap dropped it, and unmarked when it goes) is started here as a key of its
-| own, at its own pitch: raw = 64 + (key - 12) + 12 * qz_oct (the
+| own, at its own pitch: raw = 64 + (key - 12) + 12 * qz_oct, plus ROOT
+| when SCALE is enabled and this audio track follows it (the
 | quantizer's rule for a synth track's key, qz_oct read at its pinned
 | byte), snapped onto the SCALE by po_snap, with FINE -- and whatever else
 | moved this frame's word -- carried over from the last key's word (its
@@ -2443,6 +2446,13 @@ po_st_sw3:
         moveq   #12,%d3
         muls.l  %d3,%d0
         add.l   %d0,%d1                  | ... + 12 * octave = semitones from raw 64
+        tst.l   T_SCALE(%a5)
+        beq     po_st_sw_raw
+        btst    %d2,QZ_AUDIO_OFF_AT
+        bne     po_st_sw_raw
+        mvz.b   QZ_ROOT_AT,%d0
+        add.l   %d0,%d1
+po_st_sw_raw:
         addi.l  #64,%d1                  | the key's raw, unsnapped
         sub.l   T_RAWP(%a5),%d1          | minus the record's raw this frame (the last key's)
         move.l  #SEMI,%d0
