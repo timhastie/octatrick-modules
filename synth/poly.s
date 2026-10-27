@@ -370,6 +370,9 @@ sy_render:
         moveq   #16,%d1
         cmp.l   64(%sp),%d1              | the frame's second call?
         bne     sy_call
+        .if HAVE_PANEL_TRANSACTION
+        jbsr    po_tx_select
+        .endif
         lea     NIBBLE,%a0
         lea     (%a0,%d2.l),%a0
         btst    #4,(%a0)                 | a voice starts this frame: resolve the marker
@@ -2378,6 +2381,12 @@ po_st_fold1:
         bne     po_st_fold
         move.l  T_W(%a5),%d1
         move.l  %d1,T_REF(%a5)
+        .if HAVE_PANEL_TRANSACTION
+        lea     po_tx_active:l,%a0
+        movea.l (%a0,%d2.l*4),%a0
+        move.l  %a0,%d0
+        jbne    po_tx_panel
+        .endif
         lea     KEYS_AT,%a0
         mvz.b   (%a0,%d2.l),%d7          | the live key (index + 1) this trig came from, 0 = the sequencer
         clr.b   (%a0,%d2.l)              | (clr sets Z: test d7 after it)
@@ -5054,8 +5063,10 @@ po_mring_reset:
 | a3 -> the note, a5 = the mailbox base, d4 = the lock block; d0, d1, a0, a1
 | are scratch here (a1 is loaded from d4 right after the mapping). A synth
 | track: the lock byte, the list, the ring and the identity first, the START
-| last; stock goes on at 0x4000e754 with a0 = the raw (its own store of the
-| byte repeats it). A sample track: the displaced START, then the stock mapping.
+| last. The legacy continuation repeats the raw store. With the shared panel
+| transaction, the bounded scalar ring/stage/identity/command publication is atomic and
+| resumes after that duplicate store, retaining its register outputs. A sample
+| track keeps the displaced START followed by the stock mapping.
 po_mon:
         bsr     po_is_synth
         beq     po_mon_stock
@@ -5064,16 +5075,20 @@ po_mon:
         bpl     po_mon_raw
         moveq   #0,%d0                   | 0..19: -64
 po_mon_raw:
+        .if !HAVE_PANEL_TRANSACTION
         movea.l %d4,%a1
-        move.b  %d0,(%a1)                | the PTCH lock byte, before any START can take it
+        move.b  %d0,(%a1)                | the legacy early publication
+        .endif
         movea.l %d0,%a0
         mvz.b   (%a3),%d1
         ori.l   #0x80,%d1                | the identity
+        .if !HAVE_PANEL_TRANSACTION
         lea     sy_state(%pc),%a1        | (the track record: T_MLEG)
         move.l  %d2,%d0
         lsl.l   #7,%d0
         adda.l  %d0,%a1
         clr.b   T_MLEG(%a1)
+        .endif
         bsr     po_mheld_of              | a note held on the track already? (clobbers d0, a1)
         beq     po_mon_start
         bsr     po_legmode               | the LEG gate (2 Oct 2026): 1 / 3 = legato -- the note takes the
@@ -5082,27 +5097,48 @@ po_mon_raw:
         bsr     po_mheld_add             | it joins the held list (its note-off releases as any note's)
         cmpi.l  #3,%d0
         bne     po_mon_trigless
+        .if HAVE_PANEL_TRANSACTION
+        jbsr    po_tx_midi_poly_leg      | private intent; no early T_LEGKEY publication
+        bra     po_mon_tx_continue
+        .else
         move.l  %d1,%d0
-        bsr     po_legkey                | paraphonic legato: the chord follows the note (the flag before the trig)
+        bsr     po_legkey
+        .endif
 po_mon_trigless:
+        .if HAVE_PANEL_TRANSACTION
+        jbsr    po_tx_midi_leg           | command read/OR is inside the publication exclusion
+po_mon_tx_continue:
+        move.l  %a0,%d0
+        movea.l %d4,%a1
+        jmp     0x4000e75a
+        .else
         lea     sy_state(%pc),%a1
         move.l  %d2,%d0
         lsl.l   #7,%d0
         adda.l  %d0,%a1
-        move.b  #1,T_MLEG(%a1)           | po_mrec records it as a trigless trig
+        move.b  #1,T_MLEG(%a1)
         move.l  (%a5,%d2.l*4),%d0
-        ori.l   #0x119,%d0               | the trigless trig (the key handler's 0x4004fca6)
+        ori.l   #0x119,%d0
         move.l  %d0,(%a5,%d2.l*4)
         jmp     0x4000e754
+        .endif
 po_mon_start:
         bsr     po_mheld_add
-        move.l  %a0,%d0                  | the raw again (po_mheld_of used d0)
-        bsr     po_mring_push            | (identity, raw) for the engine's START
+        .if HAVE_PANEL_TRANSACTION
+        moveq   #29,%d0
+        jbsr    po_tx_midi_start
+        move.l  %a0,%d0
+        movea.l %d4,%a1
+        jmp     0x4000e75a
+        .else
+        move.l  %a0,%d0
+        bsr     po_mring_push
         lea     KEYS_AT,%a1
         move.b  %d1,(%a1,%d2.l)          | qz_pkey[t]: the START is this note's
         moveq   #29,%d1
         move.l  %d1,(%a5,%d2.l*4)        | the START, last
         jmp     0x4000e754
+        .endif
 po_mon_stock:
         moveq   #29,%d1                  | displaced: the START ...
         move.l  %d1,(%a5,%d2.l*4)

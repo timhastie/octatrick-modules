@@ -390,7 +390,7 @@ def poly_include(modules):
     names = ("setup", "locks_store", "locks_scene_store", "scenes_value", "scenes_ui",
              "scenes_ops", "locks_effective", "locks_seq", "locks_ui", "locks_sparse",
              "locks_clip", "locks_transform", "locks_delete", "locks_live", "locks_io",
-             "lfo_destinations")
+             "lfo_destinations", "panel_transaction")
     sources = []
     for name in names:
         with open(os.path.join(_HERE, name + ".inc.s"), encoding="utf-8") as source:
@@ -447,6 +447,7 @@ def remix_include(modules):
     equates."""
     mm = MUTE_MODES_KEY in modules
     return (f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
+            f".set HAVE_PANEL_TRANSACTION, {int('SYNTH MACHINE' in modules and 'SCALE QUANTIZER' in modules)}\n"
             f".set HAVE_MUTE_MODES, {int(mm)}\n"
             + (_mute_modes_equates(modules) if mm else ".set HAVE_MM_KEY, 0\n")
             + engine_abi())
@@ -700,6 +701,20 @@ MODULE = Module(
                   "machine list starts its voice without a sample; every other FLEX track the stock callback"),
     ),
     detours=(
+        Detour(0x4000b540, stock_guard(0x4000b540, 14), "poly", "po_tx_accept",
+               "frame command acceptance: freeze the publication consumed by this frame",
+               kind="jmp", pad_to=14),
+        Detour(0x4000b906, stock_guard(0x4000b906, 6), "poly", "po_tx_seq1",
+               "sequencer record contribution replaces accepted panel ownership", kind="jmp"),
+        Detour(0x4000bd74, stock_guard(0x4000bd74, 6), "poly", "po_tx_seq2",
+               "sequencer START contribution replaces accepted panel ownership", kind="jmp"),
+        Detour(0x4000bdc0, stock_guard(0x4000bdc0, 6), "poly", "po_tx_seq3",
+               "alternate sequencer START contribution replaces accepted panel ownership", kind="jmp"),
+        Detour(0x4000be4e, stock_guard(0x4000be4e, 6), "poly", "po_tx_seq4",
+               "stored-record contribution replaces accepted panel ownership", kind="jmp"),
+        Detour(0x4000cb2a, stock_guard(0x4000cb2a, 8), "poly", "po_tx_copy",
+               "bind accepted publication to the actual parameter buffer during its copy",
+               kind="jmp", pad_to=8),
         Detour(RESOLVER_HOOK, stock_guard(RESOLVER_HOOK, 6), "fmpage", "pg_resolve",
                "Resolve the selected FM playback page through its DRAM entry",
                kind="jmp"),

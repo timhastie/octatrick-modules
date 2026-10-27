@@ -266,10 +266,16 @@ KEYS_AT = 0x400d2cb0
 SCALE_AT = 0x400d2ca8
 
 def _qz_include(modules):
-    """quantizer.s's remix.inc (2.11): HAVE_SYDRUM, 1 when SY DRUM is in the remix -- its
+    """quantizer.s's two-pass remix.inc: HAVE_SYDRUM, 1 when SY DRUM is in the remix -- its
     signature "SY", 1 counts as a synth track (semitone PTCH, the keys, MIDI), mono (VOIC is
-    FM's), and its legato keys reach the engine. 0 assembles the unit as 2.10's."""
-    return f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
+    FM's), and its legato keys reach the engine. The panel transaction is enabled only
+    with both matching modules selected; the second pass supplies its adapter source."""
+    flags = (f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
+             f".set HAVE_PANEL_TRANSACTION, {int('SYNTH MACHINE' in modules and 'SCALE QUANTIZER' in modules)}\n")
+    with open(os.path.join(_HERE, "panel_transaction.inc.s"), encoding="utf-8") as source:
+        transaction = source.read()
+    return "\n".join((".ifndef QZ_PASS1", ".set QZ_PASS1, 1", flags,
+                      ".else", transaction, ".endif", ""))
 
 
 MODULE = Module(
@@ -295,6 +301,12 @@ MODULE = Module(
         Linked("qz", os.path.join(_HERE, "quantizer.s"), cpu="5475", dram=True, include=_qz_include),
     ),
     detours=(
+        Detour(0x4004fc84, stock_guard(0x4004fc84, 16), "qz", "qz_panel_stage",
+               "chromatic pitch staging: keep an FM panel publication private until its command is validated",
+               kind="jmp", pad_to=16),
+        Detour(0x40005162, stock_guard(0x40005162, 8), "qz", "qz_panel_commit",
+               "validated command store: publish the panel pitch, identity and command together",
+               kind="jmp", pad_to=8),
         Detour(0x40055170, stock_guard(0x40055170, 6), "qz", "qz_knob",
                "knob handler 0x40055008: the store -- PTCH steps by scale degree",
                kind="jsr"),

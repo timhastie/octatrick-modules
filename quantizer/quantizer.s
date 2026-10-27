@@ -1337,6 +1337,9 @@ qz_at_pop:
         movem.l (%sp),%d0/%d2-%d4/%a0-%a2
         lea     28(%sp),%sp
 qz_at_replay:
+        .if     HAVE_PANEL_TRANSACTION
+        jbsr    po_tx_base             | bind the resolved pre-LFO base to this accepted frame
+        .endif
         move.l  %a4,%d1                 | displaced
         btst    #1,%d1                  | displaced
         jmp     0x4000c61a
@@ -1533,6 +1536,16 @@ qz_lm_ret:
 | 3 dropped: frame flag 0x20, 0x4000b5fc, event-byte bit 3, 0x4000c662)
 | changed nothing about it, so the stock word is kept.
 qz_leg2:
+        .if     HAVE_PANEL_TRANSACTION
+        jbsr    qz_leg2_select
+        tst.l   %d0
+        jbeq    qz_leg2_legacy_fresh
+        jmp     0x4004fc9c
+qz_leg2_legacy_fresh:
+        jbsr    qz_panel_legacy_key
+        jmp     0x4004fcb2
+qz_leg2_select:
+        .endif
         lea     qz_legato(%pc),%a0
         clr.b   (%a0)                   | this press is not a legato one until decided below
         clr.l   qz_chain-qz_legato(%a0) | ... nor a continuation of a held note's chain
@@ -1557,10 +1570,21 @@ qz_g2_nofunc:
         jbeq    qz_g2_para              | none: a fresh voice (the first key)
         subq.l  #2,%d4
         jbne    qz_g2_para              | no legato: a fresh voice
+        .if     HAVE_PANEL_TRANSACTION
+        move.l  (%sp),%d0
+        cmpi.l  #qz_panel_selected,%d0
+        jbne    qz_g2_poly_legacy
+        move.l  #1,20(%sp)             | this FM transaction's private deferred legato intent
+        jbra    qz_g2_poly_record
+qz_g2_poly_legacy:
+        .endif
         movea.l KIND_FLEX,%a0           | paraphonic legato: the engine's po_legkey (-28) -- the sounding
         movea.l -28(%a0),%a0            | chord follows this key (the flag before the trig it waits for)
         move.l  %d3,%d0
         jsr     (%a0)
+        .if     HAVE_PANEL_TRANSACTION
+qz_g2_poly_record:
+        .endif
         lea     qz_legato(%pc),%a0
         move.b  %d3,(%a0)               | ... recorded as trigless (qz_leg3)
         jbra    qz_g2_trigless
@@ -1574,6 +1598,11 @@ qz_g2_mono:
         lea     HELD,%a0
         move.b  %d3,(%a0,%d2.l)         | legato: the new key is the held key
         .if     HAVE_SYDRUM
+        .if     HAVE_PANEL_TRANSACTION
+        move.l  (%sp),%d0
+        cmpi.l  #qz_panel_selected,%d0
+        jbeq    qz_g2_mono_mark         | this FM mono selector has no envelope-recharge intent
+        .endif
         jbsr    qz_is_synth             | (2.11) a synth track: the engine's po_legkey (-28) hears the key --
         jbeq    qz_g2_mono_mark         | SY DRUM recharges its envelopes at the key's trigless frame (FM and
         movea.l qz_clock,%a0            | samples: nothing); the engine there (its clock published)?
@@ -1588,13 +1617,23 @@ qz_g2_mono_mark:
         lea     qz_legato(%pc),%a0
         move.b  %d3,(%a0)               | ... and the live recorder records it as trigless (qz_leg3)
 qz_g2_trigless:
+        .if     HAVE_PANEL_TRANSACTION
+        moveq   #1,%d0
+        rts
+        .else
         jmp     0x4004fc9c
+        .endif
 qz_g2_trig:
+        .if     HAVE_PANEL_TRANSACTION
+        moveq   #0,%d0
+        rts
+        .else
         lea     qz_pkey,%a0             | the engine is told which key this trig is (index + 1) on EVERY
         move.b  %d3,(%a0,%d2.l)         | fresh-note trig (BUILD 28: the mono voice's sy_cold reads it as its
         jmp     0x4004fcb2              | condition (d) -- a live key, not a sequencer trig -- and clears it at
                                         | the START; po_start does the same for a paraphonic voice, a sample
                                         | track's START clears it in sy_no; before, only the paraphonic path posted it)
+        .endif
 
 | 0x4004fce0: the same test and a short branch to 0x4004fcf8 when it is clear (8 bytes) -> jmp qz_leg3. The
 | same press, a few instructions on, is handed to the LIVE RECORDER (the
@@ -2418,4 +2457,5 @@ qz_pcraw:                               | PTCH raw - 4 (0..120) -> pitch class w
         .byte   10, 0xff, 0xff, 0xff, 0xff, 11, 0xff, 0xff, 0xff, 0xff
         .byte   0
         .balign 4
+        .include "remix.inc"             | second pass: panel publication adapters
 qz_end:
