@@ -129,6 +129,7 @@ po_setup_edit:
         lea     -8(%sp),%sp
         movem.l %d2/%d4,(%sp)
         move.l  %d4,%d2
+        jsr     fl_mig_retire_fm:l      | ordinary FM default owns this working Part/track; not a getter
         move.l  %a3,%d4
         jsr     fl_seq_release_control:l
         movem.l (%sp),%d2/%d4

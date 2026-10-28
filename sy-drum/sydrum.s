@@ -632,6 +632,7 @@ sd_setup_edit:
         lea     -8(%sp),%sp
         movem.l %d2/%d4,(%sp)
         move.l  %d4,%d2
+        jsr     fl_mig_retire:l         | retire a stale FM owner on an ordinary SY default edit
         move.l  %a3,%d4
         jsr     sl_seq_release_control:l | a manual default edit releases this effective override
         movem.l (%sp),%d2/%d4

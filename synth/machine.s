@@ -211,6 +211,13 @@ fm_choose:
         lea     ml_rows(%pc),%a6
         movea.l (%a6,%d0.l*4),%a6        | a6 = the row's descriptor
         mvz.b   RD_KIND(%a6),%d0         | the machine it plays
+        cmpi.l  #1,%d0
+        bne     fm_ch_retire_other
+        jsr     fl_mig_retire_fm:l      | new/reselected FM may freeze an empty state-1 checkpoint
+        bra     fm_ch_retired
+fm_ch_retire_other:
+        jsr     fl_mig_retire:l         | other kinds retire existing legacy ownership only
+fm_ch_retired:
         cmp.l   %d3,%d0
         beq     fm_ch_sign               | that machine already: its patch is the user's
         bsr     ml_warn_mono
@@ -225,6 +232,7 @@ fm_ch_sign:
         moveq   #FLEX,%d1                | stored as FLEX
         bra     fm_ch_out
 fm_ch_stock:
+        jsr     fl_mig_retire:l         | no new FM checkpoint for a stock-only assignment
         moveq   #0,%d0                   | a stock machine ...
         cmpi.l  #FLEX,%d1
         bne     fm_ch_new
@@ -411,6 +419,13 @@ ml_flexslot:
         .set    CV_P2, 38                | ... page 2's PMTR / WAVE at + 38, AMP SETUP at + 44
         .set    CV_MT, 62                | ... MULT / TRIG at + 62
 ml_reset:
+        cmpi.l  #1,%d0
+        bne     ml_rs_retire_other
+        jsr     fl_mig_retire_fm:l      | slot/browser machine changes share this native reset
+        bra     ml_rs_retired
+ml_rs_retire_other:
+        jsr     fl_mig_retire:l
+ml_rs_retired:
         lea     -48(%sp),%sp
         movem.l %d0-%d5/%a0-%a5,(%sp)
         bsr     ml_part                  | a0 = the Part

@@ -20,6 +20,33 @@ TRAMPOLINES={
 }
 THUNKS=r'''
         .section .text
+        .global fl_mig_retire,fl_mig_retire_fm
+| d2 = current working track. Preserve every register and the caller's SR.
+| C helper changes only RAM checkpoint ownership/dirty state; no card call here.
+| Only the FM entry permits an empty current-format checkpoint in state 0.
+fl_mig_retire:
+        lea -64(%sp),%sp
+        movem.l %d0-%d7/%a0-%a6,(%sp)
+        move.w %sr,%d0
+        move.l %d0,60(%sp)
+        moveq #0,%d0
+        move.l %d0,-(%sp)
+        bra fl_mig_retire_call
+fl_mig_retire_fm:
+        lea -64(%sp),%sp
+        movem.l %d0-%d7/%a0-%a6,(%sp)
+        move.w %sr,%d0
+        move.l %d0,60(%sp)
+        pea 1
+fl_mig_retire_call:
+        move.l %d2,-(%sp)
+        jsr fl_mig_retire_current:l
+        lea 8(%sp),%sp
+        move.l 60(%sp),%d0
+        move.w %d0,%sr
+        movem.l (%sp),%d0-%d7/%a0-%a6
+        lea 64(%sp),%sp
+        rts
 fl_io_core_bank:
         move.l 4(%sp),%d0
         bsr fl_bank_ptr

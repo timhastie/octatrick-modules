@@ -8,6 +8,9 @@ enum { FM_MIG_TEXT_MAX=262144, FM_PART=0x8ed80, FM_PART_SIZE=6322,
        FM_BANK_SIZE=0x9b340, FM_PATTERN_SIZE=0x8ed8, FM_TRACK_SIZE=2330 };
 extern u8 fl_migration_text[];
 static u32 fl_mig_pending,fl_mig_active,fl_mig_pristine;
+/* Runtime provenance already decided by load/restore's existing project marker.
+ * These masks are not persisted and do not complete any bank or owner. */
+static u32 fl_mig_known_mask,fl_mig_capture_mask;
 static const char fl_mig_line[]="#SYNTH_VC_SETUP=1\r\n";
 
 static s32 fl_mig_path(const char *base,u32 stored) {
@@ -91,6 +94,42 @@ static u32 fl_mig_capture(u32 bank) {
     }
     cp[0]=cp[1]=cp[2]=0;cp[3]=1;fl_mig_dirty(bank);return 1;
 }
+/* An ordinary default edit or accepted machine assignment owns only this
+ * working Part/track. Capture legacy owners before native bytes change, then
+ * retire this target. Persistence remains the existing asynchronous WORK flush;
+ * an early cut or recovery from an older stored companion can lose retirement.
+ * No filesystem work, saved-Part change or native-edit rejection occurs here. */
+void fl_mig_retire_current(u32 track,u32 current_fm) {
+    u32 bank,part,bit,sr,ptr;u8 *cp;
+    if(track>=8||!fl_io_loaded)return;
+    bank=*(volatile u8 *)0x100b14ce;part=*(volatile u8 *)0x100b14cf;
+    ptr=*(volatile u32 *)0x46c82456;
+    if(bank>=16||part>=4||ptr<0x40000000u||ptr>=0x48000000u)return;
+    bit=1u<<bank;
+    if(!(fl_ready_mask&bit)||(fl_blocked_mask&bit))return;
+    cp=fl_migration_table+bank*MIGRATION_BYTES;
+    if(cp[3]>=2)return;
+    if(!cp[3]) {
+        /* Unknown/failed load provenance cannot safely classify other owners.
+         * A marked current-format bank must not reinterpret real LFO3 values. */
+        if(!(fl_mig_known_mask&bit))return;
+        if(fl_mig_capture_mask&bit)fl_mig_capture(bank);
+        /* SY/stock transactions retire existing ownership only. Do not create
+         * an FM checkpoint in a project with no legacy targets and no new FM. */
+        if(!cp[3]&&!current_fm)return;
+    }
+    sr=fl_io_irq_lock();
+    if(cp[3]<2) {
+        /* Even no legacy targets needs a frozen empty state-1 checkpoint:
+         * otherwise a newly assigned FM would be captured on the next load. */
+        if(!cp[3]){cp[0]=cp[1]=cp[2]=0;cp[3]=1;}
+        cp[4+part]&=(u8)~(1u<<track);
+        /* Mark every valid state-1 transaction, including an already retired
+         * owner, so its final ordinary edit has an observable later flush. */
+        fl_dirty_mask|=bit;++fl_generation[bank];
+    }
+    fl_io_irq_restore(sr);
+}
 static void fl_mig_apply_to(u32 bank,volatile u8 *blob,u32 shadow) {
     u8 *cp=fl_migration_table+bank*MIGRATION_BYTES;volatile u8 *part,*old,*row;
     u32 p,t,s,n;
@@ -117,6 +156,8 @@ static void fl_mig_apply_to(u32 bank,volatile u8 *blob,u32 shadow) {
 static s32 fl_mig_run(u32 requested,u32 capture) {
     u32 bank,mask=0; s32 r;
     requested&=65535;
+    fl_mig_known_mask|=requested;
+    fl_mig_capture_mask=(fl_mig_capture_mask&~requested)|(capture?requested:0);
     for(bank=0;bank<16;++bank)if(requested&(1u<<bank)) {
         volatile u8 *blob=fl_mig_bank(bank);u32 p,t,found=0;
         u8 state=fl_migration_table[bank*MIGRATION_BYTES+3];
@@ -144,9 +185,11 @@ static s32 fl_mig_run(u32 requested,u32 capture) {
 }
 static void fl_migrate_new(void) {
     fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=1;
+    fl_mig_known_mask=65535;fl_mig_capture_mask=0;
 }
 static s32 fl_migrate_load(const char *base) {
     u32 n,marked,bank,completed=0; s32 r=fl_mig_text_read(base,0,&n,&marked);
+    fl_mig_known_mask=0;fl_mig_capture_mask=0;
     fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=0;if(r!=0)return r;
     fl_mig_active=marked;
     for(bank=0;bank<16;++bank)if(fl_migration_table[bank*MIGRATION_BYTES+3]==2)completed=1;
@@ -161,6 +204,8 @@ static s32 fl_migrate_load(const char *base) {
  * A legacy bank becomes pending even when project.work already has the comment. */
 static s32 fl_migrate_restored(const char *base,u32 mask) {
     u32 n,marked; s32 r=fl_mig_text_read(base,1,&n,&marked);
+    /* Do not reuse the pre-restore classification if the saved marker read fails. */
+    fl_mig_known_mask&=~(mask&65535);fl_mig_capture_mask&=~(mask&65535);
     if(r!=0&&r!=ABSENT)return r;
     fl_mig_pending&=~(mask&65535);
     return fl_mig_run(mask,!marked);
