@@ -51,8 +51,12 @@ fl_seq_source_kind:
         suba.l  %d3,%a0
         cmpi.l  #4,%d1
         bcc     fl_ssk_no
-        lea     0x8000182a,%a1
-        mvz.b   (%a1,%d2.l),%d3
+| 2.21 (29 Oct 2026): the event's bank is compared with the UI's bank, whose Parts PART_PTR holds
+| (as fl_seq_play_kind does), not with the track's played bank at 0x8000182a: that byte is 0xff
+| until the track first plays after a boot or a pattern switch, so the first event of a step whose
+| chord is a companion lock only (no native lock) read the stored Part, failed the FM signature
+| there and lost its chord: the first chord after power-on sounded as one note.
+        mvz.b   0x100b14ce,%d3
         cmp.l   %d0,%d3
         bne     fl_ssk_part
         movea.l PART_PTR,%a0

@@ -58,8 +58,10 @@ sl_seq_source_kind:
         suba.l  %d3,%a0
         cmpi.l  #4,%d1
         bcc     sl_ssk_no
-        lea     0x8000182a,%a1
-        mvz.b   (%a1,%d2.l),%d3          | the track's live bank
+| 2.21 (29 Oct 2026): compared with the UI's bank, whose Parts PART_PTR holds, not the track's
+| played bank at 0x8000182a (0xff until the track first plays after a boot or a pattern switch:
+| the first event of a companion-only lock step read the stored Part and lost its locks).
+        mvz.b   0x100b14ce,%d3           | the UI's bank
         cmp.l   %d0,%d3
         bne     sl_ssk_part
         movea.l PART_PTR,%a0             | the active bank: the blob the UI edits
