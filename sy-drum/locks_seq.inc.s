@@ -19,6 +19,7 @@ sl_seq_produce:
         bsr     sl_seq_queue_ptr
         cmpa.l  #0,%a0
         beq     sl_sp_done
+        bsr     sl_seq_defer_clear
         moveq   #-1,%d0                 | an entry is a whole SL_ROW (16-byte) row: A..F, G..J, padding
         move.l  %d0,(%a0)+
         move.l  %d0,(%a0)+
@@ -116,52 +117,55 @@ sl_seq_eligible:
         move.l  %a5,%d3                 | displaced
         lea     -28(%sp),%sp
         movem.l %d0-%d4/%a0-%a1,(%sp)
-        move.l  140(%sp),%d0            | producer bank arg 112 + save28
-        bsr     sl_seq_bank_ok
-        tst.l   %d0
-        beq     sl_se_done
         move.l  %d7,%d2
         move.l  152(%sp),%d0            | producer queue arg 124 + save28
         bsr     sl_seq_queue_ptr        | the entry takes the snapshot directly
         cmpa.l  #0,%a0
         beq     sl_se_done
         movea.l %a0,%a1
+        move.l  (%sp),%d4
+        and.l   12(%sp),%d4             | the stock's own trigger for this step
         move.l  140(%sp),%d0
+        bsr     sl_seq_bank_ok
+        tst.l   %d0
+        beq     sl_se_defer
+        bsr     sl_seq_defer_clear     | a0: this event's row is read now
+        move.l  140(%sp),%d0            | producer bank arg 112 + save28
         move.l  144(%sp),%d1
         move.l  148(%sp),%d3
-        jsr     sl_row:l
-        move.l  (%a0)+,(%a1)+           | immutable snapshot after condition accepted:
-        move.l  (%a0)+,(%a1)+           | the whole 16-byte row (A..F, G..J, padding)
-        move.l  (%a0)+,(%a1)+
-        move.l  (%a0),(%a1)
-        lea     -12(%a1),%a1
-        move.l  (%sp),%d0
-        and.l   12(%sp),%d0             | (d1 keeps the pattern for the machine test below)
-        bne     sl_se_done              | native musical event already eligible
-        move.l  4(%a1),%d4
-        ori.l   #0xffff,%d4
-        and.l   (%a1),%d4               | A..F (G H masked off)
-        cmpi.l  #-1,%d4
-        bne     sl_se_af
-        bra     sl_se_none
-sl_se_af:
-        move.l  140(%sp),%d0
-        bsr     sl_seq_source_kind
-        tst.l   %d0                     | a SY DRUM track in that bank's Part
-        beq     sl_se_none
-        moveq   #-1,%d4
-        cmp.l   (%a1),%d4               | A..D unlocked (only E / F, a sidecar track's on the
-        bne     sl_se_lock              | development line): not a lock trig on SY DRUM
-sl_se_none:
-        moveq   #-1,%d0                 | not a lock trig: the entry stays empty
-        move.l  %d0,(%a1)+
-        move.l  %d0,(%a1)+
-        move.l  %d0,(%a1)+
-        move.l  %d0,(%a1)
+        bsr     sl_seq_fill
+        beq     sl_se_done
+        move.l  12(%sp),%d0
+        or.l    %d0,(%sp)
         bra     sl_se_done
-sl_se_lock:
-        move.l  12(%sp),%d0             | a5's selected-step bit saved as d3
-        or.l    %d0,(%sp)               | stock combined trigger mask, never bank RAM
+| 2.21 (29 Oct 2026): at power-on the stock queues each track's first step while the
+| project loads, before this bank's lock table is ready, so that step lost its locks
+| (the first chord after power-on sounded as one note). The event is kept here and
+| its row is read when the stock consumes it, once the table is ready.
+sl_se_defer:
+        move.l  140(%sp),%d0
+        cmpi.l  #16,%d0
+        bcc     sl_se_done
+        move.l  144(%sp),%d1
+        cmpi.l  #16,%d1
+        bcc     sl_se_done
+        move.l  148(%sp),%d3
+        cmpi.l  #64,%d3
+        bcc     sl_se_done
+        lsl.l   #8,%d0
+        or.l    %d1,%d0
+        lsl.l   #8,%d0
+        or.l    %d3,%d0                 | bank<<16 | pattern<<8 | step
+        tst.l   %d4
+        beq     sl_sed_put
+        bset    #24,%d0                 | the stock already plays this step
+sl_sed_put:
+        bset    #31,%d0
+        move.l  %a1,%d1
+        subi.l  #sl_seq_queue,%d1
+        lsr.l   #2,%d1                  | one long per 16-byte row
+        lea     sl_seq_defer:l,%a0
+        move.l  %d0,(%a0,%d1.l)
 sl_se_done:
         movem.l (%sp),%d0-%d4/%a0-%a1
         lea     28(%sp),%sp
@@ -203,6 +207,11 @@ sl_seq_promote:                         | d0 is the caller's saved scratch; the 
         move.l  (%a0)+,(%a1)+
         move.l  (%a0)+,(%a1)+
         move.l  (%a0),(%a1)
+        lsr.l   #2,%d0
+        lea     sl_seq_defer:l,%a0
+        lea     (%a0,%d0.l),%a1
+        adda.l  #96,%a0                 | the scratch longs follow the 24 queue longs
+        move.l  (%a0,%d0.l),(%a1)
         move.l  (%sp)+,%a1
 sl_spro_out:
         rts
@@ -222,6 +231,7 @@ sl_seq_consume:
         lsl.l   #4,%d0
         lea     sl_seq_queue:l,%a1
         adda.l  %d0,%a1
+        bsr     sl_seq_defer_take
         bra     sl_sc_store
 sl_sc_empty:
         lea     sl_empty_row:l,%a1
@@ -419,6 +429,99 @@ sl_seq_release_control:
 sl_src_out:
         rts
 
+| a1 queue row, d0 bank, d1 pattern, d2 track, d3 step, d4 nonzero when the stock already
+| plays the step -> the row holds the step's locks or stays empty; d0 = 1 (tst.l done) when a
+| companion lock makes the step a lock trig. Other registers kept.
+sl_seq_fill:
+        lea     -24(%sp),%sp
+        movem.l %d1-%d4/%a0-%a1,(%sp)
+        move.l  %d0,-(%sp)
+        jsr     sl_row:l
+        move.l  (%a0)+,(%a1)+
+        move.l  (%a0)+,(%a1)+
+        move.l  (%a0)+,(%a1)+
+        move.l  (%a0),(%a1)
+        lea     -12(%a1),%a1
+        move.l  (%sp)+,%d0
+        tst.l   %d4
+        bne     sl_sf_keep
+        move.l  4(%a1),%d4
+        ori.l   #0xffff,%d4
+        and.l   (%a1),%d4
+        cmpi.l  #-1,%d4
+        beq     sl_sf_none
+        bsr     sl_seq_source_kind
+        beq     sl_sf_none
+        moveq   #-1,%d4
+        cmp.l   (%a1),%d4
+        beq     sl_sf_none
+        moveq   #1,%d0
+        bra     sl_sf_out
+sl_sf_none:
+        moveq   #-1,%d0
+        move.l  %d0,(%a1)
+        move.l  %d0,4(%a1)
+        move.l  %d0,8(%a1)
+        move.l  %d0,12(%a1)
+sl_sf_keep:
+        moveq   #0,%d0
+sl_sf_out:
+        movem.l (%sp),%d1-%d4/%a0-%a1
+        lea     24(%sp),%sp
+        tst.l   %d0
+        rts
+
+| a0 queue or scratch row -> its deferred event forgotten. All registers kept.
+sl_seq_defer_clear:
+        move.l  %d0,-(%sp)
+        move.l  %a1,-(%sp)
+        move.l  %a0,%d0
+        subi.l  #sl_seq_queue,%d0
+        lsr.l   #2,%d0
+        lea     sl_seq_defer:l,%a1
+        clr.l   (%a1,%d0.l)
+        movea.l (%sp)+,%a1
+        move.l  (%sp)+,%d0
+        rts
+
+| a1 queue row consumed for d5 = queue*8+track: a deferred event's row is read now that its
+| bank's table is ready (a bank still not ready leaves it empty). All registers kept.
+sl_seq_defer_take:
+        lea     -24(%sp),%sp
+        movem.l %d0-%d4/%a0,(%sp)
+        move.l  %a1,%d0
+        subi.l  #sl_seq_queue,%d0
+        lsr.l   #2,%d0
+        lea     sl_seq_defer:l,%a0
+        adda.l  %d0,%a0
+        move.l  (%a0),%d4
+        bpl     sl_sdt_out
+        clr.l   (%a0)
+        move.l  %d4,%d3
+        andi.l  #0xff,%d3               | step
+        move.l  %d4,%d1
+        lsr.l   #8,%d1
+        andi.l  #0xff,%d1               | pattern
+        move.l  %d4,%d0
+        swap    %d0
+        andi.l  #0xff,%d0               | bank
+        mvz.b   158(%sp),%d2            | the consumed event's bank (consume's 130(sp))
+        cmp.l   %d0,%d2
+        bne     sl_sdt_out
+        move.l  %d0,%d2
+        bsr     sl_seq_bank_ok
+        tst.l   %d0
+        beq     sl_sdt_out
+        move.l  %d2,%d0
+        move.l  %d5,%d2
+        andi.l  #7,%d2                  | track
+        andi.l  #0x01000000,%d4
+        bsr     sl_seq_fill
+sl_sdt_out:
+        movem.l (%sp),%d0-%d4/%a0
+        lea     24(%sp),%sp
+        rts
+
 | d0 bank -> d0=1 iff the complete bank is published and unblocked.
 | Every table/snapshot/effective reader checks this; other registers kept.
 sl_seq_bank_ok:
@@ -449,6 +552,12 @@ sl_sqc_loop:
         move.l  #-1,(%a0)+
         subq.l  #1,%d0
         bne     sl_sqc_loop
+        lea     sl_seq_defer:l,%a0
+        moveq   #24,%d0
+sl_sqc_defer:
+        clr.l   (%a0)+
+        subq.l  #1,%d0
+        bne     sl_sqc_defer
         movem.l (%sp),%d0/%a0
         lea     8(%sp),%sp
         move.l  %d2,-(%sp)
@@ -465,6 +574,8 @@ sl_sr_loop:
         move.l  #-1,(%a0)+
         subq.l  #1,%d0
         bne     sl_sr_loop
+| The deferred events stay: the stock's prefetched first steps outlive a project load's
+| reset and are promoted at PLAY, so their rows are still read when they are consumed.
         move.l  #0xff,%d0                | every row "no lock"
         move.l  %d0,sl_seq_cleanm:l
         movem.l (%sp),%d0/%a0
@@ -479,4 +590,5 @@ sl_seq_pending:     .fill 32,4,0xffffffff
 sl_seq_active:      .fill 32,4,0xffffffff
 sl_seq_context:     .fill 4,4,0xffffffff
 sl_seq_cleanm:      .long 0xff            | bit t = active[t] and pending[t] are all 0xff (no lock)
+sl_seq_defer:       .fill 32,4,0          | per queue/scratch row: bit31 deferred, bit24 stock trigger, bank, pattern, step
         .text
