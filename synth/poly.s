@@ -168,6 +168,9 @@
         .if     HAVE_SYDRUM
         .global po_ident, po_is_fm, po_signed | 2.11: SY DRUM (sy-drum/sydrum.s) on this engine: the tests,
         .global po_clock, po_voices, sy_state | and the state its engine reads
+        .elseif HAVE_PANEL_TRANSACTION
+        .global sy_state                 | 2.22: the quantizer's panel transaction (quantizer/panel_transaction.inc.s)
+                                         | reads it too, with or without SY DRUM in the remix
         .endif
         .set    VOICE_BASE, 0x800049d8
         .set    VOICE_STRIDE, 0xa8
