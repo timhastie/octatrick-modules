@@ -52,8 +52,12 @@ to a task switch (the scheduler saves no EMAC registers, and stock tasks
 do set MACSR). A Python model of the same arithmetic was the reference
 while it was written (not part of this repository).
 
-1. Snapshot the ring oldest-first; peak gate at 64 (16-bit units,
-   -54 dBFS): below it, HOLD.
+1. Snapshot the ring oldest-first and take its mean off every sample
+   (rounded, clamped to a word), so a DC offset does not count as signal;
+   peak gate at 64 (16-bit units, -54 dBFS) on what is left: below it,
+   HOLD. Without the mean a track whose effects leave an offset larger
+   than its swing never read: the normalised difference stayed positive
+   at every lag, so there was no lobe to pick.
 2. Scale so the peak lies in [384, 768): every sum below fits a signed
    long (W x 768^2 = 3.9e8; W2 x 768^2 = 1.2e9).
 3. Decimate by 4 with an 8-tap boxcar (11,025 Hz, 1,024 samples).
@@ -78,7 +82,7 @@ while it was written (not part of this repository).
    0.42 cents per unit).
 
 Cost, static: ~1.0 M instructions per analysis (the lag loop is 368 x
-656 x 3), ~190 per block for the copy (16 x 11 + the bank arithmetic).
+656 x 3; the mean is a second pass over the 4,096 samples), ~190 per block for the copy (16 x 11 + the bank arithmetic).
 
 ## Measured (ColdFire port, 26 Sep 2026)
 

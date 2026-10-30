@@ -19,7 +19,8 @@
 |                         window redrawn. Nothing runs when it is closed.
 |
 | THE DETECTOR (tu_analyse; a Python model of the same integer arithmetic
-| was the reference while it was written): peak gate at -54 dBFS; the 4,096 samples scaled so the peak
+| was the reference while it was written): the ring's mean taken off (DC);
+| peak gate at -54 dBFS; the 4,096 samples scaled so the peak
 | lies in [384, 768); an 8-tap boxcar decimates by 4 (11,025 Hz, 1,024
 | samples); McLeod's normalised square difference n(t) = 2 r(t) / (m0 +
 | m_t) for lags 1..368 (30 Hz) over W = 656 products, Q15; key maxima =
@@ -183,24 +184,48 @@ tu_close:
 | Clobbers d0-d7/a0-a6 (the caller saved them). Results in tu_note, tu_oct,
 | tu_cents, tu_f10, tu_valid (ever), tu_live (this reading confident).
 tu_analyse:
-| -- A: snapshot the ring, oldest first, and the peak ----------------------
+| -- A: snapshot the ring, oldest first, and its sum; then the mean taken
+| off every sample and the peak of what is left. Without it a DC offset
+| larger than the swing (a track's effects can leave one) keeps n(t)
+| positive at every lag: no negative crossing, no lobe, HOLD for ever. ----
         movel   tu_wr,%d0              | the oldest sample's index
         lea     tu_ring,%a0
         lea     tu_x,%a1
         movel   #NRING,%d1
-        moveq   #0,%d3                 | peak
+        moveq   #0,%d3                 | sum: |sum| <= 4096 x 32768 = 2^27
 1:      mvsw    %a0@(0,%d0:l:2),%d2
         movew   %d2,%a1@+
-        tstl    %d2
-        bpl.s   2f
-        negl    %d2
-2:      cmpl    %d3,%d2
-        ble.s   3f
-        movel   %d2,%d3
-3:      addql   #1,%d0
+        addl    %d2,%d3
+        addql   #1,%d0
         andil   #NRING-1,%d0
         subql   #1,%d1
         bne.s   1b
+        addil   #NRING/2,%d3
+        moveq   #12,%d0                | NRING = 2^12
+        asrl    %d0,%d3                | d3 = the mean, rounded
+        lea     tu_x,%a1
+        movel   #NRING,%d1
+        moveq   #0,%d4                 | peak
+        movel   #32767,%d5
+        movel   #-32768,%d6
+2:      mvsw    %a1@,%d2
+        subl    %d3,%d2                | x - mean, clamped to a word
+        cmpl    %d5,%d2
+        ble.s   3f
+        movel   %d5,%d2
+3:      cmpl    %d6,%d2
+        bge.s   4f
+        movel   %d6,%d2
+4:      movew   %d2,%a1@+
+        tstl    %d2
+        bpl.s   5f
+        negl    %d2
+5:      cmpl    %d4,%d2
+        ble.s   6f
+        movel   %d2,%d4
+6:      subql   #1,%d1
+        bne.s   2b
+        movel   %d4,%d3                | the peak, for B
         cmpil   #GATE,%d3
         blt.w   nosig
 | -- B: the peak into [PK_LO, PK_HI): d4 = left shift, d5 = right shift ---
