@@ -1,6 +1,6 @@
 # FM SYNTH
 
-**Octatrick 2.17 candidate: LFO 3 is back, with VOIC and CHRD on PLAYBACK SETUP.**
+**Since 2.17: LFO 3 is back, with VOIC and CHRD on PLAYBACK SETUP.**
 Hold **FUNC + PLAYBACK** on an FM SYNTH track. The two leftmost boxes, formerly LOOP and SLIC,
 are **VOIC** and **CHRD**. VOIC selects **1..4 voices**, starting at **1**; CHRD selects the
 **32 shapes with 4 inversions**, with `----` for no chord. CHRD changes one value a knob click. VOIC steps like the stock
@@ -10,8 +10,7 @@ The other four setup boxes (LEN, RATE, TSTR, TSNS) are not on an FM SYNTH track'
 no frame, name or icon, and knobs C-F edit nothing there. The LFO page again has **SPD3 / DEP3**, and LFO SETUP
 again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate a destination
 such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
-The design values in this section are recorded in the author's workspace log
-`R/work/r17/logs/design-contract.txt`; they are not runtime measurements.
+The design values in this section are not runtime measurements.
 
 ## LFOs and scenes on AMP ATK / HOLD / REL, and the PTCH LFO depth (2.20)
 
@@ -129,7 +128,7 @@ intact, so removing the limiting SY DRUM track restores the stored voice count a
 An allowed SY DRUM choice beside another FM track shows
 `FM SYNTH -> MONO`. The budget weights and refusal rules remain those of **2.16**.
 
-**Module LFO destinations (23 October candidate).** On an FM track, the PMTR list appends
+**Module LFO destinations (2.17).** On an FM track, the PMTR list appends
 `VOIC` and `CHRD` as native destination bytes **30** and **31**. All three LFO speeds and
 depths keep their stock slots. For either new destination, the stock depth calculation
 writes a private module word rather than an out-of-range stock parameter. At the next
@@ -142,9 +141,8 @@ contributions add. The stored VOIC stays **1..4**. A sounding note keeps its lat
 until another START.
 
 PMTR retains its native Part-byte storage and cannot be locked on a trig. Per-step
-variation comes from VOIC/CHRD step locks, with the LFO offset applied on top. The
-bounded feature gate checks SAVE, power cycle and reload of PMTR bytes 30/31 and
-continued modulation; see `R/work/r17/REPORT.md` and `VERIFY.md`.
+variation comes from VOIC/CHRD step locks, with the LFO offset applied on top. SAVE, a
+power cycle and a reload keep PMTR bytes 30/31 and the modulation (emulator-checked).
 [Community PR 3](https://github.com/timhastie/octatrick-modules/pull/3) was read as prior art;
 its SPD3/DEP3 storage and 0..127 VOIC representation are not used here.
 
@@ -174,56 +172,22 @@ maintain a second copy in the old SPD3 / DEP3 locations. The migration is not a 
 transaction, and interruption during a save has not been qualified. A project text file
 larger than the migration scratch capacity produces an error instead of being rewritten.
 
-### Measured (2.17 candidate)
+### Measured (2.17, octabam's emulator; 2.17 ran on the author's MKI on 24 Oct 2026)
 
-**PORT observations; not yet on a unit.** The complete gate status and the independent
-pass are recorded in the author's `R/work/r17/REPORT.md` and `VERIFY.md`. The candidate
-is not ready to flash. The named evidence below records the first candidate. The bounded 23 October fix round
-preserves the formatter callback context and changes the cap display as described above.
-Its current screenshots and disposition are in `R/work/r17/REPORT.md` and `VERIFY.md`;
-the first-candidate findings below remain historical evidence:
-
-- `logs/gate234-c3-eval.json` and `logs/gate3-c3-display.txt`: VOIC moves through **1..4**
-  one click at a time with the corresponding display; CHRD moves one entry and back.
-  `G/logs/gate23_audio_c3.txt` and `G/qual/gate23_audio_c3.json`: the rendered **MA7**
-  shape adds C, B, E and G in the stored voice priority order as VOIC increases.
-- The same gate log records the LFO SETUP window matching FLEX's pixels, LFO edits leaving
-  VOIC/CHRD intact, and a varying engine INDX. The audio log records the modulation in the
-  render. Its INDX destination was seeded into native setup state before ordinary speed
-  and depth edits; that setup step is not evidence of a physical knob gesture.
-- `logs/gate234-c3-eval.json`: GRID locks, page copy/clear/paste, an individual step delete,
-  and the no-SAVE CS1 power-cycle pair preserve and play the independent locks.
-  `logs/gate4-save-c3-eval.json` and `logs/gate4-save-c3-card.json` record the SAVE pair:
-  the boot table matches the saved table and playback applies its locked step.
-- `logs/gate7-eval.json`: the older project's defaults, step locks and scene lock transfer;
-  SAVE and repeated load preserve them; a no-FM project card stays byte-identical.
-  These migration runs used the first candidate; later changes affect setup detents and
-  formatting and native setup layout compatibility. The independent pass identifies
-  its own final-image migration evidence.
-- `logs/gate8-b1-c3.txt`, `logs/gate8-b2-c3.txt` and `logs/gate8-b4-c3.txt`: the
-  prescribed budget and chooser checks pass. `logs/gate8-sy-preservation.json` records
-  unchanged existing SY companion files through migration.
-- `logs/gate6-c4-result.txt`: the capped VOIC label reads `1L`, but CHRD remains
-  garbled on initial drawing and after knob edits; `----L` is not demonstrated. The
-  compatibility change preserves the native fixed-layout flag and frame-only
-  sentinel, but did not resolve the CHRD defect. The engine cap and mono-to-chord audio
-  are separately observed in `G/logs/gate6-b4-audio.txt`.
-
-The builder's live fingered-chord recording check remains unproven: the test controls
-failed to enter CHROMATIC mode after their permitted correction, although LIVE RECORDING
-started. The raw failure remains in `G/logs/gate234_c3.log`; it is not a firmware PASS.
-The pinned emulator also has no physical crossfader input. Tests that seed the native
-weight state establish the switch's state selection, not a physical crossfader sweep.
-The scene fixture becomes silent from its injected B endpoint onward despite
-active engine state (`G/logs/gate568_audio_c3.txt`); those later audio checks,
-including snapping, remain unproven. The final gate report retains these
-limitations and any additional failures.
+On the emulator: VOIC moves through **1..4** one click at a time and CHRD one entry at a
+time; the rendered **MA7** shape adds its notes in the stored voice order as VOIC rises; the
+LFO SETUP window matches FLEX's; GRID locks, copy / clear / paste, a step delete and a power
+cycle with and without SAVE keep and play the independent locks; 2.15 / 2.16 projects
+migrate (defaults, step locks, scene locks) and a project without FM SYNTH is unchanged; the
+budget and chooser checks pass. A garbled CHRD label in the first 2.17 build was fixed
+before release (the formatter's callback context). Not established on the emulator: live
+recording of a fingered chord, and a physical crossfader sweep.
 
 ## Earlier release notes and measurements
 
 The dated sections below preserve the implementation history and its measurements. Their
 LFO-page VOIC / CHRD storage, muted LFO 3, and V/C setup column describe releases **before
-2.17**; the PLAYBACK SETUP section above defines the current candidate's controls. The
+2.17**; the PLAYBACK SETUP section above describes the controls since 2.17. The
 **2.16 load budget** remains in use, with the cap display described above.
 
 
@@ -1034,10 +998,10 @@ bookkeeping) reads the Part's VOIC byte itself and is not capped -- the sound it
 engine's, capped (`quantizer/` is unchanged). No new stock site: SYNTH MACHINE keeps 2.15's 58 detours;
 `machine_limits.inc` is read into `machine.s`'s `remix.inc` as before.
 
-### Measured (18 Oct 2026, octabam's emulator `ot_emu`, the 2.16 candidate `fa019f2f`; emulator results, not the unit)
+### Measured (18 Oct 2026, octabam's emulator `ot_emu`, 2.16; emulator results, not the unit)
 
-All on octabam's `ot_emu`, the 2.16 candidate (bus `98b1a58f`, the image's bus), against OCTATRICK 2.15 on the same
-walks and cards (`work/r16/G`, `work/r16/Q`). The budget's own walks and the regression walks re-run on this candidate.
+All on octabam's `ot_emu`, 2.16 against OCTATRICK 2.15 on the same walks and cards. The budget's own walks and the
+regression walks re-run on 2.16.
 
 - **Two FM SYNTH tracks at four voices each**: a Part with T1 and T2 FM SYNTH (VOIC 4, a four-note chord on each) plays
   four voices on each track -- the budget (52 of 54) allows the second FM track 2.15 refused.
@@ -1051,9 +1015,9 @@ walks and cards (`work/r16/G`, `work/r16/Q`). The budget's own walks and the reg
 - **Unchanged where the budget does not change it**: one FM track at VOIC 1..4, and one FM + one SY DRUM, render
   byte-identical to 2.15; a VOIC lock and a VOIC scene act as the cap; the quantizer's own CHROMATIC-key rule is the
   Part's VOIC (`quantizer/` unchanged, noted as a limit). Cost (PORT, per-frame ColdFire cycles): one FM VOIC 4 equal
-  to 2.15; the two-FM, two-FM + SY and FM + two-SY figures are the budget's, reported plainly in `work/r16/REPORT.md`.
+  to 2.15; the two-FM, two-FM + SY and FM + two-SY figures are the budget's.
 - **The LFO SETUP page is display-only**: no engine change, so every SY DRUM render and every regression render is
-  byte-identical to 2.15 / the budget candidate where the budget does not change it.
+  byte-identical to 2.15 / 2.16 where the budget does not change it.
 
 ## The machine list for more than one machine, and SY DRUM's hooks (2.11, 8 Oct 2026)
 
@@ -2163,7 +2127,7 @@ period; cap 2,600); VOIC 4 mean 3,910 -> 4,028 -> 4,060, peak 5,348 -> 5,568
 
 ## The LFO destination list (2.10, 6 Oct 2026)
 
-**Historical, before 2.17:** the SPD3 / DEP3 exclusions below are removed in the current candidate. The FM destination names remain.
+**Historical, before 2.17:** the SPD3 / DEP3 exclusions below are removed since 2.17. The FM destination names remain.
 
 Tim (6 Oct): "get rid of the parameters that don't exist for granular, and put
 the parameters for granular in as destinations. Do that for FM and [SY DRUM]

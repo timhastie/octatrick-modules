@@ -157,7 +157,7 @@ from 3 + 11 to 3 + 19 entries (the count poke 22). With SCALE OFF the hook
 is the displaced instructions and a test; with the track's switch OFF, two
 tests more.
 
-**Measured** (2.19 candidate, 24 Oct 2026; the pinned emulator, the
+**Measured** (2.19, 24 Oct 2026; the pinned emulator, the
 octatrick remix on octabam 6e4aeb76; the reference is the 2.18 image
 running the same scripts; emulator counts, nothing here ran on a unit; the
 scripts and logs are in the author's workspace, not in this repository):

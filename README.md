@@ -46,7 +46,8 @@ to watch.
   note. The CHROMATIC keyboard of
   a synth track spans octaves -4..+4 (FUNC + LEFT/RIGHT). The engine is
   a DRAM unit in octabam's sample-RAM reserve (10 MB off the sample pool);
-  the page is a pinned ROM cave whose FM SYNTH descriptor is a runtime
+  the page is a DRAM unit too (since 2.21; a pinned ROM cave at
+  `0x400d24d0` until 2.20), whose FM SYNTH descriptor is a runtime
   clone of the stock FLEX record, built in the unit's RAM on first use --
   the repository carries no byte of the stock record. The AMP SETUP page
   (FUNC + AMP) of every audio track has a sixth box, LEG -- the legato
@@ -73,9 +74,10 @@ to watch.
   kept, as in the stock firmware; FX slots are kept. This applies to a
   change to or from FM SYNTH or SY DRUM (either list; until 2.14 also a marker file);
   a stock machine's init is a new project's; a change between stock
-  machines is stock's. Since 2.15 a selection guard keeps a Part within what
-  the unit's processor can play: at most 2 SY DRUM tracks, 1 FM SYNTH track,
-  or FM SYNTH with 1 SY DRUM track -- both lists and copy / paste refuse more,
+  machines is stock's. Since 2.15 a guard keeps a Part within what the
+  unit's processor can play; since 2.16 it is one load budget per Part (two
+  FM SYNTH tracks fit, the FM voices capped beside SY DRUM tracks; at most
+  2 FM SYNTH tracks and 2 SY DRUM tracks, not two of each) -- both lists and copy / paste refuse more,
   with a message (limits from PROCESSOR LOAD readings on the author's MKI).
   `synth/README.md`.
 - **`sy-drum/`** (key `SY DRUM`, since 2.11; requires `SYNTH MACHINE`) -- a
@@ -238,8 +240,8 @@ flashed on their own; what they changed is in the 2.21 image but was not
 tested there item by item. 2.21 was flashed on the author's MKI (29 Oct
 2026) and works there: after a power off and on, the first chord the
 sequencer plays on step 1 is a chord, not one note, in an unsaved project
-and after SAVE PROJECT, and later passes and STOP / PLAY play as before. Its
-other two fixes from the unit were checked there on the 2.21 test builds of
+and after SAVE PROJECT, and later passes and STOP / PLAY play as before. The
+chromatic-key chord fix and the setup-values fix were checked there on the 2.21 test builds of
 27 and 28 Oct 2026, which carry the same code for them: with SCALE set, a
 chord played on the chromatic trig keys of an FM SYNTH track gives the same
 notes on every press, and edited FM SYNTH and SY DRUM PLAYBACK SETUP values
@@ -253,11 +255,10 @@ real-time build of octabam's emulator and a virtual front panel). Read
 octabam's flashing notes first, power-cycle the unit after an OS upgrade,
 and SAVE or SYNC TO CARD after changing project settings.
 
-Combining with other modules: until 2.20 the synth page was pinned at the
-start of the second free gap (`0x400d24d0`), which octabam's `tempo-bus`
-also uses, so the ledger refused that pair; since 2.21 the page is a DRAM
-unit and nothing of the synth sits in that gap (the pair has not been
-built since). The synth engine shares the sample-RAM
+Combining with other modules: since 2.21 the FM SYNTH page is a DRAM
+unit; of the second free gap (`0x400d24d0`) the synth only checks that the
+16 bytes the stock DELAY reads there are stock (until 2.20 the page was
+pinned there). The synth engine shares the sample-RAM
 reserve with the other DRAM modules (USB, MIDI SCENES) inside one runtime.
 PROCESSOR LOAD declares conflicts with octabam's CF METER (the same two
 frame-interrupt sites) and TEMPO BUS (the TEMPO popup), and runs beside
@@ -292,13 +293,12 @@ below say what each brought, and 2.21 releases all of it.
     the same path and have the same fix. The lock source check also compares
     the bank the UI shows (a consistency fix; alone it did not cure B).
     (C) A VOIC / CHRD edit could come back after a power-off without SAVE
-    as the value from before the edit (the page showing the new one, the
-    engine playing the old one): a migration checkpoint still pending was
+    as the value from before the edit: a migration checkpoint still pending was
     replayed over the newer edit. Edited FM SYNTH and SY DRUM PLAYBACK
     SETUP values now survive the power-off, with and without SAVE. (D) The FM
     SYNTH page is a DRAM unit linked into the runtime, as the engine is:
     until 2.20 it sat at `0x400d24d0`, and the stock DELAY reads the 16
-    bytes there past its own table (found by Jannik Aßfalg, Modwerk #895);
+    bytes there past its own table (found and fixed the same way by Jannik Aßfalg in Modwerk #895);
     they hold their stock values again. On the author's MKI: B on 29 Oct
     2026, unsaved and after SAVE; A and C on the 2.21 test builds of 27 and
     28 Oct 2026, which carry the same code for them; D and SY DRUM's share
