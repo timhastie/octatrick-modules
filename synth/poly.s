@@ -2586,7 +2586,10 @@ po_st_chord:
         cmpi.l  #0x4ef9,%d1              | without the quantizer has zeros: no scale) ...
         bne     po_st_ns
         jsr     SCALE_AT                 | ... its pitch-class mask, 0 = OFF (clobbers d0, a0)
-po_st_ns:
+        btst    %d2,QZ_AUDIO_OFF_AT      | ... unless this audio track does not FOLLOW the scale
+        beq     po_st_ns                 | (the quantizer's per-track bit, 2.21): then the scale
+        moveq   #0,%d0                   | is OFF for the track -- po_snap, ROOT and the keys' sweep
+po_st_ns:                                | above all read T_SCALE (30 Oct 2026, Tim's report)
         move.l  %d0,T_SCALE(%a5)
         move.l  #CV_STRIDE,%d0
         muls.l  %d2,%d0
