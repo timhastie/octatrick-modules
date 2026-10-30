@@ -1,5 +1,15 @@
 | SCALE QUANTIZER -- the DRAM unit (13 Sep 2026; a DRAM unit since 28 Sep 2026). GNU as.
 |
+| OCTATRICK 2.22 (29 Oct 2026): the per-track switches are two rows.
+|   * PROJECT > CONTROL > SEQUENCER rows 7 and 8, TRACK and FOLLOW, replace
+|     the sixteen rows MIDI 1..8 SCALE (2.15) and AUDIO 1..8 SCALE (2.19):
+|     TRACK picks the track (AUDIO 1 .. AUDIO 8, MIDI 1 .. MIDI 8; it only
+|     chooses what FOLLOW shows, no sound changes, a RAM byte that starts at
+|     AUDIO 1 and is not saved), FOLLOW is that track's ON / OFF. Stock's
+|     three rows + SCALE, ROOT, GLIDE, TRACK, FOLLOW = 8. The settings are
+|     2.21's: the same bits of NV_AOFF / NV_MOFF, the same project-file
+|     lines, so a project saved on 2.21 loads with the same tracks OFF.
+|
 | OCTATRICK 2.19 (24 Oct 2026): what an AUDIO track plays follows the scale.
 |   * qz_atrig, a jmp at 0x4000c614 in the frame builder's trig path, right
 |     after a trig's locks are applied to the track's parameter words: with
@@ -13,7 +23,7 @@
 |     recorded in C MAJOR plays its E, A, B as Eb, Ab, Bb in C MINOR and
 |     as recorded again in C MAJOR.
 |   * THE PER-TRACK SWITCH: SEQUENCER rows 15..22, "AUDIO 1 SCALE" ..
-|     "AUDIO 8 SCALE", ON (default) / OFF, one battery-RAM byte NV_AOFF
+|     "AUDIO 8 SCALE" (TRACK AUDIO n + FOLLOW since 2.22), ON (default) / OFF, one battery-RAM byte NV_AOFF
 |     0x100b14eb (bit t = audio track t+1 is OFF), saved as
 |     "#SEQUENCER_AUDIO_SCALE_OFF=n" after the MIDI line. OFF = SCALE OFF
 |     for that track's sequencer, PTCH knob, PTCH locks, CHROMATIC keys,
@@ -36,7 +46,7 @@
 |     RECORDING (stock: NOTE + NOT2..4 without TRAN, its note-offs
 |     recomputed at the release).
 |   * THE PER-TRACK SWITCH: PROJECT > CONTROL > SEQUENCER rows 7..14, "MIDI
-|     1 SCALE" .. "MIDI 8 SCALE", ON (default) / OFF. A MIDI track set OFF is
+|     1 SCALE" .. "MIDI 8 SCALE" (TRACK MIDI n + FOLLOW since 2.22), ON (default) / OFF. A MIDI track set OFF is
 |     a track with SCALE OFF in every path -- the NOTE knob, NOTE locks, the
 |     CHROMATIC keys and their readout, the note stage, the preview. Stored
 |     as one battery-RAM byte, NV_MOFF 0x100b14ef (bit t = MIDI track t+1 is
@@ -201,13 +211,8 @@
         .global qz_keyidx, qz_octkey, qz_octdraw, qz_octnum, qz_heldmark
         .global qz_mknob, qz_mplock, qz_mkey
         .global qz_mnote, qz_mprev
-        .global qz_lbl_m1, qz_lbl_m2, qz_lbl_m3, qz_lbl_m4, qz_lbl_m5, qz_lbl_m6, qz_lbl_m7, qz_lbl_m8
-        .global qz_get_m1, qz_get_m2, qz_get_m3, qz_get_m4, qz_get_m5, qz_get_m6, qz_get_m7, qz_get_m8
-        .global qz_set_m1, qz_set_m2, qz_set_m3, qz_set_m4, qz_set_m5, qz_set_m6, qz_set_m7, qz_set_m8
         .global qz_atrig
-        .global qz_lbl_a1, qz_lbl_a2, qz_lbl_a3, qz_lbl_a4, qz_lbl_a5, qz_lbl_a6, qz_lbl_a7, qz_lbl_a8
-        .global qz_get_a1, qz_get_a2, qz_get_a3, qz_get_a4, qz_get_a5, qz_get_a6, qz_get_a7, qz_get_a8
-        .global qz_set_a1, qz_set_a2, qz_set_a3, qz_set_a4, qz_set_a5, qz_set_a6, qz_set_a7, qz_set_a8
+        .global qz_lbl_trk, qz_get_trk, qz_set_trk, qz_lbl_fol, qz_get_fol, qz_set_fol
         .set    OCT_WORD, 0x460d16fc      | stock's CHROMATIC octave word: 0 or 1 (FUNC + LEFT/RIGHT eor it)
         .set    KEYS_AT, 0x400d2cb0       | keys.s, pinned (manifest KEYS_AT): the paraphonic key mailbox
         .set    qz_pkey, KEYS_AT          |   the live key (index + 1) per track, 8 bytes
@@ -2043,27 +2048,51 @@ qz_s_store:
         move.b  %d0,(%a0)
         rts
 
-| (2.15) rows 7..14, "MIDI 1 SCALE" .. "MIDI 8 SCALE": ON (the track follows
-| SCALE and ROOT, the default) / OFF (the track is stock, as with SCALE OFF).
-| One stub per row (d0 := the track), one getter and one setter behind them;
-| the value is bit t of NV_MOFF, set = OFF. The setter's (delta, wrap) as
-| the other rows': the LEVEL knob and the arrows step ON / OFF (clamped),
-| [YES] toggles.
-qz_get_m1:      moveq   #0,%d0
-                jbra    qz_get_m
-qz_get_m2:      moveq   #1,%d0
-                jbra    qz_get_m
-qz_get_m3:      moveq   #2,%d0
-                jbra    qz_get_m
-qz_get_m4:      moveq   #3,%d0
-                jbra    qz_get_m
-qz_get_m5:      moveq   #4,%d0
-                jbra    qz_get_m
-qz_get_m6:      moveq   #5,%d0
-                jbra    qz_get_m
-qz_get_m7:      moveq   #6,%d0
-                jbra    qz_get_m
-qz_get_m8:      moveq   #7,%d0
+| (2.22) rows 7 and 8, TRACK and FOLLOW: the per-track switch of 2.15 (MIDI)
+| and 2.19 (AUDIO), one pair of rows instead of sixteen. TRACK only picks the
+| track the next row shows -- AUDIO 1 .. AUDIO 8, then MIDI 1 .. MIDI 8 -- and
+| changes no sound: it is qz_trk, a byte of this unit's RAM (0 = AUDIO 1 at
+| every power-on, not saved). FOLLOW is that track's switch: ON (the track
+| follows SCALE and ROOT, the default) / OFF (the track is stock, as with
+| SCALE OFF), the same bits as before -- bit t of NV_AOFF for AUDIO t+1, bit
+| t of NV_MOFF for MIDI t+1, set = OFF -- so the bytes, the project-file lines
+| and every path that tests them are 2.21's. The window draws every visible
+| row's getter at each redraw, so FOLLOW reads the newly picked track's bit
+| as soon as TRACK moves. The setters' (delta, wrap) as the other rows': the
+| LEVEL knob and the arrows step (clamped: TRACK stops at AUDIO 1 and MIDI 8,
+| FOLLOW at OFF and ON), [YES] wraps (TRACK: past MIDI 8 -> AUDIO 1; FOLLOW
+| toggles).
+qz_get_trk:                             | "AUDIO 1" .. "MIDI 8"
+        jbsr    qz_trk_of
+        lea     qz_trknames(%pc),%a0
+        move.l  (%a0,%d0.l*4),%d0
+        rts
+qz_set_trk:
+        lea     qz_trk(%pc),%a0
+        moveq   #15,%d1
+        jbra    qz_set_any
+qz_get_fol:                             | "ON" / "OFF": the TRACK row's track
+        jbsr    qz_trk_of
+        moveq   #8,%d1
+        cmp.l   %d1,%d0
+        jblt    qz_get_a                | 0..7: AUDIO d0+1
+        sub.l   %d1,%d0                 | 8..15: MIDI d0-7
+        jbra    qz_get_m
+qz_set_fol:                             | (delta, wrap) at 4(sp) / 8(sp), as the setter jumped to
+        jbsr    qz_trk_of
+        moveq   #8,%d1
+        cmp.l   %d1,%d0
+        jblt    qz_set_a
+        sub.l   %d1,%d0
+        jbra    qz_set_m
+qz_trk_of:                              | d0 := qz_trk, 0..15 (clobbers a0)
+        lea     qz_trk(%pc),%a0
+        mvz.b   (%a0),%d0
+        moveq   #15,%d1
+        and.l   %d1,%d0
+        rts
+
+| The MIDI track d0's switch (2.15): the value is bit d0 of NV_MOFF.
 qz_get_m:
         mvz.b   NV_MOFF,%d1
         btst    %d0,%d1
@@ -2075,21 +2104,6 @@ qz_gm_off:
         lea     qz_n0(%pc),%a0          | "OFF"
         move.l  %a0,%d0
         rts
-qz_set_m1:      moveq   #0,%d0
-                jbra    qz_set_m
-qz_set_m2:      moveq   #1,%d0
-                jbra    qz_set_m
-qz_set_m3:      moveq   #2,%d0
-                jbra    qz_set_m
-qz_set_m4:      moveq   #3,%d0
-                jbra    qz_set_m
-qz_set_m5:      moveq   #4,%d0
-                jbra    qz_set_m
-qz_set_m6:      moveq   #5,%d0
-                jbra    qz_set_m
-qz_set_m7:      moveq   #6,%d0
-                jbra    qz_set_m
-qz_set_m8:      moveq   #7,%d0
 qz_set_m:                               | d0 = the track; (delta, wrap) at 4(sp) / 8(sp)
         move.l  %d2,-(%sp)              | (8(sp) / 12(sp) now)
         move.l  %d0,%d2
@@ -2123,23 +2137,7 @@ qz_sm_store:
         move.l  (%sp)+,%d2
         rts
 
-| (2.19) rows 15..22, "AUDIO 1 SCALE" .. "AUDIO 8 SCALE": as the MIDI rows, on
-| NV_AOFF (bit t set = audio track t+1 is OFF).
-qz_get_a1:      moveq   #0,%d0
-                jbra    qz_get_a
-qz_get_a2:      moveq   #1,%d0
-                jbra    qz_get_a
-qz_get_a3:      moveq   #2,%d0
-                jbra    qz_get_a
-qz_get_a4:      moveq   #3,%d0
-                jbra    qz_get_a
-qz_get_a5:      moveq   #4,%d0
-                jbra    qz_get_a
-qz_get_a6:      moveq   #5,%d0
-                jbra    qz_get_a
-qz_get_a7:      moveq   #6,%d0
-                jbra    qz_get_a
-qz_get_a8:      moveq   #7,%d0
+| The audio track d0's switch (2.19): as the MIDI one, on NV_AOFF.
 qz_get_a:
         mvz.b   NV_AOFF,%d1
         btst    %d0,%d1
@@ -2147,21 +2145,6 @@ qz_get_a:
         lea     qz_s_on(%pc),%a0
         move.l  %a0,%d0
         rts
-qz_set_a1:      moveq   #0,%d0
-                jbra    qz_set_a
-qz_set_a2:      moveq   #1,%d0
-                jbra    qz_set_a
-qz_set_a3:      moveq   #2,%d0
-                jbra    qz_set_a
-qz_set_a4:      moveq   #3,%d0
-                jbra    qz_set_a
-qz_set_a5:      moveq   #4,%d0
-                jbra    qz_set_a
-qz_set_a6:      moveq   #5,%d0
-                jbra    qz_set_a
-qz_set_a7:      moveq   #6,%d0
-                jbra    qz_set_a
-qz_set_a8:      moveq   #7,%d0
 qz_set_a:                               | d0 = the track; (delta, wrap) at 4(sp) / 8(sp)
         move.l  %d2,-(%sp)              | (8(sp) / 12(sp) now)
         move.l  %d0,%d2
@@ -2366,22 +2349,8 @@ qz_key4:        .asciz  "#SEQUENCER_MIDI_SCALE_OFF="
 qz_fmt4:        .asciz  "#SEQUENCER_MIDI_SCALE_OFF=%d\r\n"
 qz_key5:        .asciz  "#SEQUENCER_AUDIO_SCALE_OFF="
 qz_fmt5:        .asciz  "#SEQUENCER_AUDIO_SCALE_OFF=%d\r\n"
-qz_lbl_a1:      .asciz  "AUDIO 1 SCALE"
-qz_lbl_a2:      .asciz  "AUDIO 2 SCALE"
-qz_lbl_a3:      .asciz  "AUDIO 3 SCALE"
-qz_lbl_a4:      .asciz  "AUDIO 4 SCALE"
-qz_lbl_a5:      .asciz  "AUDIO 5 SCALE"
-qz_lbl_a6:      .asciz  "AUDIO 6 SCALE"
-qz_lbl_a7:      .asciz  "AUDIO 7 SCALE"
-qz_lbl_a8:      .asciz  "AUDIO 8 SCALE"
-qz_lbl_m1:      .asciz  "MIDI 1 SCALE"
-qz_lbl_m2:      .asciz  "MIDI 2 SCALE"
-qz_lbl_m3:      .asciz  "MIDI 3 SCALE"
-qz_lbl_m4:      .asciz  "MIDI 4 SCALE"
-qz_lbl_m5:      .asciz  "MIDI 5 SCALE"
-qz_lbl_m6:      .asciz  "MIDI 6 SCALE"
-qz_lbl_m7:      .asciz  "MIDI 7 SCALE"
-qz_lbl_m8:      .asciz  "MIDI 8 SCALE"
+qz_lbl_trk:     .asciz  "TRACK"
+qz_lbl_fol:     .asciz  "FOLLOW"
 qz_s_on:        .asciz  "ON"
 qz_lbl_scale:   .asciz  "SCALE"
 qz_lbl_root:    .asciz  "ROOT"
@@ -2391,6 +2360,7 @@ qz_gbuf:        .fill   8, 1, 0          | the GLIDE row's number (RAM)
 qz_ofmt:        .fill   8, 1, 0          | the keyboard's octave format with ROOT's name: "A# %d" (RAM)
 qz_legato:      .byte   0                | the press in flight is a legato one (qz_leg2 -> qz_leg3)
 qz_synthq:      .byte   0                | qz_quant runs for a synth track (> 0) or a MIDI note (< 0, 2.13; qz_pcof reads it)
+qz_trk:         .byte   0                | (2.22) the TRACK row: 0..7 = AUDIO 1..8, 8..15 = MIDI 1..8 (RAM, not saved)
         .balign 4
 qz_chain:       .long   0                | ... and continues a held note: that note's start (ticks), 0 = a fresh note
 qz_mbias:       .long   0                | (2.18) qz_pcof's MIDI bias: 0 for NOTE, NOTE + 8 for NOT2..4 (qz_quantm / qz_quantmb)
@@ -2424,6 +2394,40 @@ qz_n21:  .asciz  "PELOG"
 qz_n22:  .asciz  "DBLHARM"
 qz_n23:  .asciz  "SUPRLOC"
 qz_n24:  .asciz  "LYD.DOM"
+        .balign 4
+qz_trknames:                            | (2.22) TRACK 0..15 -> its name (7 characters at most, as qz_names)
+        .long   qz_t0
+        .long   qz_t1
+        .long   qz_t2
+        .long   qz_t3
+        .long   qz_t4
+        .long   qz_t5
+        .long   qz_t6
+        .long   qz_t7
+        .long   qz_t8
+        .long   qz_t9
+        .long   qz_t10
+        .long   qz_t11
+        .long   qz_t12
+        .long   qz_t13
+        .long   qz_t14
+        .long   qz_t15
+qz_t0:  .asciz  "AUDIO 1"
+qz_t1:  .asciz  "AUDIO 2"
+qz_t2:  .asciz  "AUDIO 3"
+qz_t3:  .asciz  "AUDIO 4"
+qz_t4:  .asciz  "AUDIO 5"
+qz_t5:  .asciz  "AUDIO 6"
+qz_t6:  .asciz  "AUDIO 7"
+qz_t7:  .asciz  "AUDIO 8"
+qz_t8: .asciz  "MIDI 1"
+qz_t9: .asciz  "MIDI 2"
+qz_t10: .asciz  "MIDI 3"
+qz_t11: .asciz  "MIDI 4"
+qz_t12: .asciz  "MIDI 5"
+qz_t13: .asciz  "MIDI 6"
+qz_t14: .asciz  "MIDI 7"
+qz_t15: .asciz  "MIDI 8"
         .balign 4
 qz_rootnames:                           | ROOT 0..11 -> its name (the ROOT row's value, the keyboard readout)
         .long   qz_r0, qz_r1, qz_r2, qz_r3, qz_r4, qz_r5, qz_r6, qz_r7, qz_r8, qz_r9, qz_r10, qz_r11

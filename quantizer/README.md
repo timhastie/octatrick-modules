@@ -1,6 +1,8 @@
 # Scale quantizer
 
-(24 Oct 2026, Octatrick 2.19: what an audio track's sequencer plays follows the scale -- a
+(29 Oct 2026, Octatrick 2.22: the sixteen per-track rows MIDI 1..8 SCALE and AUDIO 1..8 SCALE are two
+rows, TRACK and FOLLOW -- "TRACK and FOLLOW (2.22)" below.
+24 Oct 2026, Octatrick 2.19: what an audio track's sequencer plays follows the scale -- a
 recorded pattern changes key with SCALE / ROOT, nothing stored changes -- and AUDIO 1..8 SCALE take an
 audio track out of it -- "Audio tracks: what they play, and AUDIO n SCALE (2.19)" below.
 24 Oct 2026, Octatrick 2.18: an audio track's CHROMATIC keyboard marks the note a key sounds
@@ -87,6 +89,38 @@ offset stored before stays as it is until it is turned, and is still
 snapped on the way out. The offsets remain semitones in the Part; SCALE OFF
 and MIDI n SCALE OFF are stock.
 
+## TRACK and FOLLOW (2.22)
+
+PROJECT > CONTROL > SEQUENCER lists stock's three rows, then **SCALE, ROOT,
+GLIDE, TRACK, FOLLOW** -- eight rows, where 2.21 had twenty-two (MIDI 1
+SCALE .. MIDI 8 SCALE, AUDIO 1 SCALE .. AUDIO 8 SCALE). The per-track
+switches are the same switches; only the way to them changed:
+
+- **TRACK** picks the track you look at: **AUDIO 1 .. AUDIO 8, then MIDI 1
+  .. MIDI 8**. It changes nothing you hear. The LEVEL knob and LEFT / RIGHT
+  step it and stop at AUDIO 1 and MIDI 8; [YES] steps it on and wraps from
+  MIDI 8 to AUDIO 1, as on the other rows. It is a byte of the unit's RAM,
+  not a setting: it starts at AUDIO 1 at every power-on and is not saved
+  with the project.
+- **FOLLOW** is the switch of the track TRACK shows: **ON** (the default,
+  the track follows SCALE and ROOT) or **OFF** (the track is stock, as with
+  SCALE OFF) -- exactly what AUDIO n SCALE / MIDI n SCALE were (the sections
+  below). The knob and the arrows step it, [YES] toggles it. Turning TRACK
+  changes what FOLLOW reads at once: the window redraws every visible row
+  from its getter, and FOLLOW's getter reads the bit of the track TRACK
+  points at.
+
+Nothing stored changed: the switches are the same bits of the same
+battery-RAM bytes (`0x100b14eb` for the audio tracks, `0x100b14ef` for the
+MIDI tracks, bit t = track t+1 OFF), written to the project file as the
+same lines (`#SEQUENCER_AUDIO_SCALE_OFF=n`, `#SEQUENCER_MIDI_SCALE_OFF=n`),
+so a project saved on 2.21 loads on 2.22 with the same tracks OFF, and the
+other way round. Why two rows: Modwerk's base gives stock's three
+SEQUENCER rows plus at most eight contributed rows, and SCALE, ROOT, GLIDE,
+TRACK, FOLLOW are five; the sixteen rows did not fit there. (A row per
+track was chosen in 2.15 because one row for eight switches would need a
+track chosen first: that is now what TRACK does.)
+
 ## Audio tracks: what they play, and AUDIO n SCALE (2.19)
 
 With a scale on, **what an audio track's sequencer plays follows the
@@ -128,7 +162,8 @@ Part's own PTCH first, as it does after a lock.
   the LFO and the crossfader's scene morph act on PTCH after that stage, as
   stock, and are not pulled onto the scale.
 
-**AUDIO 1 SCALE .. AUDIO 8 SCALE.** PROJECT > CONTROL > SEQUENCER, rows 15
+**AUDIO 1 SCALE .. AUDIO 8 SCALE.** (Since 2.22: TRACK = AUDIO n, then
+FOLLOW; see above.) PROJECT > CONTROL > SEQUENCER, rows 15
 to 22 under MIDI 8 SCALE: **ON** (the default) or **OFF**, one row per audio
 track, stepped and toggled as the MIDI rows are. An audio track set to OFF
 is a track with SCALE OFF in every path of this module: its sequencer plays
@@ -383,7 +418,8 @@ while notes sound cannot leave one hanging: the note-off is always for the
 note that was sent (measured below, chords and the arpeggiator, settings
 changed while they play).
 
-**MIDI 1 SCALE .. MIDI 8 SCALE.** PROJECT > CONTROL > SEQUENCER, rows 7 to
+**MIDI 1 SCALE .. MIDI 8 SCALE.** (Since 2.22: TRACK = MIDI n, then
+FOLLOW; see "TRACK and FOLLOW (2.22)".) PROJECT > CONTROL > SEQUENCER, rows 7 to
 14 under GLIDE: **ON** (the default) or **OFF**, one row per MIDI track.
 The LEVEL knob and LEFT / RIGHT step it (OFF to the left, ON to the
 right), [YES] toggles it, as on the other rows. A MIDI track set to OFF is

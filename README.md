@@ -119,7 +119,10 @@ to watch.
   chord notes that land on one note sound once) -- and rows MIDI 1 SCALE
   .. MIDI 8 SCALE (ON / OFF) take a MIDI track out of the scale, for a drum
   machine (battery RAM `0x100b14ef`; MIDI IN thru and the auto channel's
-  direct play stay stock). `quantizer/README.md`.
+  direct play stay stock). Since 2.22 the per-track switches (MIDI and,
+  since 2.19, AUDIO) are two rows: TRACK picks the track (AUDIO 1..8, MIDI
+  1..8; not saved, AUDIO 1 at power-on) and FOLLOW is its ON / OFF, the
+  same bits and project-file lines as before. `quantizer/README.md`.
 - **`direct-jump/`** (key `DIRECT JUMP`) -- CHAIN AFTER gains a DIRECT option
   (option 2 of the list): a pattern chosen while the sequencer runs starts
   at the next step, at the step count the old pattern had reached. One ROM

@@ -20,7 +20,8 @@ to the same note sound once (stock's active-note test skips a note the track
 already holds). The offsets stay semitones; a chord can lose a note on a tie.
 qz_mprev (a jmp at 0x400439d6) snaps the chord a held [TRIG] key previews in GRID
 RECORDING the same way, press and release. And a per-track switch: SEQUENCER rows
-7..14, "MIDI 1 SCALE" .. "MIDI 8 SCALE", ON (default) / OFF; OFF makes that MIDI
+7..14, "MIDI 1 SCALE" .. "MIDI 8 SCALE" (since 2.22: TRACK = MIDI n, then FOLLOW),
+ON (default) / OFF; OFF makes that MIDI
 track stock in every path (the NOTE knob, NOTE locks, the CHROMATIC keys and their
 readout, the note stage, the preview), as SCALE OFF would. The switch is one
 battery-RAM byte, MOFF_NV 0x100b14ef (bit t = MIDI track t+1 is OFF; the last
@@ -90,7 +91,7 @@ SCALE, under CHAIN AFTER / SILENCE TRACKS / LFO AUTO CHANGE: the window is a
 generic list (state 0x460e43d8, init 0x40065c7c, draw 0x40065b14, keys
 0x40065cec, LEVEL knob 0x40065c98) over three parallel pointer tables --
 labels 0x400b27d0, getters 0x400b27dc, setters 0x400b282c -- which the
-build grows to six entries (fourteen since 2.15: MIDI 1..8 SCALE) (TableGrow) and repoints. The list is created
+build grows to six entries (fourteen since 2.15: MIDI 1..8 SCALE; twenty-two in 2.19; eight since 2.22: SCALE, ROOT, GLIDE, TRACK, FOLLOW) (TableGrow) and repoints. The list is created
 with count 3 / visible 3 (two pushes of 3 at 0x40065c7c); the count becomes
 4 (poke) and the three visible rows scroll, as the firmware's longer lists
 do, once the draw loop indexes the tables from the scroll offset instead of
@@ -289,10 +290,10 @@ MODULE = Module(
         "polyphonic chromatic keys on a synth track whose VOIC is 2..4; on a synth track "
         "PTCH is semitones (-64..+63) and the CHROMATIC octave runs -4..+4; on a MIDI track "
         "(2.13) the NOTE knob, NOTE locks and the CHROMATIC keys follow the scale and root; "
-        "(2.15) so does what it plays -- chords, TRAN, the arpeggiator -- and > MIDI 1..8 SCALE "
-        "takes a MIDI track out of the scale (OFF = stock); (2.19) what an audio track plays follows the scale "
-        "(STATIC / FLEX / FM SYNTH / SY DRUM: PTCH as the trig resolves it), and > AUDIO 1..8 SCALE takes an audio "
-        "track out of it (OFF = stock).",
+        "(2.15) so does what it plays -- chords, TRAN, the arpeggiator; (2.19) what an audio track plays follows the scale "
+        "(STATIC / FLEX / FM SYNTH / SY DRUM: PTCH as the trig resolves it); > TRACK picks a track (AUDIO 1..8, "
+        "MIDI 1..8) and > FOLLOW takes it out of the scale (OFF = stock) (2.22: two rows where 2.15 / 2.19 had "
+        "MIDI 1..8 SCALE and AUDIO 1..8 SCALE).",
     linked=(                                   # ROM link order: qzs names core.s's qz_scale_mask
         Linked("qzk", os.path.join(_HERE, "keys.s"), cpu="5475", cave_addr=KEYS_AT),
         Linked("qzc", os.path.join(_HERE, "core.s"), cpu="5475"),
@@ -396,25 +397,24 @@ MODULE = Module(
                kind="jsr"),
     ),
     tables=(
+        # (2.22) rows 4..8: SCALE, ROOT, GLIDE, TRACK, FOLLOW (TRACK picks the audio or MIDI track
+        # whose switch FOLLOW shows; the sixteen MIDI / AUDIO n SCALE rows of 2.15 / 2.19 are gone)
         TableGrow("SEQUENCER labels", old=0x400b27d0, count=3,
-                  symbols=(("qz", "qz_lbl_scale"), ("qz", "qz_lbl_root"), ("qz", "qz_lbl_glide"))
-                  + tuple(("qz", f"qz_lbl_m{t}") for t in range(1, 9))
-                  + tuple(("qz", f"qz_lbl_a{t}") for t in range(1, 9)),
+                  symbols=(("qz", "qz_lbl_scale"), ("qz", "qz_lbl_root"), ("qz", "qz_lbl_glide"),
+                           ("qz", "qz_lbl_trk"), ("qz", "qz_lbl_fol")),
                   refs=((0x40065bd8, 0x400b27d0),)),
         TableGrow("SEQUENCER getters", old=0x400b27dc, count=3,
-                  symbols=(("qz", "qz_get"), ("qz", "qz_get_root"), ("qz", "qz_get_glide"))
-                  + tuple(("qz", f"qz_get_m{t}") for t in range(1, 9))
-                  + tuple(("qz", f"qz_get_a{t}") for t in range(1, 9)),
+                  symbols=(("qz", "qz_get"), ("qz", "qz_get_root"), ("qz", "qz_get_glide"),
+                           ("qz", "qz_get_trk"), ("qz", "qz_get_fol")),
                   refs=((0x40065bde, 0x400b27dc),)),
         TableGrow("SEQUENCER setters", old=0x400b282c, count=3,
-                  symbols=(("qz", "qz_set"), ("qz", "qz_set_root"), ("qz", "qz_set_glide"))
-                  + tuple(("qz", f"qz_set_m{t}") for t in range(1, 9))
-                  + tuple(("qz", f"qz_set_a{t}") for t in range(1, 9)),
+                  symbols=(("qz", "qz_set"), ("qz", "qz_set_root"), ("qz", "qz_set_glide"),
+                           ("qz", "qz_set_trk"), ("qz", "qz_set_fol")),
                   refs=((0x40065cc4, 0x400b282c), (0x40065d3e, 0x400b282c),
                         (0x40065d58, 0x400b282c), (0x40065d72, 0x400b282c))),
     ),
     pokes=(
-        Poke(0x40065c7c, expect=stock_guard(0x40065c7c, 4), write=H("48780016"),
-             note="SEQUENCER window: 3 -> 22 rows (SCALE, ROOT, GLIDE, MIDI 1..8 SCALE, AUDIO 1..8 SCALE (2.19); 3 visible, scrolls)"),
+        Poke(0x40065c7c, expect=stock_guard(0x40065c7c, 4), write=H("48780008"),
+             note="SEQUENCER window: 3 -> 8 rows (SCALE, ROOT, GLIDE, TRACK, FOLLOW (2.22); 3 visible, scrolls)"),
     ),
 )
