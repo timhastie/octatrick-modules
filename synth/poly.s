@@ -596,20 +596,21 @@ sy_sample:
         bsr     sy_slew                  | d6 := the word slewed toward it (clobbers d0, d1, d3, d7, a0)
         move.w  %d6,(%a4)                | the stock rate arithmetic reads the slewed word
 sy_call:
-        bsr     po_signed                | FM SYNTH chosen in the machine list: no sample, so no stock call --
+        bsr     po_signed                | FM SYNTH or SY DRUM chosen in the machine list: no sample, so no stock call --
         beq     sy_stock                 | the source header stock would write (count, ring position, rate 1.0,
-        subq.l  #1,%d0                   | AN FM SYNTH TRACK'S LEVEL IS THE ENGINE'S (31 Oct 2026, Tim's report, MKI):
-        bne     sy_nat                   | the slot's GAIN attribute is ignored. The stock per-frame writer copies the
-        move.l  PING_AT,%d1              | track's slot-gain word (0x80001850 + 2 t: the assigned slot's ATTRIBUTES
-        andi.l  #1,%d1                   | GAIN, linear, 2048 = 0 dB, published at every load / CLEAR / edit of that
-        lsl.l   #8,%d1                   | slot and at every voice start) into halfword 29 of the DSP voice record
-        lsl.l   #1,%d1                   | before this call, and the DSP applies the halfword every frame -- so a
-        move.l  %d2,%d0                  | sample loaded into the slot an FM SYNTH track is assigned to (its .ot's
-        lsl.l   #6,%d0                   | GAIN; +12 dB after CLEAR SLOT) moved the FM level by that much, on the
-        add.l   %d0,%d1                  | sounding note. Halfword 29 := 2048 on every call of a chosen FM SYNTH
-        lea     DSP_REC,%a0              | track (the record of the frame being built, PING_AT, as sy_ison; either
-        add.l   %d1,%a0                  | call is before the eDMA ship), so LEVEL, HEADROOM and T_GMAX own the level.
-        move.w  #2048,58(%a0)            | A sample track keeps the stock writer's word (a FLEX track given the slot gets its gain).
+        move.l  PING_AT,%d1              | A SYNTH TRACK'S LEVEL IS THE ENGINE'S (31 Oct 2026, Tim's report, MKI): the
+        andi.l  #1,%d1                   | slot's GAIN attribute is ignored, for FM SYNTH and SY DRUM alike. The stock
+        lsl.l   #8,%d1                   | per-frame writer copies the track's slot-gain word (0x80001850 + 2 t: the
+        lsl.l   #1,%d1                   | assigned slot's ATTRIBUTES GAIN, linear, 2048 = 0 dB, published at every
+        move.l  %d2,%d0                  | load / CLEAR / edit of that slot and at every voice start) into halfword 29
+        lsl.l   #6,%d0                   | of the DSP voice record before this call, and the DSP applies the halfword
+        add.l   %d0,%d1                  | every frame -- so a sample loaded into the slot a synth track is assigned to
+        lea     DSP_REC,%a0              | (its .ot's GAIN; +12 dB after CLEAR SLOT) moved the FM or SY DRUM level by
+        add.l   %d1,%a0                  | that much, on the sounding note. Halfword 29 := 2048 on every call of a
+        move.w  #2048,58(%a0)            | chosen synth track (the record of the frame being built, PING_AT, as
+|                                        | sy_ison; either call is before the eDMA ship), so LEVEL, HEADROOM and T_GMAX
+|                                        | (FM SYNTH) or the AMP page (SY DRUM) own the level. A sample track keeps the
+|                                        | stock writer's word (a FLEX track given the slot gets its gain).
 sy_nat:
         move.l  64(%sp),%d0              | read position) and silent pairs for the engine to overwrite
         sub.l   60(%sp),%d0              | (Modwerk's sample-free transport, MIT)
