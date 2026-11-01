@@ -250,7 +250,13 @@ chord played on the chromatic trig keys of an FM SYNTH track gives the same
 notes on every press, and edited FM SYNTH and SY DRUM PLAYBACK SETUP values
 come back after a power-off, with and without SAVE. 2.21's move of the FM
 SYNTH page into DRAM (the stock DELAY's table tail stock again) is
-emulator-verified.
+emulator-verified. 2.22 was flashed on the author's MKI (1 Nov 2026) and works
+there: an SY DRUM track's level stays put when a sample is loaded into its
+slot, an FM SYNTH track with FOLLOW OFF plays plain semitones beside a
+track that follows the scale, and a project saved on 2.21 with SCALE rows
+OFF loads with those tracks reading FOLLOW OFF. The FM SYNTH level, the
+TRACK and FOLLOW rows and TUNER's DC case were tested the same day on the
+Modwerk builds of the same code.
 Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
@@ -274,6 +280,25 @@ Only tagged versions are releases; the numbered builds between two tags
 builds on the author's unit and were never tagged. 2.16 .. 2.20 were
 builds on the way to 2.21 and are not tagged here either; their entries
 below say what each brought, and 2.21 releases all of it.
+
+- 2.22 (tag `v2.22`, 1 Nov 2026): FIVE CHANGES ON 2.21. (A) SCALE QUANTIZER:
+  the sixteen per-track SCALE rows become two SEQUENCER rows, TRACK (AUDIO
+  1..8, MIDI 1..8; picks the track, not saved) and FOLLOW (that track ON or
+  OFF); the bits and the project-file lines are 2.21's, so a saved project
+  keeps its switches. (B) FM SYNTH: a track whose FOLLOW is OFF reads the
+  scale as OFF, so its keys, chords and ROOT are left alone while the other
+  tracks keep the scale (before, only ROOT was skipped and the keys were
+  still snapped). (C) FM SYNTH and SY DRUM: a synth track's level is the
+  engine's; the GAIN attribute of the slot the track is assigned to is
+  ignored, so loading a sample into that slot (or CLEAR SLOT, +12 dB) no
+  longer moves the level on the sounding note; a FLEX track on the same slot
+  still gets the slot's gain. (D) TUNER: the ring's mean is taken off before
+  the analysis, so a track whose effects leave a DC offset larger than its
+  swing reads instead of holding. (E) `poly.s` exports the engine state the
+  quantizer's panel transaction reads whenever SYNTH MACHINE and SCALE
+  QUANTIZER are built together, not only with SY DRUM. Details:
+  `quantizer/README.md` (TRACK and FOLLOW), `synth/README.md`,
+  `tuner/README.md`.
 
 - 2.21 (tag `v2.21`, 29 Oct 2026): THE FIRST RELEASE SINCE 2.15 -- TWO
   FIXES FROM THE AUTHOR'S MKI, AND 2.16 .. 2.20. By the build that brought
@@ -349,7 +374,8 @@ below say what each brought, and 2.21 releases all of it.
   - **2.17** and **2.16**: their entries below.
 
   TUNER, DIRECT JUMP and PROCESSOR LOAD build the same code as at 2.15 (2.20
-  changed only how their manifests read the stock bytes, and comments).
+  changed only how their manifests read the stock bytes, and comments);
+  2.22 changes TUNER (its entry above).
 
 - 2.17 (23 -- 24 Oct 2026; not tagged; ran on the author's MKI on 24 Oct
   2026, and what he found there is fixed in 2.18): LFO 3 is restored on
