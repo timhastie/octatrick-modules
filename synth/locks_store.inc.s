@@ -34,7 +34,10 @@
         .set FL_LANE,128
         .set FL_LANES,2304
         .set FL_STEP_LANES,2048
-        .if FL_POOL_LANES < 1 || FL_POOL_LANES > FL_LANES
+        .if FL_POOL_LANES < 1
+        .error "FL_POOL_LANES is 1..2304"
+        .endif
+        .if FL_POOL_LANES > FL_LANES
         .error "FL_POOL_LANES is 1..2304"
         .endif
         .set FL_SCENE_BANK_BYTES,2048

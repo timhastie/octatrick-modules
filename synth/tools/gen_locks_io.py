@@ -218,7 +218,11 @@ fl_io_background_no:
 | (0) or 2 continue to stock's background save counter; otherwise stock clears that counter
 | (0x40052278) and the lock files get their own flush (fl_io_play_tick).
 fl_io_tick_hook:
-        .if FL_PACKAGE || FL_POOL_LANES < FL_LANES
+        .set FL_UI_TICK, FL_PACKAGE
+        .if FL_POOL_LANES < FL_LANES
+        .set FL_UI_TICK, 1
+        .endif
+        .if FL_UI_TICK
 | (2.23) a smaller pool or a package: fl_io_ui_tick in both states (playing = neither 0 nor 2),
 | then the transport test as stock makes it.
         lea -16(%sp),%sp
