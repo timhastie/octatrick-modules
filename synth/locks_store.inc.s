@@ -790,6 +790,9 @@ fl_lane_stack:
         .space  ((FL_POOL_LANES*2+3)/4)*4
 fl_lane_pool:
         .space  FL_POOL_LANES*FL_LANE
+        .global fl_migration_table
+fl_migration_table:                      | a card build's DramRegion (synth/manifest.py)
+        .space  16*FL_MIGRATION_BANK_BYTES
         .endif
         .section .text
 
