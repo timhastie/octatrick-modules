@@ -12,6 +12,48 @@ again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate 
 such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
 The design values in this section are not runtime measurements.
 
+## The frame gate: a project without FM SYNTH or SY DRUM pays almost nothing (2.23 test build, 12 Nov 2026)
+
+Until 2.22 SYNTH MACHINE and SY DRUM ran their per-block code in every audio block whether or not a
+track was a synth: `sy_render` on every FLEX and STATIC voice twice a block, `po_fmsource` on every
+track, the LFO destinations (24 passes), the panel transaction, the lock queue and SY DRUM's tick, each
+asking `po_signed` again (octatrick-modules#4). Now `po_gate` decides once a block, from the bytes
+themselves (no event is hooked: a load, PART RELOAD, a paste or undo, a pattern, Part or bank switch, the
+machine lists, the assigner all write the same bytes, and the next block reads them):
+
+- live (every full path, as 2.22) when GLIDE is on, the current Part is not readable, a track plays a bank
+  or Part other than the current one in which it is FM SYNTH or SY DRUM (during a bank or Part switch), or a
+  track of the current Part is FLEX with the FM SYNTH or SY DRUM signature (the only way a track becomes a synth since 2.15: a SYNTH* / FMSYNTH* file is a sample);
+- shut once none of these holds, no CHROMATIC key is posted and the engine is idle (no engine voice,
+  paraphonic voice, waiting note, LFO latch, SY DRUM engine kind or key recharge, MIDI note, panel tuple
+  or lock row left). Every hook then takes its shut path: the displaced instructions, or the stock
+  renderer alone;
+- with a synth track present, each other track that is idle and has no key posted is shut on its own
+  (the track gate): the render, supplier, panel and lock-refresh hooks skip it.
+
+A START while shut asks `po_gate_chk` whether its track can be a synth now (a switch the frame builder
+publishes inside the block), and the gate is decided again before that START. SY DRUM's free-running
+LFO phases are not stepped while shut; their speeds (each track's LSPD byte) are watched and the
+phases are stepped at once with the exact 64-bit product (`sy1_mod_catch`), so they stay what the
+block-by-block tick gives. The slide's word S_CUR of each sample track is set, the block a track
+opens again, from the record of the block before.
+
+Measured (12 Nov 2026, octabam's emulator at the pinned octabam, the reporter's project: eight FLEX
+tracks on one noise sample, a trig a bar, 132 BPM; emulated instructions in the frame interrupt per
+16-sample block, not hardware time; "extra" = against the same image built without SYNTH MACHINE and
+SY DRUM):
+
+| voices | 2.22 extra a block | this build | 2.22 extra, block with the trigs | this build |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 2,125 | 492 | -- | -- |
+| 1 | 2,332 | 498 | 3,050 | 587 |
+| 4 | 2,983 | 516 | 5,855 | 872 |
+| 8 | 3,921 | 540 | 9,665 | 1,252 |
+
+What is left is the hooks' own passes (the LFO stage's 24 passes a block are about half of it), the
+gate's own reading of the bytes (about 70) and SY DRUM's speed watch (about 35). It costs 2,376 bytes of
+DRAM code; no hook site was added and the arena keeps its 822 pages.
+
 ## LFOs and scenes on AMP ATK / HOLD / REL, and the PTCH LFO depth (2.20)
 
 Following Jan Kolkmeier's report and fix in Modwerk #883 / #884:

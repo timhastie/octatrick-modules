@@ -36,6 +36,7 @@
         .global sy1_kind, sy1_leg_pending, sy1_mono_trigger, sy1_mono_frame, sy1_mono_key_frame
         .global sy1_mono_render, sd_trigger, sd_tick, sd_row, sd_page, sy1_pgdesc
         .global sd_sig, sd_kind, sd_setup_edit
+        .global sd_gate_tick             | (12 Nov 2026) poly.s po_tick while the frame gate is shut
         .set    FLEX, 1
         .set    PLAY_SETUP, 0x8ef60      | Part + 30 * track: the FLEX SETUP bytes (LOOP SLIC LEN RATE TSTR TSNS)
         .set    LANE_SETUP, 0x80000830   | + 72 * track: the live lane's six SETUP bytes
@@ -73,6 +74,13 @@
 sd_tick:
         lea     -36(%sp),%sp
         movem.l %d0-%d4/%a0-%a3,(%sp)
+        tst.b   sd_shut:l                | (12 Nov 2026) the first frame after the frame gate was shut: every
+        beq     sd_tk_gate               | phase stepped to the last frame at the speeds that held (sd_gate_tick)
+        clr.b   sd_shut:l
+        move.l  po_clock+CK_FRAMES,%d0
+        subq.l  #1,%d0
+        jsr     sy1_mod_catch:l
+sd_tk_gate:
         lea     sy1_kind(%pc),%a0        | 0. the gate: a SY DRUM voice on any track?
         move.l  (%a0),%d0
         or.l    4(%a0),%d0
@@ -172,6 +180,119 @@ sd_tk_out:
         movem.l (%sp),%d0-%d4/%a0-%a3
         lea     36(%sp),%sp
         rts
+
+| ==== (12 Nov 2026, octatrick-modules#4) THE FRAME GATE (poly.s po_gate) ====================
+| While the gate is shut (no track FM SYNTH or SY DRUM, no SY DRUM engine kind, every lock row
+| clean) po_tick calls sd_gate_tick in place of sd_tick: the idle tick's work (sd_tk_idle) has
+| nothing to do but step the LFO phases (sy1_mod_phase_tick), and that waits too. A phase's step
+| in a frame is rate(LSPD), LSPD each track's Part SETUP byte 0 as sy1_setup_tick clamps it; so
+| sd_gate_tick compares those eight bytes with the ones the speeds were taken from (sd_gspd) every
+| frame, and only when one changed (or on the first shut frame) steps every phase over the frames
+| it has not stepped, at the speeds that held (sy1_mod_catch: sy1_mod_advance's exact 64-bit
+| product, MR_CONT by the cycles), then takes the frame's controls (sy1_setup_tick). The first
+| frame the gate is live again, sd_tick steps them the same way before its own tick. Every phase,
+| M_FRAME and MR_CONT is then what the frame-by-frame tick leaves. Every register kept.
+sd_gate_tick:
+        lea     -12(%sp),%sp
+        movem.l %d0/%a0-%a1,(%sp)
+        movea.l PART_PTR,%a0             | (shut only while the Part is readable: po_gate 3.)
+        mvz.b   PART_IDX,%d0
+        mulu.w  #6322,%d0
+        adda.l  %d0,%a0
+        adda.l  #PLAY_SETUP,%a0          | track 0's SETUP bytes; + 30 a track
+        tst.b   sd_shut:l
+        beq     sd_gt_take               | the first shut frame
+        lea     sd_gspd(%pc),%a1
+        move.b  (%a0),%d0
+        cmp.b   (%a1),%d0
+        bne     sd_gt_take
+        move.b  30(%a0),%d0
+        cmp.b   1(%a1),%d0
+        bne     sd_gt_take
+        move.b  60(%a0),%d0
+        cmp.b   2(%a1),%d0
+        bne     sd_gt_take
+        move.b  90(%a0),%d0
+        cmp.b   3(%a1),%d0
+        bne     sd_gt_take
+        move.b  120(%a0),%d0
+        cmp.b   4(%a1),%d0
+        bne     sd_gt_take
+        move.b  150(%a0),%d0
+        cmp.b   5(%a1),%d0
+        bne     sd_gt_take
+        move.b  180(%a0),%d0
+        cmp.b   6(%a1),%d0
+        bne     sd_gt_take
+        move.b  210(%a0),%d0
+        cmp.b   7(%a1),%d0
+        bne     sd_gt_take
+sd_gt_out:
+        movem.l (%sp),%d0/%a0-%a1
+        lea     12(%sp),%sp
+        rts
+sd_gt_take:
+        moveq   #1,%d0
+        move.b  %d0,sd_shut:l
+        move.l  po_clock+CK_FRAMES,%d0
+        subq.l  #1,%d0
+        jsr     sy1_mod_catch:l          | the frames before this one, at the speeds that held
+        bsr     sy1_setup_tick           | this frame's controls (LSPD for the frames from this one)
+        lea     sd_gspd(%pc),%a1
+        move.b  (%a0),(%a1)
+        move.b  30(%a0),1(%a1)
+        move.b  60(%a0),2(%a1)
+        move.b  90(%a0),3(%a1)
+        move.b  120(%a0),4(%a1)
+        move.b  150(%a0),5(%a1)
+        move.b  180(%a0),6(%a1)
+        move.b  210(%a0),7(%a1)
+        bra     sd_gt_out
+
+| sy1_mod_catch: d0 = a frame (CK_FRAMES) -> every track's LFO phase stepped from its M_FRAME to
+| that frame at its speed now (sy1_mod_params), as sy1_mod_phase_tick steps a delta of more than
+| one frame (sy1_mod_advance), M_FRAME := d0. A track already there is left. Every register kept.
+sy1_mod_catch:
+        lea     -60(%sp),%sp
+        movem.l %d0-%d7/%a0-%a6,(%sp)
+        move.l  %d0,%d7
+        lea     sy1_mod_params:l,%a4
+        lea     sy1_mod_state:l,%a5
+        lea     sy1_mod_random_state:l,%a6
+        moveq   #8,%d2
+sy1_mc_next:
+        move.l  %d7,%d1
+        sub.l   M_FRAME(%a5),%d1
+        beq     sy1_mc_done
+        mvz.b   MP_SPEED(%a4),%d0
+        cmpi.l  #127,%d0
+        bls     sy1_mc_speed
+        moveq   #127,%d0
+sy1_mc_speed:
+        lea     sy1_lfo_rate:l,%a0
+        move.l  (%a0,%d0.l*4),%d0        | Q32 cycles per frame
+        move.l  M_PHASE(%a5),%d3
+        jsr     sy1_mod_advance:l        | d0 the phase, d1 the cycles
+        move.l  %d0,M_PHASE(%a5)
+        move.l  #SY1_RANDOM_STEP,%d0
+        mulu.l  %d1,%d0
+        add.l   %d0,MR_CONT(%a6)
+        move.l  %d7,M_FRAME(%a5)
+sy1_mc_done:
+        addq.l  #4,%a4
+        lea     M_STRIDE(%a5),%a5
+        lea     MR_STRIDE(%a6),%a6
+        subq.l  #1,%d2
+        bne     sy1_mc_next
+        movem.l (%sp),%d0-%d7/%a0-%a6
+        lea     60(%sp),%sp
+        rts
+
+sd_shut:                                 | 1 while the frame gate is shut (sd_gate_tick ran since sd_tick)
+        .byte   0
+sd_gspd:                                 | the eight SETUP byte-0s the speeds were last taken from
+        .fill   8, 1, 0
+        .balign 2
 
 | sd_sig: a0 = the Part (the bank blob + part * 6322), d0 = track -> d0 = 1 when the track
 | is FLEX with "SY", 1 (SY DRUM chosen in the machine list), else 0; tst.l done.

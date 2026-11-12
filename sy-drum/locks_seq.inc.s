@@ -589,6 +589,7 @@ sl_seq_scratch:     .fill 32,4,0xffffffff
 sl_seq_pending:     .fill 32,4,0xffffffff
 sl_seq_active:      .fill 32,4,0xffffffff
 sl_seq_context:     .fill 4,4,0xffffffff
+        .global sl_seq_cleanm            | (12 Nov 2026) read by poly.s po_gate_idle
 sl_seq_cleanm:      .long 0xff            | bit t = active[t] and pending[t] are all 0xff (no lock)
 sl_seq_defer:       .fill 32,4,0          | per queue/scratch row: bit31 deferred, bit24 stock trigger, bank, pattern, step
         .text

@@ -219,7 +219,14 @@ fl_seq_promote:
 fl_spro_out:
         rts
 
+| (12 Nov 2026) The three frame-builder lock hooks below (and SY DRUM's, chained after them) take
+| the displaced instructions alone while the frame gate is shut (poly.s po_gate): no track is FM
+| SYNTH or SY DRUM and every row is clean, so the rows they would queue for a sample track are
+| cleared again by the next tick (fl_seq_refresh_track) before anything reads them.
 fl_seq_consume:
+        tst.b   po_gate_live:l
+        beq     fl_sc_gate
+fl_sc_live:
         lea     -12(%sp),%sp
         movem.l %d0/%a0-%a1,(%sp)
         cmpi.l  #24,%d5
@@ -256,13 +263,26 @@ fl_sc_out:
         lea     12(%sp),%sp
         .if HAVE_SYDRUM
         jmp sl_seq_consume:l
-        .else
+        .endif
+fl_sc_gate:                              | shut: the event's track asked (poly.s po_gate_chk) -- a switch inside this
+        moveq   #24,%d1                  | frame can have made it a synth; d1..d4 are the displaced movem's
+        cmp.l   %d1,%d5
+        bcc     fl_sc_shut
+        moveq   #7,%d2
+        and.l   %d5,%d2                  | the track
+        jsr     po_gate_chk:l
+        beq     fl_sc_shut
+        jsr     po_gate:l
+        tst.b   po_gate_live:l
+        bne     fl_sc_live
+fl_sc_shut:
         movem.l (%a0),%d1-%d4/%d6-%d7/%a4-%a5
         movem.l %d1-%d4/%d6-%d7/%a4-%a5,(%a2)
         jmp     0x4000bb06
-        .endif
 
 fl_seq_full_restore:
+        tst.b   po_gate_live:l
+        beq     fl_sfr_shut
         lea     -8(%sp),%sp
         movem.l %d0/%a0,(%sp)
         move.l  122(%sp),%d0
@@ -281,13 +301,15 @@ fl_sfr_out:
         lea     8(%sp),%sp
         .if HAVE_SYDRUM
         jmp sl_seq_full_restore:l
-        .else
+        .endif
+fl_sfr_shut:
         movea.l 184(%sp),%a5
         clr.l   (%a5)
         jmp     0x4000c428
-        .endif
 
 fl_seq_publish:
+        tst.b   po_gate_live:l
+        beq     fl_spl_shut
         lea     -32(%sp),%sp
         movem.l %d0-%d4/%a0-%a2,(%sp)
         move.l  146(%sp),%d2
@@ -348,10 +370,10 @@ fl_spl_out:
         lea     32(%sp),%sp
         .if HAVE_SYDRUM
         jmp sl_seq_publish:l
-        .else
+        .endif
+fl_spl_shut:
         lea     0x46104d15,%a0
         jmp     0x4000c634
-        .endif
 
 fl_seq_refresh_track:
         lea     0x8000182a,%a0
@@ -440,7 +462,11 @@ fl_seq_tick:
         movem.l %d0-%d3/%a0-%a2,(%sp)
         moveq   #0,%d2
 fl_st_loop:
+        mvz.b   po_gate_tmask:l,%d0      | (12 Nov 2026) a track shut on its own: its rows are clean, nothing to refresh
+        btst    %d2,%d0
+        bne     fl_st_next
         bsr     fl_seq_refresh_track
+fl_st_next:
         addq.l  #1,%d2
         cmpi.l  #8,%d2
         bne     fl_st_loop

@@ -3,10 +3,28 @@
 | Producer fields 0..15; frame-owned accepted tuple 16..27; 28 reserved.
         .global po_tx_accept, po_tx_seq1, po_tx_seq2, po_tx_seq3, po_tx_seq4
         .global po_tx_copy, po_tx_base
+        .if HAVE_PANEL_TRANSACTION
+        .global po_tx_gate_vectors       | (12 Nov 2026) poly.s po_gate
+        .endif
+| (12 Nov 2026) po_tx_accept is the first of the engine's hooks the frame builder reaches in a
+| frame (once a track, track 0 first): at track 0, when the builder's ping changed since po_gate
+| last ran, po_gate decides this frame's gate (poly.s; po_tick does it in a frame the builder does
+| not run). d0 and d3 are the displaced code's to load.
 po_tx_accept:
         lea     0x46c80354,%a0
         move.l  114(%sp),%d3
+        bne     po_tx_ac_gated           | not track 0
+        move.l  PING_AT,%d0
+        cmp.l   po_gate_ping:l,%d0
+        beq     po_tx_ac_gated
+        jsr     po_gate:l
+po_tx_ac_gated:
         .if HAVE_PANEL_TRANSACTION
+        tst.b   po_gate_live:l           | shut: no tuple is pending or accepted (po_gate_tidle), the load alone
+        beq     po_tx_ac_shut
+        mvz.b   po_gate_tmask:l,%d0      | ... the same for a track shut on its own
+        btst    %d3,%d0
+        bne     po_tx_ac_shut
         lea     -12(%sp),%sp
         movem.l %d1/%a1,(%sp)
         move.w  %sr,%d1
@@ -39,6 +57,9 @@ po_tx_ac_done:
         movem.l (%sp),%d1/%a1
         lea     12(%sp),%sp
         tst.l   %d0                     | replayed command load's condition codes
+        jmp     0x4000b54e
+po_tx_ac_shut:
+        move.l  (%a0,%d3.l*4),%d0
         .else
         move.l  (%a0,%d3.l*4),%d0
         .endif
@@ -47,31 +68,42 @@ po_tx_ac_done:
 | These are positive sequencer/event contribution branches, not command guesses.
 po_tx_seq1:
         .if HAVE_PANEL_TRANSACTION
-        bsr     po_tx_seq_clear
+        movea.l po_tx_gv_seq:l,%a1       | po_tx_seq_clear, or po_tx_gv_rts while the frame gate is shut
+        jsr     (%a1)                   | (12 Nov 2026; %a1 is the displaced lea's, the codes untouched)
         .endif
         lea     0x46104d15,%a1
         jmp     0x4000b90c
 po_tx_seq2:
         .if HAVE_PANEL_TRANSACTION
-        bsr     po_tx_seq_clear
+        movea.l po_tx_gv_seq:l,%a0       | po_tx_seq_clear, or po_tx_gv_rts while the frame gate is shut
+        jsr     (%a0)                   | (12 Nov 2026; %a0 is the displaced lea's, the codes untouched)
         .endif
         lea     0x46104d15,%a0
         jmp     0x4000bd7a
 po_tx_seq3:
         .if HAVE_PANEL_TRANSACTION
-        bsr     po_tx_seq_clear
+        movea.l po_tx_gv_seq:l,%a0       | po_tx_seq_clear, or po_tx_gv_rts while the frame gate is shut
+        jsr     (%a0)                   | (12 Nov 2026; %a0 is the displaced lea's, the codes untouched)
         .endif
         lea     0x46104d15,%a0
         jmp     0x4000bdc6
 po_tx_seq4:
         .if HAVE_PANEL_TRANSACTION
-        bsr     po_tx_seq_clear
+        movea.l po_tx_gv_seq:l,%a0       | po_tx_seq_clear, or po_tx_gv_rts while the frame gate is shut
+        jsr     (%a0)                   | (12 Nov 2026; %a0 is the displaced lea's, the codes untouched)
         .endif
         lea     0x46104d15,%a0
         jmp     0x4000be54
 
 po_tx_copy:
         .if HAVE_PANEL_TRANSACTION
+        tst.b   po_gate_live:l           | (12 Nov 2026) the frame gate shut, or this track shut on its own: no
+        beq     po_tx_cp_shut            | tuple to copy (d0..d5 are the displaced movem's; the stock loop sets
+        moveq   #8,%d1                   | the condition codes before it reads them: subq / bne at its end)
+        sub.l   %d6,%d1                  | the track (the loop's countdown)
+        mvz.b   po_gate_tmask:l,%d2
+        btst    %d1,%d2
+        bne     po_tx_cp_shut
         lea     -24(%sp),%sp
         movem.l %d0-%d1/%a0-%a2,(%sp)
         move.w  %sr,%d0
@@ -101,6 +133,7 @@ po_tx_cp_bank:
         move.w  %d0,%sr
         movem.l (%sp),%d0-%d1/%a0-%a2
         lea     24(%sp),%sp
+po_tx_cp_shut:
         .endif
         movem.l (%a3),%d0-%d5
         movem.l %d0-%d5,(%a1)
@@ -130,7 +163,14 @@ po_tx_sq_done:
         rts
 
 | Called after qz_atrig's snap and before its flag-producing replay.
+| (12 Nov 2026) Through a vector: po_tx_base_live, or po_tx_gv_rts while the frame gate is shut
+| (no tuple accepted then); the push and the vector set no condition code.
 po_tx_base:
+        move.l  %a0,-(%sp)
+        movea.l po_tx_gv_base:l,%a0
+        jmp     (%a0)
+po_tx_base_live:
+        movea.l (%sp)+,%a0
         lea     -20(%sp),%sp
         movem.l %d0-%d1/%a0-%a1,(%sp)
         move.w  %sr,%d0
@@ -336,7 +376,34 @@ po_tx_midi_command:
         lea     32(%sp),%sp
         rts
 
+| po_tx_gate_vectors (poly.s po_gate, when po_gate_live changes): d1 = the new gate -> the two
+| vectors follow it. Every register kept.
+po_tx_gate_vectors:
+        move.l  %a0,-(%sp)
+        lea     po_tx_seq_clear(%pc),%a0
+        tst.l   %d1
+        bne     po_tx_gv_s
+        lea     po_tx_gv_rts(%pc),%a0
+po_tx_gv_s:
+        move.l  %a0,po_tx_gv_seq:l
+        lea     po_tx_base_live(%pc),%a0
+        tst.l   %d1
+        bne     po_tx_gv_b
+        lea     po_tx_gv_skip(%pc),%a0
+po_tx_gv_b:
+        move.l  %a0,po_tx_gv_base:l
+        movea.l (%sp)+,%a0
+        rts
+po_tx_gv_skip:
+        movea.l (%sp)+,%a0               | po_tx_base's a0
+po_tx_gv_rts:
+        rts
+
         .balign 4
+po_tx_gv_seq:                            | (12 Nov 2026) the gate's vectors, live at boot
+        .long   po_tx_seq_clear
+po_tx_gv_base:
+        .long   po_tx_base_live
 po_tx_serial:
         .long   0
 po_tx_buffers:                           | ptr, token, used, accepted tuple, spare

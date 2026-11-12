@@ -162,6 +162,7 @@
         .global po_is_synth, po_sig      | ... and its tests (machine.s: the chooser's commits, the row lookups, the Part validator)
         .global po_slot_marker           | 2.12: ... and the marker test (machine.s: the machine change, ml_kindof)
         .global po_lfdname
+        .global po_gate, po_gate_chk, po_gate_live, po_gate_tmask | (12 Nov 2026) the frame gate (sydrum.s, panel_transaction.inc.s read it)
         .include "remix.inc"             | 2.11: the remix's flags (HAVE_SYDRUM: SY DRUM in the remix) and the shared
                                          | equates (engine_abi.inc), written beside this unit by the build (manifest.py);
                                          | with HAVE_SYDRUM 0 the unit assembles byte for byte as 2.10's
@@ -213,6 +214,17 @@
         .set    LFO_DESC_LEN, 0x192
         .set    RESOLVER_RET, 0x40031ed6
         .set    SLOT_OFF, 0x8f04b        | Part: 0x8f04a + track*5 + machine (1 = FLEX)
+        .set    PG_SIG, SIG_OFF-MACH_OFF | (12 Nov 2026, po_gate) the signatures from the machine bytes: + 30 * track
+        .set    PG_PB, 0                 | po_gate_fp: the eight played bank bytes (0x8000182a) as last read
+        .set    PG_PP, 8                 | ... the eight played Part bytes (0x80001832)
+        .set    PG_CUR, 16               | ... the current bank and Part (0x100b14ce, a word)
+        .set    PG_OK, 18                | ... 1 = every track plays the current Part or nothing
+        .set    PG_SYN, 19               | ... 1 = a track of the counted Part is FM SYNTH or SY DRUM
+        .set    PG_MACH, 20              | ... the eight machine bytes as last counted
+        .set    PG_SIGS, 28              | ... the eight signature longs as last counted
+        .set    PG_SMASK, 60             | ... bit t = track t of the counted Part is FM SYNTH or SY DRUM
+        .set    PG_OTHER, 61             | ... bit t = track t plays another bank / Part than the current one
+        .set    PG_LEN, 64
         .set    SLOT_COL, 0x8f04a        | Part: the five slot bytes of a track, one a machine (the column the assigners index by machine)
         .set    CV_RATE, 3               | flat slot 3 = PLAYBACK slot D (RATE; FINE on a synth track)
         .set    LISTWIN_MACH, 0x460d5c30 | the sample-list window's chosen machine (its apply path 0x4005a826)
@@ -359,7 +371,25 @@
         .long   po_hold128               | -8: the AMP HOLD table (the quantizer's qz_holdrel reads it here since 26 Sep 2026)
         .long   po_pgdesc                | -4: the PLAYBACK descriptor clone (page.s)
 | ---- sy_render(track, ping, start, end) ------------------------------------
+| (12 Nov 2026, octatrick-modules#4) THE FRAME GATE's shut path: while po_gate_live is 0 (po_gate:
+| no track of the current Part is FM SYNTH or SY DRUM, every track plays that Part or none, GLIDE
+| 0, no key posted, the engine idle) both calls are the stock renderer's alone, which is what the
+| full path does for a sample voice then, but for two writes: S_CUR, the slide's word (po_gate_cur
+| sets it the frame the gate opens), and a sample START's clears (sy_no: lf_unlatch, po_free,
+| sy1_kind, S_GPREV, KEYS_AT, S_ON; po_mm_drop: KEYS_AT, po_mring_reset), which while the gate is
+| shut write what is there already (po_gate_idle and po_gate 2. hold them at 0). The stock
+| renderer returns to the caller.
 sy_render:
+        tst.b   po_gate_live:l
+        beq     sy_gate_stock
+        mvz.b   po_gate_tmask:l,%d0      | live: a track shut on its own (the track gate) takes the stock call too
+        beq     sy_render_full
+        move.l  4(%sp),%d1
+        btst    %d1,%d0
+        beq     sy_render_full
+sy_gate_stock:
+        jmp     STOCK_RENDER
+sy_render_full:
         lea     -48(%sp),%sp
         movem.l %d2-%d7/%a2-%a6,(%sp)    | 44(sp) the stock return; args 52 track, 56 ping, 60 start, 64 end
         move.l  CURSOR,%a2               | the header this call writes
@@ -1413,11 +1443,24 @@ po_tick:
         lea     po_clock(%pc),%a0
         move.l  %a0,CLOCK_AT             | published for the quantizer
         addq.l  #1,CK_FRAMES(%a0)
+        move.l  PING_AT,%d1              | (12 Nov 2026) a frame the builder did not reach (po_tx_accept): the
+        cmp.l   po_gate_ping:l,%d1       | gate is decided here
+        beq     po_tk_gated
+        jsr     po_gate:l
+po_tk_gated:
+        tst.b   po_gate_live:l           | (12 Nov 2026) the frame gate shut: no lock row to refresh (every track
+        beq     po_tk_shut               | clean, po_gate_idle), and SY DRUM's LFO phases follow lazily
         jsr     fl_seq_tick:l            | own locks; preserves every register
         .if     HAVE_SYDRUM
         jsr     sd_tick:l                | (2.11) SY DRUM, once a frame: its SETUP controls to the engine, the CF
                                          | records' SETUP bytes neutral on its tracks, its LFOs (every register kept)
         .endif
+        bra     po_tk_ticked
+po_tk_shut:
+        .if     HAVE_SYDRUM
+        jsr     sd_gate_tick:l           | (12 Nov 2026) the LFO phases' speeds watched (every register kept)
+        .endif
+po_tk_ticked:
         .if     HAVE_MUTE_MODES
         bsr     po_mm_tick               | (2.19) STOP ends the voices of a track whose stock kill Mute Modes skips
         .endif
@@ -3464,12 +3507,20 @@ po_fi_satp:
 po_lfo3b:
         move.l  %a4,%d1
         subi.l  #LFO_STATE,%d1
-        bne     po_l3b_depth
+        bne     po_l3b_gate
         cmpi.l  #2,%d2
-        bne     po_l3b_depth
+        bne     po_l3b_gate
         move.l  %a0,-(%sp)
         bsr     po_tick
         movea.l (%sp)+,%a0
+po_l3b_gate:                             | (12 Nov 2026) the frame gate shut: lf_apply's work on a track that
+        tst.b   po_gate_live:l           | is no FM SYNTH (PTCH: the stock depth) is the displaced pair; a module
+        bne     po_l3b_depth             | destination (PMTR 30..) still takes lf_apply (its private word), as
+        cmpi.l  #30,%d4                  | on every track
+        bcc     po_l3b_depth
+        mvs.w   0x12(%a2,%d2.l*2),%d0    | lf_apply's displaced pair: the depth
+        lea     (%a0,%d4.l*2),%a1        | ... and the destination
+        jmp     0x4000d046
 po_l3b_depth:
         jsr     lf_apply:l               | distant include; a word BSR cannot reach it
         jmp     0x4000d046
@@ -4762,8 +4813,13 @@ po_is_fm:
 | a chosen FM SYNTH track gets sy_render, which needs no sample. d3 = track.
 po_fmsource:
         movea.l (%a4)+,%a0               | displaced: the supplier
+        tst.b   po_gate_live:l           | (12 Nov 2026) the frame gate shut: no track is FM SYNTH or SY DRUM
+        beq     po_fs_shut
         lea     -8(%sp),%sp
         movem.l %d0/%d2,(%sp)
+        mvz.b   po_gate_tmask:l,%d0      | (12 Nov 2026) a track shut on its own: no synth
+        btst    %d3,%d0
+        bne     po_fs_keep
         move.l  %d3,%d2
         bsr     po_signed
         beq     po_fs_keep
@@ -4771,6 +4827,7 @@ po_fmsource:
 po_fs_keep:
         movem.l (%sp),%d0/%d2
         lea     8(%sp),%sp
+po_fs_shut:
         move.l  %a0,(%a3)+               | displaced: cached for the next first call
         pea     16.w                     | displaced: the second call's end argument
         jmp     FMSRC_RET
@@ -4784,12 +4841,31 @@ po_fs_keep:
 | under the engine's warm path: +40..57 dB at every retrigger on a sounding note (the
 | note-start click table on a sample-free track; Modwerk's transport returned 0x100
 | always). Any other FLEX track: the stock callback, its ABI untouched.
+| (12 Nov 2026) With the frame gate shut, a START asks po_gate_chk whether its track can be a synth
+| now (a pattern, Part or bank switch the frame builder published after po_gate ran this frame); if
+| so po_gate decides again before this START and the frame's renders. A synth START on a track the
+| track gate had shut does the same, so po_fmsource and sy_render see it this frame.
 po_fmstart:
+        tst.b   po_gate_live:l
+        bne     po_fst_live
+        move.l  %d2,-(%sp)
+        move.l  8(%sp),%d2               | track
+        jsr     po_gate_chk:l
+        movem.l (%sp),%d2                | (the condition codes are po_gate_chk's)
+        lea     4(%sp),%sp
+        beq     po_fst_shut              | no synth can start here: the stock callback
+        jsr     po_gate:l
+po_fst_live:
         lea     -8(%sp),%sp
         movem.l %d2/%a0,(%sp)
         move.l  12(%sp),%d2              | track
         bsr     po_signed
         beq     po_fst_stock
+        mvz.b   po_gate_tmask:l,%d0      | a synth START on a track the track gate shut: decide again
+        btst    %d2,%d0
+        beq     po_fst_open
+        jsr     po_gate:l
+po_fst_open:
         move.l  #VOICE_STRIDE,%d0
         muls.l  %d2,%d0
         lea     VOICE_BASE,%a0
@@ -4807,8 +4883,493 @@ po_fst_cold:                             | voice -- the DSP keeps its stream, th
 po_fst_stock:
         movem.l (%sp),%d2/%a0
         lea     8(%sp),%sp
+po_fst_shut:
         jmp     FLEX_START
 
+| ==== THE FRAME GATE (12 Nov 2026, octatrick-modules#4) =============================
+| (S_CUR, the slide's current word, is not written while shut: what the full path writes there for a
+| sample voice with GLIDE 0 is the record's PTCH word, so the frame the gate opens, po_gate_cur sets
+| every track's S_CUR from the word the record of the frame before holds -- the other ping's record,
+| 0x80000510 + 384 * ping + 48 * track, which the full path left equal to it. A track that did not
+| render in that frame renders in this one only from a START, whose full path sets S_CUR itself.)
+| A project with no FM SYNTH and no SY DRUM track paid this engine's per-frame work on every
+| track anyway: sy_render on every FLEX / STATIC voice twice a frame, po_fmsource, the LFO
+| destinations, the panel transaction, the lock queue and SY DRUM's tick, each asking po_signed
+| (about 2,100 to 3,300 emulated instructions a frame with 0 to 4 voices, about 700 more a trig).
+| po_gate decides once a frame whether anything of the engine can act, and the hooks take their
+| shut path (the displaced instructions, or the stock routine) while it cannot.
+|
+| po_gate_live is 1 (the full paths) unless ALL of these hold, read from the bytes themselves
+| every frame (as ml_cap does, no event hooked: a Part load, PART RELOAD, a paste or undo, a bank
+| or Part change, the machine lists, the assigner write these bytes through paths no detour
+| sees; whatever wrote them, the next frame reads them):
+|   1. GLIDE is 0 (the quantizer's GLIDE slides sample tracks in sy_render: LEG MONO and GLIDE);
+|   2. no CHROMATIC key's identity is posted (KEYS_AT, qz_pkey: sy_render consumes it at a START);
+|   3. the current Part is readable (PART_PTR / PART_IDX in range; at boot it is not);
+|   4. no track plays a bank / Part other than the current one in which it is a synth (0x8000182a /
+|      0x80001832; >= 16 / 4: nothing played yet, fl_seq_play_kind's own "no"): the lock queue reads the
+|      PLAYED Part's signature -- while a bank or Part switch is on its way that Part's bytes are read
+|      every block;
+|   5. no track of the current Part is FLEX with the signature "FM", 1 (or "SY", 1 with SY DRUM in
+|      the remix): po_sigkind's test, so no track can answer po_signed. Since 2.15 the signature is
+|      the only way a track becomes a synth (po_slot_marker answers 0: a FMSYNTH* / SYNTH* file is
+|      a sample, so no sample slot or sample lock can make one);
+|   6. and, to shut (live -> 0), the engine is idle (po_gate_idle): no engine voice on, no
+|      paraphonic voice or waiting note, no SY DRUM engine kind, no panel tuple pending or accepted,
+|      no MIDI note waiting, every lock row clean. While shut, nothing writes those (each writer
+|      runs only for a synth track, or at a START, which takes sy_render's full path).
+| 4 and 5 compare the bytes with the last frame's (two longs of machines, eight signature longs,
+| four longs of played banks / Parts and the current bank / Part word): equal, the last answer
+| stands; else they are counted again. The first hook of every frame that reaches the builder,
+| po_tx_accept, calls po_gate when the frame builder's ping has changed. Every register kept.
+po_gate:
+        lea     -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
+        move.l  PING_AT,%d0
+        move.l  %d0,po_gate_ping:l
+        moveq   #1,%d1                   | live, until every condition holds
+        clr.b   po_gate_tnew:l           | no track shut on its own (TRACK GATE below) unless counted
+        clr.b   po_gate_seen:l           | no track looked at by po_gate_chk since
+        tst.b   GLIDE_AT                 | 1. GLIDE
+        bne     pg_set
+        movea.l PART_PTR,%a0             | 3. the current Part
+        cmpa.l  #0x40000000,%a0
+        bcs     pg_set
+        cmpa.l  #0x48000000,%a0
+        bcc     pg_set
+        mvz.b   PART_IDX,%d0
+        cmpi.l  #3,%d0
+        bhi     pg_set
+        mulu.w  #6322,%d0
+        adda.l  %d0,%a0
+        adda.l  #MACH_OFF,%a0            | a0 = the Part's machine bytes (the signatures at + PG_SIG + 30 t)
+        lea     po_gate_fp(%pc),%a1
+        move.l  0x8000182a,%d0           | 4. the played banks ...
+        cmp.l   PG_PB(%a1),%d0
+        bne     pg_played
+        move.l  0x8000182e,%d0
+        cmp.l   PG_PB+4(%a1),%d0
+        bne     pg_played
+        move.l  0x80001832,%d0           | ... and Parts
+        cmp.l   PG_PP(%a1),%d0
+        bne     pg_played
+        move.l  0x80001836,%d0
+        cmp.l   PG_PP+4(%a1),%d0
+        bne     pg_played
+        move.w  0x100b14ce,%d0           | ... and the current bank and Part (0x100b14cf = PART_IDX)
+        cmp.w   PG_CUR(%a1),%d0
+        bne     pg_played
+        tst.b   PG_OTHER(%a1)            | a track plays another Part: its bytes are read every block
+        bne     pg_played
+pg_played_ok:
+        tst.b   PG_OK(%a1)
+        beq     pg_set                   | a track plays another Part
+        move.l  (%a0),%d0                | 5. the eight machine bytes ...
+        cmp.l   PG_MACH(%a1),%d0
+        bne     pg_count
+        move.l  4(%a0),%d0
+        cmp.l   PG_MACH+4(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG(%a0),%d0          | ... and the eight signature longs
+        cmp.l   PG_SIGS(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+30(%a0),%d0
+        cmp.l   PG_SIGS+4(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+60(%a0),%d0
+        cmp.l   PG_SIGS+8(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+90(%a0),%d0
+        cmp.l   PG_SIGS+12(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+120(%a0),%d0
+        cmp.l   PG_SIGS+16(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+150(%a0),%d0
+        cmp.l   PG_SIGS+20(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+180(%a0),%d0
+        cmp.l   PG_SIGS+24(%a1),%d0
+        bne     pg_count
+        move.l  PG_SIG+210(%a0),%d0
+        cmp.l   PG_SIGS+28(%a1),%d0
+        bne     pg_count
+pg_counted:
+        move.l  KEYS_AT,%d0              | 2. a posted CHROMATIC key (qz_pkey[8])
+        or.l    KEYS_AT+4,%d0
+        bne     pg_tracks
+        tst.b   PG_SYN(%a1)
+        bne     pg_tracks                | an FM SYNTH or SY DRUM track
+        tst.b   po_gate_live:l           | 6. nothing reachable: already shut, or shut once the engine is idle
+        beq     pg_shut
+pg_tracks:
+        mvz.b   PG_SMASK(%a1),%d0        | THE TRACK GATE: each track that is no synth and idle (po_gate_tidle)
+        bsr     po_gate_tracks           | -> d0: the tracks shut on their own while the gate is live
+        move.b  %d0,po_gate_tnew:l
+        cmpi.l  #0xff,%d0
+        bne     pg_set                   | a track is a synth, has a posted key, or is not idle: live
+        move.l  KEYS_AT,%d0
+        or.l    KEYS_AT+4,%d0
+        bne     pg_set
+        tst.b   PG_SYN(%a1)
+        bne     pg_set
+pg_shut:
+        moveq   #0,%d1
+pg_set:
+        | the tracks that stop being shut get their S_CUR from the frame before (po_gate_cur): shut is
+        | every track while the gate is shut, else the track gate's
+        mvz.b   po_gate_tmask:l,%d0      | the shut tracks before ...
+        tst.b   po_gate_live:l
+        bne     pg_set_old
+        moveq   #-1,%d0
+pg_set_old:
+        move.l  %d1,-(%sp)
+        mvz.b   po_gate_tnew:l,%d1       | ... and now
+        tst.l   (%sp)
+        bne     pg_set_new
+        moveq   #-1,%d1
+pg_set_new:
+        not.l   %d1
+        and.l   %d1,%d0                  | shut before, not now
+        move.l  (%sp)+,%d1
+        andi.l  #0xff,%d0
+        beq     pg_set_cur
+        bsr     po_gate_cur
+pg_set_cur:
+        mvz.b   po_gate_tnew:l,%d0
+        move.b  %d0,po_gate_tmask:l
+        mvz.b   po_gate_live:l,%d0
+        cmp.l   %d1,%d0
+        beq     pg_vec_same              | no change
+        .if     HAVE_PANEL_TRANSACTION
+        jsr     po_tx_gate_vectors:l     | the panel transaction's call vectors follow the gate (a distant include)
+        .endif
+pg_vec_same:
+        move.b  %d1,po_gate_live:l
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea     16(%sp),%sp
+        rts
+| 4 changed: the eight tracks' played bank and Part bytes stored with the current word, and
+| PG_OK = 1 when every track plays the current bank's current Part or nothing (bank >= 16 or
+| Part >= 4, fl_seq_play_kind's "no").
+pg_played:
+        lea     -20(%sp),%sp
+        movem.l %d2-%d5/%a0,(%sp)
+        moveq   #0,%d5                   | the tracks that play another Part
+        move.l  0x8000182a,%d0
+        move.l  %d0,PG_PB(%a1)
+        move.l  0x8000182e,%d0
+        move.l  %d0,PG_PB+4(%a1)
+        move.l  0x80001832,%d0
+        move.l  %d0,PG_PP(%a1)
+        move.l  0x80001836,%d0
+        move.l  %d0,PG_PP+4(%a1)
+        move.w  0x100b14ce,%d0
+        move.w  %d0,PG_CUR(%a1)
+        moveq   #1,%d4                   | ok so far
+        moveq   #7,%d2
+pg_pl_track:
+        lea     0x8000182a,%a1
+        mvz.b   (%a1,%d2.l),%d0          | the track's played bank
+        cmpi.l  #16,%d0
+        bcc     pg_pl_next               | nothing played yet
+        mvz.b   8(%a1,%d2.l),%d3         | ... and Part
+        cmpi.l  #4,%d3
+        bcc     pg_pl_next
+        mvz.b   0x100b14ce,%d1
+        cmp.l   %d1,%d0
+        bne     pg_pl_other
+        mvz.b   PART_IDX,%d1
+        cmp.l   %d1,%d3
+        beq     pg_pl_next
+pg_pl_other:
+        bset    %d2,%d5                  | another Part plays on this track (a bank or Part switch on its way):
+        move.l  %d3,%d1                  | live only when the track is a synth there (fl_seq_play_kind reads it)
+        bsr     po_gate_osyn
+        beq     pg_pl_next
+        moveq   #0,%d4
+pg_pl_next:
+        subq.l  #1,%d2
+        bpl     pg_pl_track
+        lea     po_gate_fp(%pc),%a1
+        move.b  %d4,PG_OK(%a1)
+        move.b  %d5,PG_OTHER(%a1)
+        movem.l (%sp),%d2-%d5/%a0
+        lea     20(%sp),%sp
+        moveq   #1,%d1                   | (the live answer until every condition holds)
+        bra     pg_played_ok
+| 5 changed: the bytes stored, and PG_SYN = 1 when a track is FLEX with "FM", 1 (or "SY", 1 with
+| SY DRUM in the remix): po_sigkind's (po_sig's) test on each track.
+pg_count:
+        lea     -16(%sp),%sp
+        movem.l %d2-%d4/%a2,(%sp)
+        move.l  (%a0),PG_MACH(%a1)
+        move.l  4(%a0),PG_MACH+4(%a1)
+        moveq   #0,%d3                   | no synth so far
+        moveq   #0,%d2                   | the track
+        moveq   #PG_SIG,%d4              | its signature's offset from the machine bytes
+        lea     PG_SIGS(%a1),%a2
+pg_ct_track:
+        move.l  (%a0,%d4.l),%d0          | the signature long
+        move.l  %d0,(%a2)+
+        mvz.b   (%a0,%d2.l),%d1          | the track's machine
+        subq.l  #1,%d1                   | FLEX?
+        bne     pg_ct_next
+        lsr.l   #8,%d0                   | "FM", 1 / "SY", 1 in the high three bytes
+        cmpi.l  #0x464d01,%d0
+        beq     pg_ct_syn
+        .if     HAVE_SYDRUM
+        cmpi.l  #0x535901,%d0
+        beq     pg_ct_syn
+        .endif
+        bra     pg_ct_next
+pg_ct_syn:
+        bset    %d2,%d3                  | the track's bit in the synth mask
+pg_ct_next:
+        moveq   #30,%d0
+        add.l   %d0,%d4
+        addq.l  #1,%d2
+        cmpi.l  #8,%d2
+        bne     pg_ct_track
+        move.b  %d3,PG_SMASK(%a1)
+        sne     %d3
+        move.b  %d3,PG_SYN(%a1)
+        movem.l (%sp),%d2-%d4/%a2
+        lea     16(%sp),%sp
+        moveq   #1,%d1                   | (the live answer until every condition holds)
+        bra     pg_counted
+| po_gate_cur: d0 = a mask of tracks -> each one's S_CUR := the PTCH word of its record in the frame
+| before (the other ping's: 0x80000510 + 384 * (ping ^ 1) + 48 * track) << 12, the full path's snap.
+| Clobbers d0, a0, a1 (po_gate saved them).
+po_gate_cur:
+        lea     -12(%sp),%sp
+        movem.l %d2-%d4,(%sp)
+        move.l  %d0,%d4                  | the tracks
+        move.l  PING_AT,%d0
+        moveq   #1,%d2
+        eor.l   %d2,%d0
+        andi.l  #1,%d0
+        mulu.w  #384,%d0
+        movea.l #0x80000510,%a1
+        adda.l  %d0,%a1                  | track 0's record, the frame before
+        lea     sy_state(%pc),%a0
+        moveq   #0,%d2
+pgc_track:
+        btst    %d2,%d4
+        beq     pgc_next
+        mvz.w   (%a1),%d0
+        lsl.l   #8,%d0
+        lsl.l   #4,%d0
+        move.l  %d0,S_CUR(%a0)
+pgc_next:
+        lea     48(%a1),%a1
+        lea     ST_STRIDE(%a0),%a0
+        addq.l  #1,%d2
+        cmpi.l  #8,%d2
+        bne     pgc_track
+        movem.l (%sp),%d2-%d4
+        lea     12(%sp),%sp
+        rts
+| po_gate_osyn: d0 = a bank, d1 = a Part, d2 = a track -> NE (d0 = 1) when the track is FLEX with "FM", 1
+| (or "SY", 1) in that Part (the bank blob 0x400e21e0 + bank * 0x9b340, fl_seq_play_kind's), else EQ (d0 = 0).
+| Clobbers d0, d1, a0.
+po_gate_osyn:
+        movea.l #0x400e21e0,%a0
+        mulu.w  #6322,%d1
+        adda.l  %d1,%a0                  | + part * 6322
+        move.l  #0x9b340,%d1
+        mulu.l  %d1,%d0
+        adda.l  %d0,%a0                  | + bank * 0x9b340
+        adda.l  #MACH_OFF,%a0
+        mvz.b   (%a0,%d2.l),%d0
+        subq.l  #1,%d0                   | FLEX?
+        bne     pgo_no
+        move.l  %d2,%d0
+        mulu.w  #30,%d0
+        move.l  PG_SIG(%a0,%d0.l),%d0
+        lsr.l   #8,%d0
+        cmpi.l  #0x464d01,%d0            | "FM", 1
+        beq     pgo_yes
+        .if     HAVE_SYDRUM
+        cmpi.l  #0x535901,%d0            | "SY", 1
+        beq     pgo_yes
+        .endif
+pgo_no:
+        moveq   #0,%d0
+        rts
+pgo_yes:
+        moveq   #1,%d0
+        rts
+| po_gate_chk: d2 = a track with a START (or a queued event) while it is shut -> NE (d0 = 1) when it
+| may be a synth now: it plays a bank / Part other than the current one (fl_seq_play_kind reads that
+| Part) and is a synth there (po_gate_osyn), or it is FLEX with "FM", 1 (or "SY", 1) in the current
+| Part (po_sigkind's test); EQ (d0 = 0)
+| else. A track is looked at once a frame (po_gate_seen, cleared by po_gate): a second look answers
+| EQ, the first one having found it no synth (a yes runs po_gate, which clears the mask). Every other
+| register kept.
+po_gate_chk:
+        move.l  %d1,-(%sp)
+        move.l  %a0,-(%sp)
+        mvz.b   po_gate_seen:l,%d0
+        bset    %d2,%d0
+        bne     pgk_no                   | looked at already this frame
+        move.b  %d0,po_gate_seen:l
+        lea     0x8000182a,%a0
+        mvz.b   (%a0,%d2.l),%d0          | the bank it plays
+        cmpi.l  #16,%d0
+        bcc     pgk_cur                  | none yet
+        mvz.b   8(%a0,%d2.l),%d1         | ... and the Part
+        cmpi.l  #4,%d1
+        bcc     pgk_cur
+        cmp.b   0x100b14ce,%d0
+        bne     pgk_other
+        cmp.b   PART_IDX,%d1
+        beq     pgk_cur
+pgk_other:
+        bsr     po_gate_osyn             | another Part plays here: a synth there?
+        bne     pgk_yes
+pgk_cur:
+        movea.l PART_PTR,%a0             | (readable: the gate was shut on it this frame)
+        mvz.b   PART_IDX,%d0
+        mulu.w  #6322,%d0
+        adda.l  %d0,%a0
+        adda.l  #MACH_OFF,%a0
+        mvz.b   (%a0,%d2.l),%d0
+        subq.l  #1,%d0                   | FLEX?
+        bne     pgk_no
+        move.l  %d2,%d0
+        mulu.w  #30,%d0
+        move.l  PG_SIG(%a0,%d0.l),%d0
+        lsr.l   #8,%d0
+        cmpi.l  #0x464d01,%d0            | "FM", 1
+        beq     pgk_yes
+        .if     HAVE_SYDRUM
+        cmpi.l  #0x535901,%d0            | "SY", 1
+        beq     pgk_yes
+        .endif
+pgk_no:
+        moveq   #0,%d0
+        bra     pgk_out
+pgk_yes:
+        moveq   #1,%d0
+pgk_out:
+        movea.l (%sp)+,%a0
+        move.l  (%sp)+,%d1
+        tst.l   %d0
+        rts
+| po_gate_tracks: d0 = the synth mask (PG_SMASK) -> d0 = the tracks shut on their own: each track
+| that is no FM SYNTH / SY DRUM, has no CHROMATIC key posted (KEYS_AT) and is idle (po_gate_tidle).
+| Clobbers d0, a0 (po_gate saved d0, d1, a0, a1).
+po_gate_tracks:
+        lea     -12(%sp),%sp
+        movem.l %d2-%d4,(%sp)
+        move.l  %d0,%d3                  | the synths
+        moveq   #0,%d4                   | the shut tracks
+        moveq   #0,%d2
+pgt_track:
+        btst    %d2,%d3
+        bne     pgt_next
+        lea     KEYS_AT,%a0
+        tst.b   (%a0,%d2.l)
+        bne     pgt_next
+        bsr     po_gate_tidle
+        bne     pgt_next
+        bset    %d2,%d4
+pgt_next:
+        addq.l  #1,%d2
+        cmpi.l  #8,%d2
+        bne     pgt_track
+        move.l  %d4,%d0
+        movem.l (%sp),%d2-%d4
+        lea     12(%sp),%sp
+        rts
+| po_gate_tidle: d2 = a track -> EQ when nothing of the engine runs or waits on it: S_ON and S_GPREV 0,
+| its four voice records free and silent (V_STATE, V_GAIN, V_GPREV) and no waiting note (po_pend), no FM LFO latch
+| (lf_latched), its MIDI ring empty, its lock rows clean (fl_seq_cleanm and, with SY DRUM,
+| sl_seq_cleanm bit t), no SY DRUM engine kind (sy1_kind) or queued key recharge (sy1_leg_pending),
+| no panel tuple pending or accepted (qz_tx +11 / +22) and none selected (po_tx_active). Every one is
+| written only for a synth track, by a synth START or by a CHROMATIC key (KEYS_AT), and cleared by a
+| sample START, so while the track is shut it stays as it is. Clobbers d0, a0 (NE: d0 = 1).
+po_gate_tidle:
+        lea     sy_state(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #7,%d0
+        adda.l  %d0,%a0
+        tst.b   S_ON(%a0)
+        bne     pgti_busy
+        tst.w   S_GPREV(%a0)
+        bne     pgti_busy
+        lea     po_voices(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #8,%d0                   | 4 voices x 64 bytes
+        adda.l  %d0,%a0
+        moveq   #4,%d0                   | each voice free and silent (po_free's three clears: V_STATE, V_GAIN,
+pgti_voice:                              | V_GPREV -- what a sample START's sy_no leaves)
+        tst.b   V_STATE(%a0)
+        bne     pgti_busy
+        tst.l   V_GAIN(%a0)
+        bne     pgti_busy
+        tst.w   V_GPREV(%a0)
+        bne     pgti_busy
+        lea     V_STRIDE(%a0),%a0
+        subq.l  #1,%d0
+        bne     pgti_voice
+        lea     po_pend(%pc),%a0
+        move.l  %d2,%d0
+        lsl.l   #6,%d0                   | 4 notes x 16 bytes
+        adda.l  %d0,%a0
+        tst.b   (%a0)
+        bne     pgti_busy
+        tst.b   16(%a0)
+        bne     pgti_busy
+        tst.b   32(%a0)
+        bne     pgti_busy
+        tst.b   48(%a0)
+        bne     pgti_busy
+        lea     lf_latched:l,%a0
+        move.l  %d2,%d0
+        lsl.l   #2,%d0
+        tst.b   (%a0,%d0.l)
+        bne     pgti_busy
+        lea     po_mhead(%pc),%a0
+        mvz.b   (%a0,%d2.l),%d0
+        lea     po_mtail(%pc),%a0
+        cmp.b   (%a0,%d2.l),%d0
+        bne     pgti_busy
+        move.l  fl_seq_cleanm:l,%d0
+        btst    %d2,%d0
+        beq     pgti_busy
+        .if     HAVE_SYDRUM
+        move.l  sl_seq_cleanm:l,%d0
+        btst    %d2,%d0
+        beq     pgti_busy
+        lea     sy1_kind:l,%a0
+        tst.b   (%a0,%d2.l)
+        bne     pgti_busy
+        lea     sy1_leg_pending:l,%a0
+        tst.b   (%a0,%d2.l)
+        bne     pgti_busy
+        .endif
+        .if     HAVE_PANEL_TRANSACTION
+        lea     qz_tx:l,%a0
+        move.l  %d2,%d0
+        lsl.l   #5,%d0
+        adda.l  %d0,%a0
+        tst.b   11(%a0)
+        bne     pgti_busy
+        tst.b   22(%a0)
+        bne     pgti_busy
+        lea     po_tx_active:l,%a0
+        move.l  %d2,%d0
+        lsl.l   #2,%d0
+        tst.l   (%a0,%d0.l)
+        bne     pgti_busy
+        .endif
+        moveq   #0,%d0
+        rts
+pgti_busy:
+        moveq   #1,%d0
+        rts
 | ---- po_slot_marker: d0 = a FLEX slot (0-based) -> d0 = 1 when the slot's sample is a
 | marker. 2.15: always 0 -- the marker path is off (the selection guard counts the machines
 | the lists give; a FLEX track whose slot holds an FMSYNTH* / SYNTH* file plays that file as
@@ -5256,6 +5817,8 @@ po_rel_out:
 | marker to its end, which ended the stock voice and cut the note.
 po_retrig:
         movea.l 114(%sp),%a1             | displaced: a1 = the track
+        tst.b   po_gate_live:l           | (12 Nov 2026) the frame gate shut: no engine voice is on (S_ON 0 on
+        beq     po_retrig_shut           | every track), stock's byte stands
         lea     -24(%sp),%sp
         movem.l %d1-%d4/%a2-%a3,(%sp)
         move.l  %a1,%d4                  | the track
@@ -5306,6 +5869,7 @@ po_retrig_log:
 po_retrig_out:
         movem.l (%sp),%d1-%d4/%a2-%a3
         lea     24(%sp),%sp
+po_retrig_shut:
         move.b  (%a0,%a1.l),%d0          | displaced: the byte (rewritten or not) for the packer's nibble byte
         jmp     0x4000c63c
 
@@ -6517,6 +7081,19 @@ po_mhead:                                | the ring's head (the engine's) ...
         .fill   8, 1, 0
 po_mtail:                                | ... and tail (the note-on's), per track
         .fill   8, 1, 0
+po_gate_ping:                            | (12 Nov 2026) the frame builder's ping po_gate last ran at (-1: never)
+        .long   -1
+po_gate_fp:                              | po_gate's bytes as last read (PG_*); 0xff: nothing matches the first time
+        .fill   PG_LEN, 1, 0xff
+po_gate_live:                            | 1: the engine's full paths (from boot until po_gate shuts it); 0: shut
+        .byte   1
+po_gate_tmask:                           | while live: bit t = track t shut on its own (the track gate, po_gate_tracks)
+        .byte   0
+po_gate_tnew:                            | po_gate's new track mask, until it is set
+        .byte   0
+po_gate_seen:                            | the tracks po_gate_chk looked at since po_gate last ran
+        .byte   0
+        .align  4
 po_clock:                                | the sequencer clock (po_tick), read by the quantizer through qz_clock
         .long   0, 0, FPS_DEFAULT, 0, -1, -1, -1, 0
 po_rtlog:                                | po_retrig's counters and ring (po_clock + 32; the rig peeks it)
