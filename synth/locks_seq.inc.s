@@ -500,10 +500,11 @@ fl_seq_fill:
         movem.l %d1-%d4/%a0-%a1,(%sp)
         move.l  %d0,-(%sp)
         jsr     fl_row:l
-        move.l  (%a0)+,(%a1)+
-        move.l  (%a0)+,(%a1)+
-        move.l  (%a0)+,(%a1)+
-        move.l  (%a0),(%a1)
+        move.w  (%a0),(%a1)+             | (2.23) the stored row is two bytes; the queue row keeps
+        move.w  #-1,(%a1)+               | 2.22's sixteen, the other fourteen 0xFF as they always were
+        move.l  #-1,(%a1)+
+        move.l  #-1,(%a1)+
+        move.l  #-1,(%a1)
         lea     -12(%a1),%a1
         move.l  (%sp)+,%d0
         tst.l   %d4

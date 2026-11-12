@@ -106,52 +106,50 @@ fl_shift_rows:
         lea     fl_empty_row:l,%a1
         cmpa.l  %a1,%a0
         beq     fl_sr_unlock
+| (2.23) the track's lane: d7 rows of two bytes rotate by one (2.22 moved four columns of
+| four bytes through 16-byte rows; the 14 bytes after VOIC, CHRD were always 0xFF).
         moveq   #0,%d6
         move.l  184(%sp),%d1
-        movea.l %a0,%a2
-        moveq   #4,%d2
-fl_sr_column:
-        movea.l %a2,%a0
         move.l  %d7,%d3
         subq.l  #1,%d3
         tst.l   %d1
         bpl     fl_sr_right
-        move.l  (%a0),%d4
+        mvz.w   (%a0),%d4
 fl_sr_left_loop:
-        move.l  FL_ROW(%a0),%d5
-        cmp.l   (%a0),%d5
+        mvz.w   FL_ROW(%a0),%d5
+        mvz.w   (%a0),%d2
+        cmp.l   %d2,%d5
         beq     fl_sr_left_same
         moveq   #1,%d6
 fl_sr_left_same:
-        move.l  %d5,(%a0)
-        lea     FL_ROW(%a0),%a0
+        move.w  %d5,(%a0)
+        addq.l  #FL_ROW,%a0
         subq.l  #1,%d3
         bne     fl_sr_left_loop
         bra     fl_sr_last
 fl_sr_right:
         move.l  %d3,%d5
-        lsl.l   #4,%d5
+        add.l   %d5,%d5
         adda.l  %d5,%a0
-        move.l  (%a0),%d4
+        mvz.w   (%a0),%d4
 fl_sr_right_loop:
-        move.l  -FL_ROW(%a0),%d5
-        cmp.l   (%a0),%d5
+        mvz.w   -FL_ROW(%a0),%d5
+        mvz.w   (%a0),%d2
+        cmp.l   %d2,%d5
         beq     fl_sr_right_same
         moveq   #1,%d6
 fl_sr_right_same:
-        move.l  %d5,(%a0)
-        lea     -FL_ROW(%a0),%a0
+        move.w  %d5,(%a0)
+        subq.l  #FL_ROW,%a0
         subq.l  #1,%d3
         bne     fl_sr_right_loop
 fl_sr_last:
-        cmp.l   (%a0),%d4
+        mvz.w   (%a0),%d2
+        cmp.l   %d2,%d4
         beq     fl_sr_last_same
         moveq   #1,%d6
 fl_sr_last_same:
-        move.l  %d4,(%a0)
-        addq.l  #4,%a2
-        subq.l  #1,%d2
-        bne     fl_sr_column
+        move.w  %d4,(%a0)
         tst.l   %d6
         beq     fl_sr_unlock
         bsr     fl_mark_dirty
@@ -357,10 +355,8 @@ fl_pn_track:
         moveq   #16,%d5
 fl_pn_step:
         bsr     fl_row
-        move.l  (%a0),%d4
-        and.l   4(%a0),%d4
-        and.l   8(%a0),%d4
-        cmpi.l  #-1,%d4
+        mvz.w   (%a0),%d4                | (2.23) the row's two bytes (2.22 tested twelve, ten always 0xFF)
+        cmpi.l  #0xffff,%d4
         bne     fl_pn_yes
         addq.l  #1,%d3
         subq.l  #1,%d5

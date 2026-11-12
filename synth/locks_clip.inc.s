@@ -281,13 +281,13 @@ fl_cx_context:
  beq fl_cx_pattern
  cmpi.l #7,%d2
  bhi fl_cx_out
- move.l #64*FL_ROW,%d7
+ moveq #64,%d7
  cmpi.l #11,%d4
  bne fl_cx_track
  cmpi.l #3,%d3
  bhi fl_cx_out
  lsl.l #4,%d3
- move.l #16*FL_ROW,%d7
+ moveq #16,%d7
  bra fl_cx_row
 fl_cx_track:
  moveq #0,%d3
@@ -295,31 +295,23 @@ fl_cx_track:
 fl_cx_pattern:
  moveq #0,%d2
  moveq #0,%d3
- move.l #512*FL_ROW,%d7
+ move.l #512,%d7
+| (2.23) d7 rows from the first of (pattern d1, track d2, step d3): one lane for a page or a track,
+| the pattern's eight lanes in a row for a pattern (fl_steps_read / fl_steps_write).
 fl_cx_row:
- jsr fl_row:l
- lsr.l #2,%d7
+ lsl.l #3,%d1
+ add.l %d2,%d1
+ lsl.l #6,%d1
+ add.l %d3,%d1
+ move.l %d7,%d3
  tst.l %d5
  bne fl_cx_restore
  move.l %d4,(%a2)
-fl_cx_capture_loop:
- move.l (%a0)+,(%a1)+
- subq.l #1,%d7
- bne fl_cx_capture_loop
+ jsr fl_steps_read:l
  bra fl_cx_out
 fl_cx_restore:
- moveq #0,%d6
-fl_cx_restore_loop:
- move.l (%a1)+,%d4
- cmp.l (%a0),%d4
- beq fl_cx_restore_next
- move.l %d4,(%a0)
- moveq #1,%d6
-fl_cx_restore_next:
- addq.l #4,%a0
- subq.l #1,%d7
- bne fl_cx_restore_loop
- tst.l %d6
+ jsr fl_steps_write:l
+ tst.l %d4
  beq fl_cx_out
  jsr fl_mark_dirty:l
  move.l 60(%sp),%d6
@@ -342,6 +334,6 @@ fl_clip_reset:
  .balign 4
 fl_clip_kind: .long 0
 fl_undo_kind: .long 0
-fl_clip_data: .space 512*FL_ROW
+fl_clip_data: .space 512*FL_ROW         | (2.23) 1,024 bytes each, was 8,192
 fl_undo_data: .space 512*FL_ROW
  .section .text

@@ -3,11 +3,15 @@
  * affected native banks have been saved, a load repeats the native rewrite
  * from the captured defaults and never reinterprets restored LFO defaults.
  * The project comment is committed last. A project without FM is not written.
+ * (2.23) The project text is streamed through the bank staging buffer, never held whole (2.22
+ * read it into a 256 KiB buffer at every load and every save). Once every companion checkpoint
+ * is durable the comment is due, and the quantizer's project writer prints it inside stock's
+ * own rewrite (fl_mig_marker_due); the rewrite below only adds it when a save had to make the
+ * companions durable first, appending in place through a second handle.
  */
-enum { FM_MIG_TEXT_MAX=262144, FM_PART=0x8ed80, FM_PART_SIZE=6322,
-       FM_BANK_SIZE=0x9b340, FM_PATTERN_SIZE=0x8ed8, FM_TRACK_SIZE=2330 };
-extern u8 fl_migration_text[];
-static u32 fl_mig_pending,fl_mig_active,fl_mig_pristine;
+enum { FM_PART=0x8ed80, FM_PART_SIZE=6322,
+       FM_BANK_SIZE=0x9b340, FM_PATTERN_SIZE=0x8ed8, FM_TRACK_SIZE=2330, FM_MIG_MATCH=17 };
+static u32 fl_mig_pending,fl_mig_active,fl_mig_pristine,fl_mig_durable;
 /* Runtime provenance already decided by load/restore's existing project marker.
  * These masks are not persisted and do not complete any bank or owner. */
 static u32 fl_mig_known_mask,fl_mig_capture_mask;
@@ -19,35 +23,61 @@ static s32 fl_mig_path(const char *base,u32 stored) {
     while(tail[j])fl_io_path[n++]=tail[j++];
     fl_io_path[n]=0;return 0;
 }
-/* Read project text before opening a write handle. An oversized file fails closed. */
+/* Scan the project text for the comment line, a chunk at a time: the line counts at a line's
+ * start, followed by CR, LF or the end of the file (2.22's rule). *last = the file's last byte. */
 static s32 fl_mig_text_read(const char *base,u32 stored,u32 *length,u32 *has) {
-    s32 r,c,size;u32 i,j;
+    s32 r,c,size,m=0;u32 pos=0,n,i;u8 ch;
     *length=0;*has=0;r=fl_mig_path(base,stored);if(r<0)return r;
     r=fl_io_fs_open(&fl_io_object,fl_io_path,"r",fl_io_sector,512);
     if(r<0)return r==-12?ABSENT:r;
     size=fl_io_fs_size(fl_io_object.word[0]);
     if(size<0)r=size;
-    else if((u32)size>FM_MIG_TEXT_MAX-sizeof(fl_mig_line)-2)r=PATH_ERROR;
-    else {r=fl_io_fs_read(&fl_io_object,fl_migration_text,(u32)size);r=r==1?0:r<0?r:CORRUPT;}
+    else while(pos<(u32)size) {
+        n=(u32)size-pos;if(n>FILE_BYTES)n=FILE_BYTES;
+        r=fl_io_fs_read(&fl_io_object,fl_io_file,n);r=r==1?0:r<0?r:CORRUPT;if(r<0)break;
+        for(i=0;i<n&&!*has;++i) {
+            ch=fl_io_file[i];
+            if(m==FM_MIG_MATCH){if(ch=='\r'||ch=='\n'){*has=1;break;}m=-1;}
+            else if(m>=0)m=ch==(u8)fl_mig_line[m]?m+1:-1;
+            if(m<0&&ch=='\n')m=0;
+        }
+        pos+=n;if(*has)break;
+    }
+    if(r>=0&&m==FM_MIG_MATCH)*has=1;
     c=fl_io_fs_close(&fl_io_object);if(r>=0&&c<0)r=c;if(r<0)return r;
     *length=(u32)size;
-    for(i=0;i<(u32)size;++i)if(i==0||fl_migration_text[i-1]=='\n') {
-        for(j=0;fl_mig_line[j]!='\r'&&i+j<(u32)size&&fl_migration_text[i+j]==(u8)fl_mig_line[j];++j){}
-        if(fl_mig_line[j]=='\r'&&(i+j==(u32)size||fl_migration_text[i+j]=='\r'||fl_migration_text[i+j]=='\n')){*has=1;break;}
-    }
     return 0;
 }
+/* Append the line in place: a reading and a writing handle on the same file; every byte the
+ * writer puts down is the byte already there (stock opens "w" without cutting the file), the
+ * line goes after them. A cut card leaves the text whole, at worst without the line. */
 static s32 fl_mig_comment(const char *base,u32 stored) {
-    s32 r,c;u32 n,has,i;r=fl_mig_text_read(base,stored,&n,&has);
+    s32 r,c,w;u32 n,has,i,pos=0,k;u8 last=0;r=fl_mig_text_read(base,stored,&n,&has);
     if(r!=0)return r;
     if(has)return 0;
-    if(n&&fl_migration_text[n-1]!='\n')fl_migration_text[n++]='\n';
-    for(i=0;fl_mig_line[i];++i)fl_migration_text[n++]=(u8)fl_mig_line[i];
     r=fl_mig_path(base,stored);if(r<0)return r;
-    r=fl_io_fs_open(&fl_io_object,fl_io_path,"w",fl_io_sector,512);if(r<0)return r;
-    r=fl_io_fs_write(&fl_io_object,fl_migration_text,n);r=r==1?0:r<0?r:CORRUPT;
-    c=fl_io_fs_close(&fl_io_object);if(r>=0&&c<0)r=c;return r;
+    r=fl_io_fs_open(&fl_io_object,fl_io_path,"r",fl_io_sector,512);if(r<0)return r;
+    w=fl_io_fs_open(&fl_io_object2,fl_io_path,"w",fl_io_sector2,512);
+    if(w<0){fl_io_fs_close(&fl_io_object);return w;}
+    while(pos<n) {
+        k=n-pos;if(k>FILE_BYTES)k=FILE_BYTES;
+        r=fl_io_fs_read(&fl_io_object,fl_io_file,k);r=r==1?0:r<0?r:CORRUPT;if(r<0)break;
+        last=fl_io_file[k-1];
+        r=fl_io_fs_write(&fl_io_object2,fl_io_file,k);r=r==1?0:r<0?r:CORRUPT;if(r<0)break;
+        pos+=k;
+    }
+    if(r>=0) {
+        k=0;if(n&&last!='\n')fl_io_file[k++]='\n';
+        for(i=0;fl_mig_line[i];++i)fl_io_file[k++]=(u8)fl_mig_line[i];
+        r=fl_io_fs_write(&fl_io_object2,fl_io_file,k);r=r==1?0:r<0?r:CORRUPT;
+    }
+    c=fl_io_fs_close(&fl_io_object);if(r>=0&&c<0)r=c;
+    c=fl_io_fs_close(&fl_io_object2);if(r>=0&&c<0)r=c;return r;
 }
+/* The quantizer's project writer asks while stock writes the project text: nonzero prints the
+ * comment line there, so a save of a migrated project needs no rewrite. Only once every
+ * companion checkpoint is durable (fl_migrate_saved reached the comment, or a marked load). */
+u32 fl_mig_marker_due(void) {return fl_io_loaded&&fl_mig_active&&fl_mig_durable&&!fl_mig_pending;}
 static volatile u8 *fl_mig_bank(u32 bank) {
     volatile u8 *p=(volatile u8 *)(0x400e21e0u+bank*FM_BANK_SIZE);
     if(bank==*(volatile u8 *)0x100b14ce) {
@@ -64,21 +94,47 @@ static u8 fl_mig_voice(u8 v) {return v>=1&&v<=4?v:1;}
 static void fl_mig_dirty(u32 bank) {
     u32 sr=fl_io_irq_lock();fl_dirty_mask|=1u<<bank;++fl_generation[bank];fl_io_irq_restore(sr);
 }
-/* Capture sources once. Native data stays untouched until the checkpoint file is durable. */
+/* (2.23) The lanes a capture of the bank would newly take: step lanes of FM tracks' patterns
+ * with an old lock, scene lanes of FM track pairs with an old scene lock. */
+static u32 fl_mig_lanes_needed(u32 bank,volatile u8 *blob) {
+    volatile u8 *part,*row;u32 p,t,s,n,need=0,pairs=0,fm;
+    for(p=0;p<8;++p) {
+        part=blob+FM_PART+p*FM_PART_SIZE;
+        for(t=0;t<8;++t)if(fl_mig_fm(part,t))for(s=0;s<16;++s) {
+            row=part+0x662+(s*8+t)*32;
+            if(row[8]!=255||row[11]!=255)pairs|=1u<<((p&3)*4+t/2);
+        }
+    }
+    for(p=0;p<16;++p)if((pairs&(1u<<p))&&!fl_io_core_taken(2048+bank*16+p))++need;
+    for(n=0;n<16;++n) {
+        p=blob[n*FM_PATTERN_SIZE+0x8e57];if(p>=4)continue;
+        for(t=0;t<8;++t) {
+            fm=fl_mig_fm(blob+FM_PART+p*FM_PART_SIZE,t);
+            if(fm&&!fl_io_core_taken((bank*16+n)*8+t))for(s=0;s<64;++s) {
+                row=blob+n*FM_PATTERN_SIZE+t*FM_TRACK_SIZE+0x59+s*32;
+                if(row[8]!=255||row[11]!=255){++need;break;}
+            }
+        }
+    }
+    return need;
+}
+/* Capture sources once. Native data stays untouched until the checkpoint file is durable.
+ * (2.23) -> 2 with nothing changed when the pool lacks the lanes the capture needs. */
 static u32 fl_mig_capture(u32 bank) {
     volatile u8 *blob=fl_mig_bank(bank),*part,*old,*row;
-    u8 *cp=fl_migration_table+bank*MIGRATION_BYTES,*dst=fl_io_core_bank(bank),*sc=fl_scene_table+bank*SCENE_BYTES;
-    u32 p,t,s,n,k,any=0;
+    u8 *cp=fl_migration_table+bank*MIGRATION_BYTES;
+    u32 p,t,s,n,any=0;
     if(cp[3]>=1){for(p=0;p<8;++p)any|=cp[4+p];return any!=0;}
+    if(fl_mig_lanes_needed(bank,blob)>fl_lane_free)return 2;
     for(p=0;p<8;++p) {
         part=blob+FM_PART+p*FM_PART_SIZE;cp[4+p]=0;
         for(t=0;t<8;++t)if(fl_mig_fm(part,t)) {
             cp[4+p]|=(u8)(1u<<t);any=1;old=part+0x11a+t*24;
             cp[12+p*16+t*2]=fl_mig_voice(old[2]);cp[13+p*16+t*2]=old[5]&127;
             for(s=0;s<16;++s) {
-                row=part+0x662+(s*8+t)*32;k=(p*128+s*8+t)*2;
-                if(row[8]!=255)sc[k]=fl_mig_voice(row[8]);
-                if(row[11]!=255)sc[k+1]=row[11]&127;
+                row=part+0x662+(s*8+t)*32;
+                if(row[8]!=255)fl_io_core_scene_set(bank,p*128+s*8+t,0,fl_mig_voice(row[8]));
+                if(row[11]!=255)fl_io_core_scene_set(bank,p*128+s*8+t,1,row[11]&127);
             }
         }
     }
@@ -87,9 +143,8 @@ static u32 fl_mig_capture(u32 bank) {
         p=blob[n*FM_PATTERN_SIZE+0x8e57];if(p>=4)continue;
         for(t=0;t<8;++t)if(cp[4+p]&(1u<<t))for(s=0;s<64;++s) {
             row=blob+n*FM_PATTERN_SIZE+t*FM_TRACK_SIZE+0x59+s*32;
-            k=((n*8+t)*64+s)*16;
-            if(row[8]!=255)dst[k]=fl_mig_voice(row[8]);
-            if(row[11]!=255)dst[k+1]=row[11]&127;
+            if(row[8]!=255)fl_io_core_set(bank,(n*8+t)*64+s,0,fl_mig_voice(row[8]));
+            if(row[11]!=255)fl_io_core_set(bank,(n*8+t)*64+s,1,row[11]&127);
         }
     }
     cp[0]=cp[1]=cp[2]=0;cp[3]=1;fl_mig_dirty(bank);return 1;
@@ -170,8 +225,17 @@ static s32 fl_mig_run(u32 requested,u32 capture) {
             mask|=1u<<bank;
         }
     }
-    for(bank=0;bank<16;++bank)if(mask&(1u<<bank))fl_mig_capture(bank);
+    for(bank=0;bank<16;++bank)if((mask&(1u<<bank))&&fl_mig_capture(bank)==2) {
+        /* (2.23) Not enough lanes: the bank stays as loaded, blocked like a pool-blocked load
+         * (native bytes untouched, nothing captured), and is tried again with more lanes. */
+        u32 sr=fl_io_irq_lock();
+        fl_blocked_mask|=1u<<bank;fl_ready_mask&=~(1u<<bank);
+        fl_io_pool_mask|=1u<<bank;fl_io_pool_free=fl_lane_free;
+        fl_io_irq_restore(sr);
+        mask&=~(1u<<bank);note(POOL,0);
+    }
     if(!mask)return 0;
+    fl_mig_durable=0;
     r=flush(mask,0);if(r<0)return r;
     for(bank=0;bank<16;++bank)if(mask&(1u<<bank)) {
         volatile u8 *blob=fl_mig_bank(bank),*resident=(volatile u8 *)(0x400e21e0u+bank*FM_BANK_SIZE);
@@ -184,14 +248,14 @@ static s32 fl_mig_run(u32 requested,u32 capture) {
     fl_mig_pending|=mask;fl_mig_active=1;return 0;
 }
 static void fl_migrate_new(void) {
-    fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=1;
+    fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=1;fl_mig_durable=0;
     fl_mig_known_mask=65535;fl_mig_capture_mask=0;
 }
 static s32 fl_migrate_load(const char *base) {
     u32 n,marked,bank,completed=0; s32 r=fl_mig_text_read(base,0,&n,&marked);
     fl_mig_known_mask=0;fl_mig_capture_mask=0;
-    fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=0;if(r!=0)return r;
-    fl_mig_active=marked;
+    fl_mig_pending=0;fl_mig_active=0;fl_mig_pristine=0;fl_mig_durable=0;if(r!=0)return r;
+    fl_mig_active=marked;fl_mig_marked=marked;fl_mig_durable=marked;
     for(bank=0;bank<16;++bank)if(fl_migration_table[bank*MIGRATION_BYTES+3]==2)completed=1;
     r=fl_mig_run(65535,!marked);if(r<0)return r;
     if(completed)fl_mig_active=1;
@@ -236,6 +300,7 @@ static s32 fl_migrate_saved(const char *base,u32 mask,u32 stored) {
     if(changed){r=stored?store_mask(changed):flush(changed,0);if(r<0)return r;}
     fl_mig_pending&=~mask;
     if(!fl_mig_active||fl_mig_pending)return 0;
+    fl_mig_durable=1;
     r=fl_mig_comment(base,0);if(r!=0)return r;
     return stored==1?fl_mig_comment(base,1):0;
 }

@@ -22,52 +22,56 @@
         .set    FS_CLIP_SRC, 0x460c8122
         .set    FS_UNDO_SRC, 0x460bf218
 
-| d1 part, d2 scene -> a0 = the 16 bytes of that scene in the UI's bank (track 0's
-| row), or 0 when a coordinate is off or the bank is not ready. d0 = the bank.
+| d1 part, d2 scene -> d0 = the UI's bank, d1 = the scene's first word (track 0's pair; the scene
+| words of locks_scene_store.inc.s), a0 nonzero (Z clear); a0 = 0 (Z set) when a coordinate is
+| off or the bank is not ready. (2.23: pairs live in scene lanes, so the operations below copy
+| scene words through fl_scenes_read / fl_scenes_write instead of one table block.)
 fs_op_scene:
-        move.l  %d3,-(%sp)
         mvz.b   0x100b14ce,%d0
-        moveq   #0,%d3
-        jsr     fl_scene_row:l
-        move.l  (%sp)+,%d3
-fs_op_check:
-        move.l  %d1,-(%sp)
-        cmpa.l  #fl_scene_empty,%a0
-        beq     fs_op_none
-        move.l  fl_ready_mask:l,%d1
-        btst    %d0,%d1
-        beq     fs_op_none
-        move.l  fl_blocked_mask:l,%d1
-        btst    %d0,%d1
-        beq     fs_op_ok
-fs_op_none:
         suba.l  %a0,%a0
-fs_op_ok:
-        move.l  (%sp)+,%d1
+        cmpi.l  #16,%d0
+        bcc     fs_op_done
+        cmpi.l  #8,%d1
+        bcc     fs_op_done
+        cmpi.l  #16,%d2
+        bcc     fs_op_done
+        lsl.l   #4,%d1
+        add.l   %d2,%d1
+        lsl.l   #3,%d1
+fs_op_check:
+        suba.l  %a0,%a0
+        move.l  %d3,-(%sp)
+        move.l  fl_ready_mask:l,%d3
+        btst    %d0,%d3
+        beq     fs_op_none
+        move.l  fl_blocked_mask:l,%d3
+        btst    %d0,%d3
+        bne     fs_op_none
+        movea.w #1,%a0
+fs_op_none:
+        move.l  (%sp)+,%d3
+fs_op_done:
         cmpa.l  #0,%a0
         rts
-| d1 part -> a0 = the 256 working bytes of that Part (scene 0, track 0), or 0.
+| d1 working part 0..3 -> d0 bank, d1 its first scene word; Z set when off or not ready.
 fs_op_part:
+        suba.l  %a0,%a0
+        cmpi.l  #4,%d1
+        bcc     fs_op_done
         move.l  %d2,-(%sp)
         moveq   #0,%d2
         bsr     fs_op_scene
         move.l  (%sp)+,%d2
         cmpa.l  #0,%a0
         rts
-| a0 -> a1, d3 longs. Clobbers d3, a0, a1.
-fs_op_copy:
-        move.l  (%a0)+,(%a1)+
-        subq.l  #1,%d3
-        bne     fs_op_copy
-        rts
-| a1, d3 longs := FF. Clobbers d3, a1, d4.
-fs_op_fill:
-        moveq   #-1,%d4
-fs_op_fill1:
-        move.l  %d4,(%a1)+
-        subq.l  #1,%d3
-        bne     fs_op_fill1
-        rts
+| d0 bank, d1 first word, d3 words: into a1 (fs_op_get) or from a1 / 0 = all 255 (fs_op_put,
+| d4 = changed). Stride 1. Clobber d2 (and d4, a0, a1 as the store routines say).
+fs_op_get:
+        moveq   #1,%d2
+        jmp     fl_scenes_read:l
+fs_op_put:
+        moveq   #1,%d2
+        jmp     fl_scenes_write:l
 | d4 = a valid bit to set.
 fs_op_valid:
         lea     fs_clip_valid:l,%a1
@@ -94,8 +98,8 @@ fs_scene_copy_hook:                      | (part, scene)
         bsr     fs_op_scene
         beq     fs_sch_out
         lea     fs_scene_clip:l,%a1
-        moveq   #4,%d3
-        bsr     fs_op_copy
+        moveq   #8,%d3
+        bsr     fs_op_get
         moveq   #1,%d4
         bsr     fs_op_valid
 fs_sch_out:
@@ -115,8 +119,8 @@ fs_scene_undo_hook:                      | (op, part, scene)
         bsr     fs_op_scene
         beq     fs_suh_out
         lea     fs_scene_undo:l,%a1
-        moveq   #4,%d3
-        bsr     fs_op_copy
+        moveq   #8,%d3
+        bsr     fs_op_get
         moveq   #2,%d4
         bsr     fs_op_valid
 fs_suh_out:
@@ -147,10 +151,9 @@ fs_swh_src:
         move.l  76(%sp),%d2
         bsr     fs_op_scene
         beq     fs_swh_out
-        movea.l %a0,%a1
-        movea.l %a2,%a0
-        moveq   #4,%d3
-        bsr     fs_op_copy
+        movea.l %a2,%a1
+        moveq   #8,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_swh_out:
         fs_op_leave
@@ -168,9 +171,9 @@ fs_scene_clear_hook:                     | (scene), the UI's Part
         move.l  68(%sp),%d2
         bsr     fs_op_scene
         beq     fs_sxh_out
-        movea.l %a0,%a1
-        moveq   #4,%d3
-        bsr     fs_op_fill
+        suba.l  %a1,%a1
+        moveq   #8,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_sxh_out:
         fs_op_leave
@@ -187,9 +190,13 @@ fs_part_save_hook:                       | (part): working -> part-saved
         move.l  68(%sp),%d1
         bsr     fs_op_part
         beq     fs_psh_out
-        lea     1024(%a0),%a1
-        move.l  #64,%d3
-        bsr     fs_op_copy
+        lea     fs_part_tmp:l,%a1
+        move.l  #128,%d3
+        bsr     fs_op_get
+        addi.l  #512,%d1                 | the saved Part (Part + 4)
+        lea     fs_part_tmp:l,%a1
+        move.l  #128,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_psh_out:
         fs_op_leave
@@ -208,12 +215,17 @@ fs_part_reload_hook:                     | (part): part-saved -> working, when s
         beq     fs_prh_out
         movea.l PART_PTR,%a2
         adda.l  #0x9b312,%a2
-        tst.b   (%a2,%d1.l)
+        move.l  68(%sp),%d2
+        tst.b   (%a2,%d2.l)
         beq     fs_prh_out               | stock returns before touching the Part
-        movea.l %a0,%a1
-        lea     1024(%a0),%a0
-        move.l  #64,%d3
-        bsr     fs_op_copy
+        addi.l  #512,%d1
+        lea     fs_part_tmp:l,%a1
+        move.l  #128,%d3
+        bsr     fs_op_get
+        subi.l  #512,%d1
+        lea     fs_part_tmp:l,%a1
+        move.l  #128,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_prh_out:
         fs_op_leave
@@ -230,9 +242,9 @@ fs_part_clear_hook:                      | (part): working -> none (stock falls 
         move.l  68(%sp),%d1
         bsr     fs_op_part
         beq     fs_pxh_out
-        movea.l %a0,%a1
-        move.l  #64,%d3
-        bsr     fs_op_fill
+        suba.l  %a1,%a1
+        move.l  #128,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_pxh_out:
         fs_op_leave
@@ -250,8 +262,8 @@ fs_part_copy_hook:                       | (part)
         bsr     fs_op_part
         beq     fs_pch_out
         lea     fs_part_clip:l,%a1
-        move.l  #64,%d3
-        bsr     fs_op_copy
+        move.l  #128,%d3
+        bsr     fs_op_get
         moveq   #4,%d4
         bsr     fs_op_valid
 fs_pch_out:
@@ -270,8 +282,8 @@ fs_part_undo_hook:                       | (op, part)
         bsr     fs_op_part
         beq     fs_puh_out
         lea     fs_part_undo:l,%a1
-        move.l  #64,%d3
-        bsr     fs_op_copy
+        move.l  #128,%d3
+        bsr     fs_op_get
         moveq   #8,%d4
         bsr     fs_op_valid
 fs_puh_out:
@@ -301,10 +313,9 @@ fs_pwh_src:
         move.l  72(%sp),%d1
         bsr     fs_op_part
         beq     fs_pwh_out
-        movea.l %a0,%a1
-        movea.l %a2,%a0
-        move.l  #64,%d3
-        bsr     fs_op_copy
+        movea.l %a2,%a1
+        move.l  #128,%d3
+        bsr     fs_op_put
         jsr     fl_mark_dirty:l
 fs_pwh_out:
         fs_op_leave
@@ -327,6 +338,7 @@ fs_reset:
 fs_clip_valid:   .long 0
 fs_scene_clip:   .fill 4,4,0xffffffff
 fs_scene_undo:   .fill 4,4,0xffffffff
+fs_part_tmp:     .fill 64,4,0xffffffff     | (2.23) a Part's 128 words on their way between halves
 fs_part_clip:    .fill 64,4,0xffffffff
 fs_part_undo:    .fill 64,4,0xffffffff
         .text
@@ -386,32 +398,20 @@ fs_tx_context:
         mvz.b   0x100b14ce,%d0
         cmpi.l  #16,%d0
         bcc     fs_tx_out
-        moveq   #0,%d2
-        jsr     fl_scene_row:l
+        lsl.l   #7,%d1                   | the Part's scene 0 ...
+        add.l   %d3,%d1                  | ... this track: scene words 8 apart
         bsr     fs_op_check
         beq     fs_tx_out
-        moveq   #16,%d7
+        moveq   #8,%d2
+        moveq   #16,%d3
+        movea.l %a2,%a1
         tst.l   %d5
         bne     fs_tx_restore
-fs_tx_capture:
-        move.w  (%a0),(%a2)+
-        adda.l  #16,%a0
-        subq.l  #1,%d7
-        bne     fs_tx_capture
+        jsr     fl_scenes_read:l
         or.l    %d6,fs_track_valid:l
         bra     fs_tx_out
 fs_tx_restore:
-        moveq   #0,%d4
-fs_tx_restore_row:
-        move.w  (%a2)+,%d6
-        cmp.w   (%a0),%d6
-        beq     fs_tx_restore_next
-        move.w  %d6,(%a0)
-        moveq   #1,%d4
-fs_tx_restore_next:
-        adda.l  #16,%a0
-        subq.l  #1,%d7
-        bne     fs_tx_restore_row
+        jsr     fl_scenes_write:l
         tst.l   %d4
         beq     fs_tx_out
         jsr     fl_mark_dirty:l

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Rebuild ../locks_io.inc.s, FM SYNTH's lock-file I/O, from locks_io.c
 and the thunks below: m68k-elf-gcc -mcpu=5475 -O2, freestanding. The
-TRAMPOLINES replay the instructions each stock I/O detour displaced (OS addresses only)."""
+TRAMPOLINES replay the instructions each stock I/O detour displaced (OS addresses only).
+(2.23) The C is compiled twice, FL_PACKAGE 0 (a card build: every variable in .data, as
+octabam places them) and 1 (a module package: zero variables in .bss, which the loader
+zeroes); the assembler keeps the one the unit's FL_PACKAGE names."""
 from pathlib import Path
 import hashlib,subprocess,tempfile
 HERE=Path(__file__).resolve().parent
@@ -47,10 +50,55 @@ fl_mig_retire_call:
         movem.l (%sp),%d0-%d7/%a0-%a6
         lea 64(%sp),%sp
         rts
-fl_io_core_bank:
+| (2.23) the lane store's entries for the C (locks_store.inc.s, locks_scene_store.inc.s)
+fl_io_core_free:
         move.l 4(%sp),%d0
-        bsr fl_bank_ptr
+        jmp fl_bank_free:l
+fl_io_core_gc:
+        move.l 4(%sp),%d0
+        jmp fl_lane_gc:l
+fl_io_core_taken:
+        move.l 4(%sp),%d0
+        jsr fl_lane_page:l
         move.l %a0,%d0
+        rts
+| (bank, row, control, value) -> 0, or -1 when no page is free: take and store, masked as one.
+fl_io_core_set:
+        move.l %d2,-(%sp)
+        move.w %sr,%d2
+        move.w #0x2700,%sr
+        move.l 8(%sp),%d0
+        lsl.l #7,%d0
+        move.l 12(%sp),%d1
+        lsr.l #6,%d1
+        add.l %d1,%d0
+        jsr fl_lane_take:l
+        move.l 12(%sp),%d1
+        andi.l #63,%d1
+        add.l %d1,%d1
+        bra fl_io_core_store
+| (bank, scene word, control, value) -> 0, or -1 when no page is free.
+fl_io_core_scene_set:
+        move.l %d2,-(%sp)
+        move.w %sr,%d2
+        move.w #0x2700,%sr
+        move.l 8(%sp),%d0
+        move.l 12(%sp),%d1
+        jsr fl_scene_map:l
+        jsr fl_lane_take:l
+fl_io_core_store:
+        cmpa.l #0,%a0
+        beq fl_io_core_full
+        add.l 16(%sp),%d1
+        move.l 20(%sp),%d0
+        move.b %d0,(%a0,%d1.l)
+        moveq #0,%d0
+        bra fl_io_core_set_out
+fl_io_core_full:
+        moveq #-1,%d0
+fl_io_core_set_out:
+        move.w %d2,%sr
+        move.l (%sp)+,%d2
         rts
 fl_io_core_validate:
         move.l %a2,-(%sp)
@@ -65,9 +113,8 @@ fl_io_core_validate:
 fl_io_core_pack:
         move.l 4(%sp),%d0
         move.l 8(%sp),%d1
-        move.l 12(%sp),%a0
-        move.l 16(%sp),%a1
-        bra fl_file_pack
+        move.l 12(%sp),%a1
+        jmp fl_file_pack:l
 fl_io_core_publish:
         move.l 4(%sp),%d0
         move.l 8(%sp),%d1
@@ -171,6 +218,37 @@ fl_io_background_no:
 | (0) or 2 continue to stock's background save counter; otherwise stock clears that counter
 | (0x40052278) and the lock files get their own flush (fl_io_play_tick).
 fl_io_tick_hook:
+        .if FL_PACKAGE || FL_POOL_LANES < FL_LANES
+| (2.23) a smaller pool or a package: fl_io_ui_tick in both states (playing = neither 0 nor 2),
+| then the transport test as stock makes it.
+        lea -16(%sp),%sp
+        movem.l %d0-%d1/%a0-%a1,(%sp)
+        moveq #1,%d1
+        tst.l %d0
+        bne fl_io_tick_run
+        moveq #0,%d1
+fl_io_tick_run:
+        moveq #2,%d0
+        cmp.l (%sp),%d0
+        bne fl_io_tick_arg
+        moveq #0,%d1
+fl_io_tick_arg:
+        move.l %d1,-(%sp)
+        bsr fl_io_ui_tick
+        addq.l #4,%sp
+        movem.l (%sp),%d0-%d1/%a0-%a1
+        lea 16(%sp),%sp
+        tst.l %d0
+        beq fl_io_tick_stock
+        moveq #2,%d1
+        cmp.l %d0,%d1
+        beq fl_io_tick_stock
+        .if HAVE_SYDRUM
+        jmp sl_io_tick_hook:l
+        .else
+        jmp 0x40052278:l
+        .endif
+        .endif
         tst.l %d0
         beq fl_io_tick_stock
         moveq #2,%d1
@@ -193,20 +271,25 @@ fl_io_tick_stock:
         jmp 0x40052254:l
         .endif
 '''
+def compile_c(tmp,package):
+    asm=Path(tmp)/f'io{package}.s'
+    subprocess.run(['m68k-elf-gcc','-mcpu=5475','-O2','-fno-builtin','-ffreestanding',
+                    '-fno-common']+([] if package else ['-fno-zero-initialized-in-bss'])+['-fno-pic',
+                    '-fno-asynchronous-unwind-tables','-fno-unwind-tables',f'-DFL_PACKAGE={package}',
+                    '-S',str(SRC),'-o',str(asm)],check=True)
+    lines=[]
+    section='.data' if not package else '.bss'
+    for line in asm.read_text().splitlines():
+        if line.lstrip().startswith(('.file','.ident')):continue
+        if '.comm' in line:
+            name,size,*rest=line.split('.comm',1)[1].strip().split(',')
+            lines+=['.section '+section,'.balign 4',name+':','.space '+size]
+        elif not package:lines.append(line.replace('.bss','.data'))
+        else:lines.append(line)
+    return lines
 def generate():
     with tempfile.TemporaryDirectory(prefix='fm-locks-') as tmp:
-        asm=Path(tmp)/'io.s'
-        subprocess.run(['m68k-elf-gcc','-mcpu=5475','-O2','-fno-builtin','-ffreestanding',
-                        '-fno-common','-fno-zero-initialized-in-bss','-fno-pic',
-                        '-fno-asynchronous-unwind-tables','-fno-unwind-tables',
-                        '-S',str(SRC),'-o',str(asm)],check=True)
-        lines=[]
-        for line in asm.read_text().splitlines():
-            if line.lstrip().startswith(('.file','.ident')):continue
-            if '.comm' in line:
-                name,size,*rest=line.split('.comm',1)[1].strip().split(',')
-                lines+=['.section .data','.balign 4',name+':','.space '+size]
-            else:lines.append(line.replace('.bss','.data'))
+        lines=['.if FL_PACKAGE']+compile_c(tmp,1)+['.section .text','.else']+compile_c(tmp,0)+['.section .text','.endif']
         generated='\n'.join(lines)+'\n'+THUNKS
         for name,(resume,code) in TRAMPOLINES.items():
             generated+=f'\nfl_io_stock_{name}:\n.if HAVE_SYDRUM\njmp sl_io_{name}:l\n.else\n{code}\njmp 0x{resume:08x}:l\n.endif\n'

@@ -386,6 +386,12 @@ SCENE_HOOKS = (
 )
 
 
+# (2.23) The lock lanes a card build pools: every one of the 2,304 (2,048 step lanes, 256 scene
+# lanes); locks_store.inc.s reads the same number from remix.inc.
+FL_LANES = 2304
+FL_POOL_LANES = FL_LANES
+
+
 def poly_include(modules):
     names = ("setup", "locks_store", "locks_scene_store", "scenes_value", "scenes_ui",
              "scenes_ops", "locks_effective", "locks_seq", "locks_ui", "locks_sparse",
@@ -447,6 +453,7 @@ def remix_include(modules):
     equates."""
     mm = MUTE_MODES_KEY in modules
     return (f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
+            f".set FL_POOL_LANES, {FL_POOL_LANES}\n"
             f".set HAVE_PANEL_TRANSACTION, {int('SYNTH MACHINE' in modules and 'SCALE QUANTIZER' in modules)}\n"
             f".set HAVE_MUTE_MODES, {int(mm)}\n"
             + (_mute_modes_equates(modules) if mm else ".set HAVE_MM_KEY, 0\n")
@@ -681,10 +688,13 @@ MODULE = Module(
         Linked("fmpage", os.path.join(_HERE, "page.s"), cpu="5475", dram=True,
                reference=(PAGE_REFERENCE_AT, PAGE_SHA256)),
     ),
-    dram_regions=(DramRegion("fl_work_table", 2097152),
-                  DramRegion("fl_scene_table", 32768),
-                  DramRegion("fl_migration_table", 2560),
-                  DramRegion("fl_migration_text", 262144)),
+    # (2.23) The lock lanes (locks_store.inc.s): the index, the page stack and a pool of every
+    # lane, 303,616 B in place of 2.22's 2,394,624 (the 2 MiB step table, the 32 KiB scene
+    # table and the 256 KiB project-text buffer). A card build never refuses a lock.
+    dram_regions=(DramRegion("fl_lane_index", FL_LANES * 2),
+                  DramRegion("fl_lane_stack", FL_POOL_LANES * 2),
+                  DramRegion("fl_lane_pool", FL_POOL_LANES * 128),
+                  DramRegion("fl_migration_table", 2560)),
     # The kind table's FLEX entry is a 4-byte data pointer, not an
     # instruction: upstream octabam's SymbolRef (a stock u32 rewritten to a
     # linked symbol, the stock value asserted first) is what the fork's

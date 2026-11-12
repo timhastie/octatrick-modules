@@ -1,58 +1,365 @@
 | FM SYNTH standalone step + scene lock storage. 255 means absent.
 | fmlock version 1: header 32, step pairs, working and saved Part scene pairs.
 | Scene and step edits share the bank generation, ready/blocked masks and card snapshot.
+| (2.23) LOCK LANES. A row is two bytes, VOIC and CHRD (2.22 kept each in a 16-byte row whose
+| other 14 bytes were always 0xFF and never reached the card). Rows live in 128-byte lanes taken
+| on demand from a pool: a step lane holds the 64 rows of one (bank, pattern, track), lane id
+| (bank*16+pattern)*8+track (0..2047); a scene lane holds the 16 scenes' pairs of two tracks of
+| one (bank, Part), working then saved, lane id 2048+(bank*4+Part)*4+track/2 (2048..2303).
+| fl_lane_index holds per lane id 0 (no lane: its rows read 255) or 1 + its pool page; zeroed
+| memory is therefore an empty index, and values past the pool are refused, never read (room
+| for a later state). A lane is taken by the first lock written into it (fl_lane_take, with
+| interrupts masked: the page is filled with 0xFF before its index entry is published) and goes
+| back to the pool only through fl_reset, fl_bank_free (a load or restore of that bank, which
+| is not ready meanwhile) and fl_lane_gc (the UI tick: a lane whose rows are all 255 again;
+| fl_lane_gen counts every free, so the engine task's file snapshot retries across one).
+| FL_POOL_LANES pages: 2,304 on a card build, every lane, so nothing is ever refused there. A
+| smaller pool (a package) refuses a new lock that needs a lane past it (fl_lane_full counts
+| the refusals for the toast) and locks_io.c blocks a bank whose file needs more lanes than are
+| free. The card files are byte for byte 2.22's.
         .global fl_ready_mask,fl_blocked_mask,fl_dirty_mask,fl_generation
 
+        .ifndef FL_POOL_LANES
+        .set FL_POOL_LANES,2304
+        .endif
+        .ifndef FL_PACKAGE                       | 1: a module package for a loader base (locks_io.c)
+        .set FL_PACKAGE,0
+        .endif
+        .ifndef FL_LANES_IN_BSS
+        .set FL_LANES_IN_BSS,FL_PACKAGE
+        .endif
         .set FL_CONTROLS,2
-        .set FL_ROW,16
+        .set FL_ROW,2
         .set FL_ROWS,8192
-        .set FL_BANK_BYTES,FL_ROWS*FL_ROW
-        .set FL_PROJECT_BYTES,16*FL_BANK_BYTES
+        .set FL_LANE,128
+        .set FL_LANES,2304
+        .set FL_STEP_LANES,2048
+        .if FL_POOL_LANES < 1 || FL_POOL_LANES > FL_LANES
+        .error "FL_POOL_LANES is 1..2304"
+        .endif
         .set FL_SCENE_BANK_BYTES,2048
-        .set FL_SCENE_PROJECT_BYTES,16*FL_SCENE_BANK_BYTES
         .set FL_PAIR_BYTES,FL_ROWS*2+FL_SCENE_BANK_BYTES
         .set FL_MIGRATION_BANK_BYTES,160
         .set FL_PAYLOAD_BYTES,FL_PAIR_BYTES+FL_MIGRATION_BANK_BYTES
         .set FL_FILE_BYTES,FL_PAYLOAD_BYTES+32
-        .global fl_row,fl_bank_ptr,fl_mark_dirty,fl_write,fl_reset
+        .global fl_row,fl_row_take,fl_mark_dirty,fl_write,fl_reset
+        .global fl_lane_page,fl_lane_take,fl_lane_release,fl_bank_free,fl_lane_gc
+        .global fl_lane_index,fl_lane_pool,fl_lane_stack,fl_lane_free,fl_lane_gen,fl_lane_full,fl_lane_gc_mask
+        .global fl_steps_read,fl_steps_write,fl_empty_row
         .global fl_payload_validate,fl_crc32,fl_file_validate,fl_file_pack,fl_file_seal,fl_bank_publish
 
-fl_row:
-        lea     fl_empty_row:l,%a0
+| d0 lane id (0..2303) -> a0 its page, or 0 when the lane is not taken. Other registers kept.
+fl_lane_page:
+        move.l  %d0,-(%sp)
+        lea     fl_lane_index:l,%a0
+        mvz.w   (%a0,%d0.l*2),%d0
+        subq.l  #1,%d0
+        cmpi.l  #FL_POOL_LANES,%d0
+        bcc     fl_lp_none               | 0 (no lane) wraps to 0xffffffff
+        lsl.l   #7,%d0
+        lea     fl_lane_pool:l,%a0
+        adda.l  %d0,%a0
+        move.l  (%sp)+,%d0
+        rts
+fl_lp_none:
+        suba.l  %a0,%a0
+        move.l  (%sp)+,%d0
+        rts
+
+| d0 lane id -> a0 its page, taken now when it had none (0xFF-filled, then published), or 0 when
+| no page is free (fl_lane_full counted) or the entry holds another state. Interrupts are masked
+| inside; every other register kept.
+fl_lane_take:
+        bsr     fl_lane_page
+        cmpa.l  #0,%a0
+        bne     fl_lt_out
+        lea     -24(%sp),%sp
+        movem.l %d0-%d4/%a1,(%sp)
+        move.w  %sr,%d4
+        move.w  #0x2700,%sr
+        bsr     fl_lane_page             | again, masked
+        cmpa.l  #0,%a0
+        bne     fl_lt_done
+        lea     fl_lane_index:l,%a1
+        tst.w   (%a1,%d0.l*2)
+        bne     fl_lt_refuse
+        move.l  fl_lane_free:l,%d1
+        beq     fl_lt_full
+        subq.l  #1,%d1
+        move.l  %d1,fl_lane_free:l
+        lea     fl_lane_stack:l,%a0
+        mvz.w   (%a0,%d1.l*2),%d1        | the page
+        move.l  %d1,%d2
+        lsl.l   #7,%d2
+        lea     fl_lane_pool:l,%a0
+        adda.l  %d2,%a0
+        moveq   #-1,%d2
+        moveq   #FL_LANE/4,%d3
+fl_lt_fill:
+        move.l  %d2,(%a0)+
+        subq.l  #1,%d3
+        bne     fl_lt_fill
+        lea     -FL_LANE(%a0),%a0
+        addq.l  #1,%d1
+        move.w  %d1,(%a1,%d0.l*2)        | published once filled
+        bra     fl_lt_done
+fl_lt_full:
+        addq.l  #1,fl_lane_full:l
+fl_lt_refuse:
+        suba.l  %a0,%a0
+fl_lt_done:
+        move.w  %d4,%sr
+        movem.l (%sp),%d0-%d4/%a1
+        lea     24(%sp),%sp
+fl_lt_out:
+        rts
+
+| d0 lane id: its page (if any) back to the pool, the entry 0, fl_lane_gen counted. Interrupts
+| masked inside; every register kept.
+fl_lane_release:
+        lea     -16(%sp),%sp
+        movem.l %d1-%d3/%a0,(%sp)
+        move.w  %sr,%d3
+        move.w  #0x2700,%sr
+        lea     fl_lane_index:l,%a0
+        mvz.w   (%a0,%d0.l*2),%d1
+        subq.l  #1,%d1
+        cmpi.l  #FL_POOL_LANES,%d1
+        bcc     fl_lr_out
+        clr.w   (%a0,%d0.l*2)
+        move.l  fl_lane_free:l,%d2
+        lea     fl_lane_stack:l,%a0
+        move.w  %d1,(%a0,%d2.l*2)
+        addq.l  #1,%d2
+        move.l  %d2,fl_lane_free:l
+        addq.l  #1,fl_lane_gen:l
+fl_lr_out:
+        move.w  %d3,%sr
+        movem.l (%sp),%d1-%d3/%a0
+        lea     16(%sp),%sp
+        rts
+
+| d0 bank: every lane of it (128 step lanes, 16 scene lanes) back to the pool. For a load or
+| restore of the bank (not ready meanwhile) and a fresh bank. Every register kept.
+fl_bank_free:
         cmpi.l  #16,%d0
-        bcc     fl_row_out
+        bcc     fl_bf_ret
+        lea     -12(%sp),%sp
+        movem.l %d0-%d2,(%sp)
+        move.l  %d0,%d2
+        lsl.l   #7,%d0
+        move.l  #128,%d1
+fl_bf_steps:
+        bsr     fl_lane_release
+        addq.l  #1,%d0
+        subq.l  #1,%d1
+        bne     fl_bf_steps
+        move.l  %d2,%d0
+        lsl.l   #4,%d0
+        addi.l  #FL_STEP_LANES,%d0
+        moveq   #16,%d1
+fl_bf_scenes:
+        bsr     fl_lane_release
+        addq.l  #1,%d0
+        subq.l  #1,%d1
+        bne     fl_bf_scenes
+        movem.l (%sp),%d0-%d2
+        lea     12(%sp),%sp
+fl_bf_ret:
+        rts
+
+| d0 bank: each lane of it whose rows are all 255 goes back to the pool, one lane at a time with
+| interrupts masked and only while the bank is ready and not blocked (a load or restore frees
+| and fills the bank's lanes itself). The UI tick runs it (locks_io.c). Every register kept.
+fl_lane_gc:
+        cmpi.l  #16,%d0
+        bcc     fl_gc_ret
+        lea     -28(%sp),%sp
+        movem.l %d0-%d5/%a0,(%sp)
+        move.l  %d0,%d3
+        lsl.l   #7,%d0
+        move.l  #144,%d4
+fl_gc_lane:
+        move.w  %sr,%d5
+        move.w  #0x2700,%sr
+        move.l  fl_ready_mask:l,%d1
+        btst    %d3,%d1
+        beq     fl_gc_next
+        move.l  fl_blocked_mask:l,%d1
+        btst    %d3,%d1
+        bne     fl_gc_next
+        bsr     fl_lane_page
+        cmpa.l  #0,%a0
+        beq     fl_gc_next
+        moveq   #FL_LANE/4,%d2
+        moveq   #-1,%d1
+fl_gc_cmp:
+        cmp.l   (%a0)+,%d1
+        bne     fl_gc_next
+        subq.l  #1,%d2
+        bne     fl_gc_cmp
+        bsr     fl_lane_release
+fl_gc_next:
+        move.w  %d5,%sr
+        addq.l  #1,%d0
+        subq.l  #1,%d4
+        beq     fl_gc_done
+        cmpi.l  #16,%d4
+        bne     fl_gc_lane
+        move.l  %d3,%d0
+        lsl.l   #4,%d0
+        addi.l  #FL_STEP_LANES,%d0
+        bra     fl_gc_lane
+fl_gc_done:
+        movem.l (%sp),%d0-%d5/%a0
+        lea     28(%sp),%sp
+fl_gc_ret:
+        rts
+
+| d0 bank, d1 pattern, d2 track, d3 step -> a0 the step's row (VOIC, CHRD), or fl_empty_row
+| (every byte 255, 16 of them) when a coordinate is off or the lane is not taken. Other
+| registers kept.
+fl_row:
+        cmpi.l  #16,%d0
+        bcc     fl_row_empty
         cmpi.l  #16,%d1
-        bcc     fl_row_out
+        bcc     fl_row_empty
         cmpi.l  #8,%d2
-        bcc     fl_row_out
+        bcc     fl_row_empty
         cmpi.l  #64,%d3
-        bcc     fl_row_out
+        bcc     fl_row_empty
         move.l  %d0,-(%sp)
         lsl.l   #4,%d0
         add.l   %d1,%d0
         lsl.l   #3,%d0
         add.l   %d2,%d0
-        lsl.l   #6,%d0
-        add.l   %d3,%d0
-        lsl.l   #4,%d0
-        lea     fl_work_table:l,%a0
-        adda.l  %d0,%a0
+        bsr     fl_lane_page
         move.l  (%sp)+,%d0
-fl_row_out:
+        cmpa.l  #0,%a0
+        beq     fl_row_empty
+        adda.l  %d3,%a0
+        adda.l  %d3,%a0
+        rts
+fl_row_empty:
+        lea     fl_empty_row:l,%a0
         rts
 
-fl_bank_ptr:
+| fl_row's coordinates -> a0 the step's row, its lane taken now when it had none, or 0 (a
+| coordinate off, or no free page). Other registers kept.
+fl_row_take:
         suba.l  %a0,%a0
         cmpi.l  #16,%d0
-        bcc     fl_bank_ptr_out
+        bcc     fl_rt_out
+        cmpi.l  #16,%d1
+        bcc     fl_rt_out
+        cmpi.l  #8,%d2
+        bcc     fl_rt_out
+        cmpi.l  #64,%d3
+        bcc     fl_rt_out
         move.l  %d0,-(%sp)
-        swap    %d0
-        clr.w   %d0
-        add.l   %d0,%d0
-        lea     fl_work_table:l,%a0
-        adda.l  %d0,%a0
+        lsl.l   #4,%d0
+        add.l   %d1,%d0
+        lsl.l   #3,%d0
+        add.l   %d2,%d0
+        bsr     fl_lane_take
         move.l  (%sp)+,%d0
-fl_bank_ptr_out:
+        cmpa.l  #0,%a0
+        beq     fl_rt_out
+        adda.l  %d3,%a0
+        adda.l  %d3,%a0
+fl_rt_out:
+        rts
+
+| d0 bank, d1 first row of the bank ((pattern*8+track)*64+step), d3 rows, a1 destination ->
+| the rows copied (two bytes each; a lane not taken reads 255), a1 past them. Other registers
+| kept. Lanes are read as they stand: the engine task's file snapshot retries on fl_lane_gen.
+fl_steps_read:
+        lea     -24(%sp),%sp
+        movem.l %d0-%d4/%a0,(%sp)
+        move.l  %d0,%d4
+        lsl.l   #7,%d4                   | the bank's first lane id
+fl_sx_lane:
+        tst.l   %d3
+        beq     fl_sx_done
+        move.l  %d1,%d0
+        lsr.l   #6,%d0
+        add.l   %d4,%d0
+        bsr     fl_lane_page
+        move.l  %d1,%d2
+        andi.l  #63,%d2                  | first row in this lane
+        moveq   #64,%d0
+        sub.l   %d2,%d0
+        cmp.l   %d3,%d0
+        bls     fl_sx_count
+        move.l  %d3,%d0
+fl_sx_count:
+        add.l   %d0,%d1
+        sub.l   %d0,%d3
+        cmpa.l  #0,%a0
+        beq     fl_sx_empty
+        adda.l  %d2,%a0
+        adda.l  %d2,%a0
+fl_sx_copy:
+        move.w  (%a0)+,(%a1)+
+        subq.l  #1,%d0
+        bne     fl_sx_copy
+        bra     fl_sx_lane
+fl_sx_empty:
+        move.w  #-1,(%a1)+
+        subq.l  #1,%d0
+        bne     fl_sx_empty
+        bra     fl_sx_lane
+fl_sx_done:
+        movem.l (%sp),%d0-%d4/%a0
+        lea     24(%sp),%sp
+        rts
+
+| d0 bank, d1 first row, d3 rows, a1 source (two bytes a row; a1 past them) or 0 (every row
+| 255) -> the rows written; d4 = 1 when one changed, else 0; a0 used. A row with a lock whose
+| lane cannot be taken stays as it was (fl_lane_full counted). Other registers kept. The caller
+| owns the rows (interrupts masked, or the bank not ready).
+fl_steps_write:
+        lea     -24(%sp),%sp
+        movem.l %d0-%d3/%d5-%d6,(%sp)
+        moveq   #0,%d4
+        move.l  %d0,%d5
+        lsl.l   #7,%d5
+fl_sy_row:
+        tst.l   %d3
+        beq     fl_sy_done
+        move.l  #0xffff,%d6
+        cmpa.l  #0,%a1
+        beq     fl_sy_have
+        mvz.w   (%a1)+,%d6
+fl_sy_have:
+        move.l  %d1,%d0
+        lsr.l   #6,%d0
+        add.l   %d5,%d0
+        bsr     fl_lane_page
+        cmpa.l  #0,%a0
+        bne     fl_sy_lane
+        cmpi.l  #0xffff,%d6
+        beq     fl_sy_next               | no lane and no lock
+        bsr     fl_lane_take
+        cmpa.l  #0,%a0
+        beq     fl_sy_next               | no free page: refused
+fl_sy_lane:
+        move.l  %d1,%d0
+        andi.l  #63,%d0
+        add.l   %d0,%d0
+        adda.l  %d0,%a0
+        mvz.w   (%a0),%d0
+        cmp.l   %d0,%d6
+        beq     fl_sy_next
+        move.w  %d6,(%a0)
+        moveq   #1,%d4
+fl_sy_next:
+        addq.l  #1,%d1
+        subq.l  #1,%d3
+        bra     fl_sy_row
+fl_sy_done:
+        movem.l (%sp),%d0-%d3/%d5-%d6
+        lea     24(%sp),%sp
         rts
 
 fl_mark_dirty:
@@ -63,6 +370,7 @@ fl_mark_dirty:
         moveq   #1,%d1
         lsl.l   %d0,%d1
         or.l    %d1,fl_dirty_mask:l
+        or.l    %d1,fl_lane_gc_mask:l    | (2.23) the UI tick looks for lanes emptied by the edit
         lea     fl_generation:l,%a0
         addq.l  #1,(%a0,%d0.l*4)
         movem.l (%sp),%d1/%a0
@@ -99,10 +407,22 @@ fl_write_nonzero:
         cmp.l   %d6,%d5
         bhi     fl_write_bad
 fl_write_value_ok:
+        cmpi.l  #16,%d1
+        bcc     fl_write_bad
+        cmpi.l  #8,%d2
+        bcc     fl_write_bad
+        cmpi.l  #64,%d3
+        bcc     fl_write_bad
         bsr     fl_row
         lea     fl_empty_row:l,%a1
         cmpa.l  %a1,%a0
-        beq     fl_write_bad
+        bne     fl_write_have
+        cmpi.l  #255,%d5
+        beq     fl_write_same            | no lane, nothing to remove
+        bsr     fl_row_take
+        cmpa.l  #0,%a0
+        beq     fl_write_bad             | no free page: the lock is refused (fl_lane_full)
+fl_write_have:
         mvz.b   (%a0,%d4.l),%d6
         cmp.l   %d6,%d5
         beq     fl_write_same
@@ -123,32 +443,48 @@ fl_write_out:
         lea     16(%sp),%sp
         rts
 
+| Every lane free, every page on the stack (the first take gets page 0). No reader takes a row
+| meanwhile: fl_reset has cleared the ready mask first, and no writer runs on a bank not ready.
+fl_lane_reset:
+        lea     -12(%sp),%sp
+        movem.l %d0-%d1/%a0,(%sp)
+        lea     fl_lane_index:l,%a0
+        move.l  #FL_LANES/2,%d0
+fl_lz_index:
+        clr.l   (%a0)+
+        subq.l  #1,%d0
+        bne     fl_lz_index
+        lea     fl_lane_stack:l,%a0
+        move.l  #FL_POOL_LANES,%d0
+fl_lz_stack:
+        subq.l  #1,%d0
+        move.w  %d0,(%a0)+
+        tst.l   %d0
+        bne     fl_lz_stack
+        move.w  %sr,%d1
+        move.w  #0x2700,%sr
+        move.l  #FL_POOL_LANES,%d0
+        move.l  %d0,fl_lane_free:l
+        addq.l  #1,fl_lane_gen:l
+        clr.l   fl_lane_gc_mask:l
+        move.w  %d1,%sr
+        movem.l (%sp),%d0-%d1/%a0
+        lea     12(%sp),%sp
+        rts
+
 fl_reset:
         lea     -12(%sp),%sp
         movem.l %d0-%d1/%a0,(%sp)
         clr.l   fl_ready_mask:l
         moveq   #-1,%d0
         move.l  %d0,fl_blocked_mask:l
-        lea     fl_work_table:l,%a0
-        move.l  #FL_PROJECT_BYTES/4,%d0
-        moveq   #-1,%d1
-fl_reset_table:
-        move.l  %d1,(%a0)+
-        subq.l  #1,%d0
-        bne     fl_reset_table
+        bsr     fl_lane_reset            | (2.23) in place of 2 MiB and 32 KiB of 0xFF
         lea     fl_generation:l,%a0
         moveq   #16,%d0
 fl_reset_generations:
         clr.l   (%a0)+
         subq.l  #1,%d0
         bne     fl_reset_generations
-        lea     fl_scene_table:l,%a0
-        move.l  #FL_SCENE_PROJECT_BYTES/4,%d0
-        moveq   #-1,%d1
-fl_reset_scenes:
-        move.l  %d1,(%a0)+
-        subq.l  #1,%d0
-        bne     fl_reset_scenes
         lea     fl_migration_table:l,%a0
         move.l  #16*FL_MIGRATION_BANK_BYTES/4,%d0
 fl_reset_migration:
@@ -289,39 +625,32 @@ fl_fv_out:
         lea     16(%sp),%sp
         rts
 
+| d0 bank, d1 generation, a1 the file buffer -> the bank's rows, scene pairs and checkpoint
+| packed behind the header and sealed (d0 0), or -1.
 fl_file_pack:
         cmpi.l  #16,%d0
         bcc     fl_fp_bad
-        lea     -16(%sp),%sp
-        movem.l %d3/%a0/%a2,(%sp)
-        lea     32(%a1),%a2
+        lea     -20(%sp),%sp
+        movem.l %d1-%d3/%a0-%a1,(%sp)
+        lea     32(%a1),%a1
+        moveq   #0,%d1
         move.l  #FL_ROWS,%d3
-fl_fp_copy:
-        move.w  (%a0),(%a2)+
-        lea     FL_ROW(%a0),%a0
-        subq.l  #1,%d3
-        bne     fl_fp_copy
-        move.l  %d0,%d3
-        lsl.l   #8,%d3
-        lsl.l   #3,%d3
-        lea     fl_scene_table:l,%a0
-        adda.l  %d3,%a0
-        move.l  #FL_SCENE_BANK_BYTES/4,%d3
-fl_fp_scenes:
-        move.l  (%a0)+,(%a2)+
-        subq.l  #1,%d3
-        bne     fl_fp_scenes
+        bsr     fl_steps_read
+        moveq   #0,%d1
+        moveq   #1,%d2
+        move.l  #FL_SCENE_BANK_BYTES/2,%d3
+        jsr     fl_scenes_read:l
         move.l  #FL_MIGRATION_BANK_BYTES,%d3
         mulu.l  %d0,%d3
         lea     fl_migration_table:l,%a0
         adda.l  %d3,%a0
         moveq   #FL_MIGRATION_BANK_BYTES/4,%d3
 fl_fp_migration:
-        move.l  (%a0)+,(%a2)+
+        move.l  (%a0)+,(%a1)+
         subq.l  #1,%d3
         bne     fl_fp_migration
-        movem.l (%sp),%d3/%a0/%a2
-        lea     16(%sp),%sp
+        movem.l (%sp),%d1-%d3/%a0-%a1
+        lea     20(%sp),%sp
         bra     fl_file_seal
 fl_fp_bad:
         moveq   #-1,%d0
@@ -366,51 +695,47 @@ fl_fs_out:
         lea     24(%sp),%sp
         rts
 
+| d0 bank, d1 generation, a0 a validated payload -> the bank's lanes freed and refilled from it
+| (a lane only where a row or pair holds a lock), checkpoint, generation and ready (d0 0); -1 for
+| a bad payload; -2 when the pool cannot hold the bank's lanes (its lanes freed again, left as
+| publish() set it: blocked, not ready).
 fl_bank_publish:
-        lea     -24(%sp),%sp
-        movem.l %d1-%d3/%a0-%a2,(%sp)
-        move.l  %d0,%d2
-        cmpi.l  #16,%d2
+        lea     -32(%sp),%sp
+        movem.l %d1-%d5/%a0-%a2,(%sp)
+        move.l  %d0,%d5
+        cmpi.l  #16,%d5
         bcc     fl_bp_bad
         move.l  #FL_PAYLOAD_BYTES,%d0
         bsr     fl_payload_validate
         tst.l   %d0
         bne     fl_bp_bad
-        movea.l %a0,%a2
-        move.l  %d2,%d0
-        bsr     fl_bank_ptr
+        move.l  %d5,%d0
+        bsr     fl_bank_free
+        movea.l fl_lane_full:l,%a2
+        movea.l %a0,%a1
+        moveq   #0,%d1
         move.l  #FL_ROWS,%d3
-fl_bp_copy:
-        move.w  (%a2)+,(%a0)+
-        move.w  #-1,(%a0)+
-        move.l  #-1,(%a0)+
-        move.l  #-1,(%a0)+
-        move.l  #-1,(%a0)+
-        subq.l  #1,%d3
-        bne     fl_bp_copy
-        move.l  %d2,%d3
-        lsl.l   #8,%d3
-        lsl.l   #3,%d3
-        lea     fl_scene_table:l,%a0
-        adda.l  %d3,%a0
-        move.l  #FL_SCENE_BANK_BYTES/4,%d3
-fl_bp_scenes:
-        move.l  (%a2)+,(%a0)+
-        subq.l  #1,%d3
-        bne     fl_bp_scenes
+        bsr     fl_steps_write
+        moveq   #0,%d1
+        moveq   #1,%d2
+        move.l  #FL_SCENE_BANK_BYTES/2,%d3
+        jsr     fl_scenes_write:l
+        cmpa.l  fl_lane_full:l,%a2
+        bne     fl_bp_pool
         move.l  #FL_MIGRATION_BANK_BYTES,%d3
-        mulu.l  %d2,%d3
+        mulu.l  %d5,%d3
         lea     fl_migration_table:l,%a0
         adda.l  %d3,%a0
         moveq   #FL_MIGRATION_BANK_BYTES/4,%d3
 fl_bp_migration:
-        move.l  (%a2)+,(%a0)+
+        move.l  (%a1)+,(%a0)+
         subq.l  #1,%d3
         bne     fl_bp_migration
+        move.l  (%sp),%d1
         lea     fl_generation:l,%a0
-        move.l  %d1,(%a0,%d2.l*4)
+        move.l  %d1,(%a0,%d5.l*4)
         moveq   #1,%d3
-        lsl.l   %d2,%d3
+        lsl.l   %d5,%d3
         lea     fl_ready_mask:l,%a0
         or.l    %d3,(%a0)
         not.l   %d3
@@ -420,11 +745,16 @@ fl_bp_migration:
         and.l   %d3,(%a0)
         moveq   #0,%d0
         bra     fl_bp_out
+fl_bp_pool:
+        move.l  %d5,%d0
+        bsr     fl_bank_free
+        moveq   #-2,%d0
+        bra     fl_bp_out
 fl_bp_bad:
         moveq   #-1,%d0
 fl_bp_out:
-        movem.l (%sp),%d1-%d3/%a0-%a2
-        lea     24(%sp),%sp
+        movem.l (%sp),%d1-%d5/%a0-%a2
+        lea     32(%sp),%sp
         rts
 
         .section .data
@@ -441,6 +771,26 @@ fl_dirty_mask:
         .long   0
 fl_generation:
         .fill   16,4,0
+fl_lane_free:                            | pages on fl_lane_stack
+        .long   0
+fl_lane_gen:                             | counts every page given back
+        .long   0
+fl_lane_full:                            | counts every lock refused for want of a page
+        .long   0
+fl_lane_gc_mask:                         | banks edited since the UI tick last looked for empty lanes
+        .long   0
+        .if FL_LANES_IN_BSS
+| A package: the index, the page stack and the pool are zeroed at admission (no lane, no page
+| free until fl_reset) and travel in neither the package file nor the upload.
+        .section .bss
+        .balign 4
+fl_lane_index:
+        .space  FL_LANES*2
+fl_lane_stack:
+        .space  ((FL_POOL_LANES*2+3)/4)*4
+fl_lane_pool:
+        .space  FL_POOL_LANES*FL_LANE
+        .endif
         .section .text
 
         .balign 4

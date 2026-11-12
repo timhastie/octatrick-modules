@@ -505,15 +505,8 @@ fl_uco_track:
         moveq   #0,%d3
 fl_uco_step:
         bsr     fl_row
-        move.l  4(%a0),%d5
-        ori.l   #0xffff,%d5
-        and.l   (%a0),%d5
-        moveq   #-1,%d6
-        cmp.l   %d6,%d5
-        bne     fl_uco_af
-        bra     fl_uco_next
-fl_uco_af:
-        cmp.l   (%a0),%d6
+        mvz.w   (%a0),%d5                | (2.23) a lock on the step: the row's two bytes (2.22
+        cmpi.l  #0xffff,%d5              | read six, of which only these two could differ)
         bne     fl_uco_mark
         bra     fl_uco_next
 fl_uco_mark:

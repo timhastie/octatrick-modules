@@ -1,25 +1,41 @@
 /* FM SYNTH setup-lock I/O, copied from SY DRUM's established card lifecycle.
  * Step pairs, working/saved scene pairs and migration checkpoint share one bank file.
  * Playback is RAM only. Card writes run in engine jobs, including the playing flush.
+ * (2.23) The rows live in lock lanes (locks_store.inc.s); the files are 2.22's byte for byte.
+ * A bank whose file needs more lanes than the pool has free (a package's pool; a card build's
+ * holds every lane) is blocked as a later-format file is: the file stays on the card untouched,
+ * its locks do not play, saves are refused, a toast says so, and it loads once lanes are free.
+ * FL_PACKAGE (a module package for a loader base, not a card build) adds what a card build never
+ * needed: the project's locks are loaded on the first UI tick after the module is admitted (the
+ * base admits it after stock has loaded the project), and fl_io_engine_job is the engine-job
+ * entry a base event calls in place of the stock site's detour (fl_io_dispatch).
  */
 
 typedef unsigned char u8;
 typedef unsigned int u32;
 typedef int s32;
 
-enum { RAM_BANK_BYTES=131072, ROWS=8192, SCENE_BYTES=2048, MIGRATION_BYTES=160,
+#ifndef FL_PACKAGE
+#define FL_PACKAGE 0
+#endif
+enum { ROWS=8192, SCENE_BYTES=2048, MIGRATION_BYTES=160,
        PAIR_BYTES=ROWS*2+SCENE_BYTES, BANK_BYTES=PAIR_BYTES+MIGRATION_BYTES, FILE_BYTES=BANK_BYTES+32, PATH_BYTES=260,
-       ABSENT=1, CORRUPT=-60, FUTURE=-61, BUSY=-62, PATH_ERROR=-63 };
+       ABSENT=1, CORRUPT=-60, FUTURE=-61, BUSY=-62, PATH_ERROR=-63, POOL=-64 };
 typedef struct { u32 word[6]; } File;
 extern volatile u32 fl_ready_mask, fl_dirty_mask, fl_blocked_mask;
 extern volatile u32 fl_generation[16];
 extern void fl_reset(void);
 extern void fl_clip_reset(void);
 extern void fl_seq_reset(void);
-extern u8 fl_scene_table[],fl_migration_table[];
-extern u8 *fl_io_core_bank(u32);
+extern u8 fl_migration_table[];
+extern volatile u32 fl_lane_free,fl_lane_gen,fl_lane_full,fl_lane_gc_mask;
+extern void fl_io_core_free(u32);
+extern void fl_io_core_gc(u32);
+extern u32 fl_io_core_taken(u32);
+extern s32 fl_io_core_set(u32,u32,u32,u32);
+extern s32 fl_io_core_scene_set(u32,u32,u32,u32);
 extern s32 fl_io_core_validate(u32,const u8 *,u32,u32 *);
-extern s32 fl_io_core_pack(u32,u32,const u8 *,u8 *);
+extern s32 fl_io_core_pack(u32,u32,u8 *);
 extern s32 fl_io_core_publish(u32,u32,const u8 *);
 extern s32 fl_io_core_seal(u32,u32,u8 *);
 extern s32 fl_io_fs_open(File *,const char *,const char *,u8 *,u32);
@@ -49,17 +65,23 @@ extern void fl_io_irq_restore(u32);
 
 static char fl_io_base[PATH_BYTES],fl_io_path[PATH_BYTES];
 static u8 fl_io_file[FILE_BYTES] __attribute__((aligned(4)));
-static u8 fl_io_sector[512] __attribute__((aligned(4)));
-static File fl_io_object;
+static u8 fl_io_sector[512] __attribute__((aligned(4))),fl_io_sector2[512] __attribute__((aligned(4)));
+static File fl_io_object,fl_io_object2;
 volatile s32 fl_io_last_error;
 volatile u32 fl_io_protected_mask;
 static u32 fl_io_loaded,fl_io_job_kind,fl_io_job_mask;
 static s32 fl_io_warning;
 static u32 fl_present_mask;
+/* (2.23) Banks blocked because the pool had too few free lanes, and fl_lane_free when they were. */
+static u32 fl_io_pool_mask,fl_io_pool_free;
+static u32 fl_io_full_seen;
+static u32 fl_mig_marked;               /* the loaded project carried the comment line */
 
-enum { FLUSH_KIND=0x81, PLAY_TICKS=60 };
+/* The module's own engine job: one descriptor, recognised by its address (never by its kind,
+ * which only has to be one stock skips: above 45). What it does is in fl_io_own_work. */
+enum { FLUSH_KIND=0x81, PLAY_TICKS=60, OWN_FLUSH=1, OWN_RETRY=2, OWN_LOAD=4 };
 static u8 fl_io_flush_job[16] __attribute__((aligned(4)));
-static volatile u32 fl_io_flush_pending;
+static volatile u32 fl_io_flush_pending,fl_io_own_work;
 static u32 fl_io_play_ticks;
 
 static s32 text_copy(char *d,const char *s,u32 cap) {
@@ -86,7 +108,7 @@ static s32 path_for(char *dst,const char *base,u32 bank,u32 stored) {
 }
 
 void fl_io_ui_warning(s32 value) {
-    fl_io_toast(value==1?"FM LOCKS RECOVERED":"FM LOCK FILE ERROR",48);
+    fl_io_toast(value==1?"FM LOCKS RECOVERED":value==POOL?"FM LOCKS FULL":"FM LOCK FILE ERROR",48);
 }
 static void note(s32 error,u32 recovered) {
     fl_io_last_error=error;
@@ -137,11 +159,12 @@ static s32 write_buffer(const char *base,u32 bank,u32 stored) {
 }
 
 static s32 snapshot(u32 bank,u32 *generation,u32 *locked) {
-    u32 tries=3,g,i,any;const u8 *p;
+    u32 tries=3,g,lg,i,any;const u8 *p;
     do {
-        g=fl_generation[bank];
-        if(fl_io_core_pack(bank,g,fl_io_core_bank(bank),fl_io_file)<0)return CORRUPT;
-        if(g==fl_generation[bank]) {
+        g=fl_generation[bank];lg=fl_lane_gen;
+        if(fl_io_core_pack(bank,g,fl_io_file)<0)return CORRUPT;
+        /* (2.23) A lane given back meanwhile may have been re-taken: read again. */
+        if(g==fl_generation[bank]&&lg==fl_lane_gen) {
             p=fl_io_file+32;any=0;
             for(i=0;i<PAIR_BYTES;++i)any|=(u32)(u8)~p[i];
             for(i=PAIR_BYTES;i<BANK_BYTES;++i)any|=p[i];
@@ -155,16 +178,24 @@ static void clean_snapshot(u32 bank,u32 generation) {
     if(generation==fl_generation[bank])fl_dirty_mask&=~(1u<<bank);
     fl_io_irq_restore(sr);
 }
+/* -> 0, CORRUPT, or POOL: the pool has too few free lanes for the bank, which stays blocked
+ * (its file untouched on the card) until lanes are free (fl_io_ui_tick). */
 static s32 publish(u32 bank,u32 generation,const u8 *payload) {
-
+    s32 r;u32 sr;
     fl_blocked_mask|=1u<<bank;
     fl_ready_mask&=~(1u<<bank);
-    return fl_io_core_publish(bank,generation,payload);
+    r=fl_io_core_publish(bank,generation,payload);
+    if(r==-2) {
+        sr=fl_io_irq_lock();fl_io_pool_mask|=1u<<bank;fl_io_pool_free=fl_lane_free;fl_io_irq_restore(sr);
+        return POOL;
+    }
+    if(r<0)return CORRUPT;
+    fl_io_pool_mask&=~(1u<<bank);
+    return 0;
 }
 static void fresh_bank(u32 bank) {
-    u8 *p=fl_io_core_bank(bank);u32 i,sr;
-    for(i=0;i<RAM_BANK_BYTES;++i)p[i]=255;
-    p=fl_scene_table+bank*SCENE_BYTES;for(i=0;i<SCENE_BYTES;++i)p[i]=255;
+    u8 *p;u32 i,sr;
+    fl_io_core_free(bank);fl_io_pool_mask&=~(1u<<bank);
     p=fl_migration_table+bank*MIGRATION_BYTES;for(i=0;i<MIGRATION_BYTES;++i)p[i]=0;
     sr=fl_io_irq_lock();
     fl_generation[bank]=0;fl_ready_mask|=1u<<bank;
@@ -185,7 +216,9 @@ static s32 load_bank(u32 bank) {
     w=read_bank(fl_io_base,bank,0,&g);
     if(w!=ABSENT)fl_present_mask|=bit;
     if(w==0) {
-        if(publish(bank,g,fl_io_file+32)<0)return CORRUPT;
+        s=publish(bank,g,fl_io_file+32);
+        if(s==POOL){note(POOL,0);return POOL;}
+        if(s<0)return CORRUPT;
         s=read_bank(fl_io_base,bank,1,&g);
         if(s==FUTURE){fl_blocked_mask|=bit;fl_ready_mask&=~bit;note(s,0);}
         else if(s<0)note(s,0);
@@ -194,7 +227,9 @@ static s32 load_bank(u32 bank) {
     s=read_bank(fl_io_base,bank,1,&g);
     if(s!=ABSENT)fl_present_mask|=bit;
     if(s==0) {
-        if(publish(bank,g,fl_io_file+32)<0)return CORRUPT;
+        s=publish(bank,g,fl_io_file+32);
+        if(s==POOL){note(POOL,0);return POOL;}
+        if(s<0)return CORRUPT;
 
         if(w==FUTURE){fl_blocked_mask|=bit;fl_ready_mask&=~bit;}
         fl_io_protected_mask|=bit;note(w<0?w:CORRUPT,1);return 0;
@@ -207,7 +242,7 @@ static s32 load_project(void) {
     u32 bank;char base[PATH_BYTES];
     if(current_base(base)<0)return PATH_ERROR;
     fl_reset();fl_clip_reset();fl_seq_reset();fl_io_loaded=0;fl_io_protected_mask=0;fl_io_warning=0;fl_io_last_error=0;
-    fl_present_mask=0;
+    fl_present_mask=0;fl_io_pool_mask=0;
     text_copy(fl_io_base,base,PATH_BYTES);
     for(bank=0;bank<16;++bank){load_bank(bank);}
     fl_io_loaded=1;return 0;
@@ -216,7 +251,7 @@ static s32 load_project(void) {
 static void fl_migrate_new(void);
 static void fresh_project(void) {
     fl_reset();fl_clip_reset();fl_seq_reset();fl_ready_mask=65535;fl_io_protected_mask=0;
-    fl_present_mask=0;
+    fl_present_mask=0;fl_io_pool_mask=0;
     fl_io_loaded=1;fl_io_last_error=0;fl_io_warning=0;
     fl_migrate_new();
 }
@@ -290,7 +325,8 @@ static s32 restore_mask(u32 mask) {
         } else {
             if(r<0)return r;
             r=write_buffer(fl_io_base,bank,0);if(r<0)return r;
-            r=publish(bank,g,fl_io_file+32);if(r<0)return CORRUPT;
+            r=publish(bank,g,fl_io_file+32);if(r==POOL){note(POOL,0);fl_present_mask|=bit;continue;}
+            if(r<0)return CORRUPT;
             fl_present_mask|=bit;
         }
         fl_io_protected_mask&=~bit;
@@ -304,23 +340,49 @@ static u32 background_dirty(void) {
     return 0;
 }
 
+/* Post the module's own job for `work` unless one is queued: none while stock's file job or a
+ * load runs, nor without a card. -> 1 posted (or already queued), 0 not now. */
+static u32 own_post(u32 work) {
+    u32 sr;
+    if(*(volatile u32 *)0x460d1de8||*(volatile s32 *)0x80000088==1||*(volatile u32 *)0x100f847c)return 0;
+    if(!fl_io_stock_card_ready())return 0;
+    sr=fl_io_irq_lock();fl_io_own_work|=work;
+    if(fl_io_flush_pending){fl_io_irq_restore(sr);return 1;}
+    fl_io_flush_pending=1;fl_io_irq_restore(sr);
+    fl_io_flush_job[0]=FLUSH_KIND;
+    fl_io_queue_post((void *)0x460d17ce,fl_io_flush_job);
+    return 1;
+}
 void fl_io_play_tick(void) {
     if(!fl_io_loaded||!background_dirty()){fl_io_play_ticks=0;return;}
     if(++fl_io_play_ticks<PLAY_TICKS)return;
     fl_io_play_ticks=0;
     if(fl_io_flush_pending)return;
-    if(*(volatile u32 *)0x460d1de8||*(volatile s32 *)0x80000088==1||*(volatile u32 *)0x100f847c)return;
-    if(!fl_io_stock_card_ready())return;
-    fl_io_flush_pending=1;fl_io_flush_job[0]=FLUSH_KIND;
-    fl_io_queue_post((void *)0x460d17ce,fl_io_flush_job);
+    own_post(OWN_FLUSH);
+}
+
+static void retry_pool(void);
+static s32 fl_migrate_load(const char *base);
+/* The own job, in the engine task: what was asked since it was posted. */
+static void own_run(void) {
+    u32 sr,work;s32 r;
+    sr=fl_io_irq_lock();work=fl_io_own_work;fl_io_own_work=0;fl_io_flush_pending=0;fl_io_irq_restore(sr);
+#if FL_PACKAGE
+    if(work&OWN_LOAD) {
+        char base[PATH_BYTES];
+        if(!fl_io_loaded&&current_base(base)==0) {
+            r=load_project();if(r>=0)r=fl_migrate_load(fl_io_base);if(r<0)note(r,0);
+        }
+    }
+#endif
+    if(work&OWN_RETRY)retry_pool();
+    if(work&OWN_FLUSH){r=flush(65535,0);if(r<0)note(r,0);}
 }
 
 s32 fl_io_before_job(const u8 *job) {
     s32 r=0;u32 kind=job[0];
-    if(kind==FLUSH_KIND) {
-
-        fl_io_flush_pending=0;r=flush(65535,0);
-        if(r<0)note(r,0);
+    if(job==fl_io_flush_job) {
+        own_run();
         return 0;
     }
     fl_io_job_kind=kind;fl_io_job_mask=((u32)job[2]<<8)|job[3];
@@ -347,6 +409,54 @@ void fl_io_reject_job(const u8 *job,s32 error) {
 }
 
 #include "migration_io.h"
+
+/* (2.23) Banks blocked for want of lanes, read again now that lanes were given back. */
+static s32 fl_mig_run(u32 requested,u32 capture);
+static void retry_pool(void) {
+    u32 bank,bit,mask=fl_io_pool_mask;s32 r;
+    if(!fl_io_loaded)return;
+    for(bank=0;bank<16;++bank)if(mask&(bit=1u<<bank)) {
+        fl_io_warning=0;
+        if(load_bank(bank)==0&&!(fl_io_pool_mask&bit)) {
+            r=fl_mig_run(bit,!fl_mig_marked);if(r<0)note(r,0);
+        }
+    }
+}
+/* The UI tick (fl_io_tick_hook), both transport states, playing nonzero while the sequencer
+ * plays: the playing flush (2.14), the toast for a refused lock, lanes emptied by an edit given
+ * back (one bank a tick), a pool-blocked bank read again once more lanes are free, and on a
+ * package the load of the project's locks after the module's admission. */
+void fl_io_ui_tick(u32 playing) {
+    u32 m,bank,sr;
+    if(playing)fl_io_play_tick();else fl_io_play_ticks=0;
+    if(fl_lane_full!=fl_io_full_seen){fl_io_full_seen=fl_lane_full;fl_io_toast("FM LOCKS FULL",48);}
+    if((m=fl_lane_gc_mask)!=0) {
+        for(bank=0;!(m&(1u<<bank));++bank){}
+        sr=fl_io_irq_lock();fl_lane_gc_mask&=~(1u<<bank);fl_io_irq_restore(sr);
+        fl_io_core_gc(bank);
+    }
+    if(fl_io_pool_mask&&fl_lane_free>fl_io_pool_free&&!fl_io_flush_pending)own_post(OWN_RETRY);
+#if FL_PACKAGE
+    if(!fl_io_loaded&&!fl_io_flush_pending) {
+        char base[PATH_BYTES];
+        if(current_base(base)==0)own_post(OWN_LOAD);
+    }
+#endif
+}
+#if FL_PACKAGE
+/* The base's engine-job event: 0 lets stock run the job, 1 takes it (stock skips it). The
+ * module's own job runs here; a stock job first gets the pre-flush, and a save refused while a
+ * bank is blocked gets its callback with the error. */
+s32 fl_io_engine_job(const u8 *job) {
+    s32 r;
+    if(job==fl_io_flush_job){own_run();return 1;}
+    r=fl_io_before_job(job);
+    if(r<0){fl_io_reject_job(job,r);return 1;}
+    return 0;
+}
+/* Nonzero while the module's own job sits in stock's engine queue. */
+u32 fl_io_job_outstanding(void) {return fl_io_flush_pending;}
+#endif
 
 s32 fl_io_banks_load(void *p,u32 mask,void *a,void *b) {
     s32 r=fl_io_stock_banks_load(p,mask,a,b);char base[PATH_BYTES];
@@ -407,7 +517,7 @@ s32 fl_io_bank_restore(void *p,u32 mask,void *a,void *b) {
 void fl_io_clear(void) {
     fl_io_stock_clear();fl_reset();fl_clip_reset();fl_seq_reset();fl_io_loaded=0;fl_io_base[0]=0;
     fl_io_protected_mask=0;fl_io_warning=0;fl_io_last_error=0;
-    fl_present_mask=0;
+    fl_present_mask=0;fl_io_pool_mask=0;
 }
 s32 fl_io_delete(const char *set,const char *project) {
     char base[PATH_BYTES];const char *path;u32 bank,stored;s32 r;

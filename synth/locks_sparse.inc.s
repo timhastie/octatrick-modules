@@ -34,16 +34,13 @@ fl_sparse_cap_buffer:
         moveq   #16,%d7
 fl_sparse_cap_loop:
         bsr     fl_row
-        move.l  (%a0)+,(%a2)+
-        move.l  (%a0)+,(%a2)+
-        move.l  (%a0)+,(%a2)+
-        move.l  (%a0),(%a2)+
+        move.w  (%a0),(%a2)+             | (2.23) two bytes a row, as the store reads them
         addq.l  #1,%d3
         subq.l  #1,%d7
         bne     fl_sparse_cap_loop
         bra     fl_sparse_cap_out
 fl_sparse_cap_empty:
-        moveq   #64,%d7
+        moveq   #16*FL_ROW/4,%d7
         moveq   #-1,%d0
 fl_sparse_cap_ff:
         move.l  %d0,(%a2)+
@@ -76,7 +73,7 @@ fl_sparse_store:
 fl_ss_buffer:
         cmpi.l  #16,%d4
         bcc     fl_ss_out
-        lsl.l   #4,%d4
+        add.l   %d4,%d4
         adda.l  %d4,%a4
         move.l  %d5,%d3
         move.l  164(%sp),%d1
@@ -95,9 +92,9 @@ fl_ss_out:
         rts
         .balign 4
 fl_sparse_clip:
-        .fill 64,4,0xffffffff
+        .fill 16*FL_ROW/4,4,0xffffffff
 fl_sparse_undo:
-        .fill 64,4,0xffffffff
+        .fill 16*FL_ROW/4,4,0xffffffff
 
 fl_ui_buffers_reset:
         lea     -12(%sp),%sp
@@ -113,7 +110,7 @@ fl_ui_buffers_reset:
         clr.l   (%a0)+
         clr.l   (%a0)
         lea     fl_sparse_clip:l,%a0
-        move.l  #128,%d1
+        move.l  #2*16*FL_ROW/4,%d1
         moveq   #-1,%d0
 fl_ubr_loop:
         move.l  %d0,(%a0)+
