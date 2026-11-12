@@ -177,8 +177,18 @@ def remix_variants(path: pathlib.Path):
         # at Mute Modes' published words (patch_softmute.s GATE / MUTE_STATE), so its code is scanned too
         mm = (".set HAVE_MUTE_MODES, 0\n.set HAVE_MM_KEY, 0",
               ".set HAVE_MUTE_MODES, 1\n.set MM_MODE, 0x800000dc\n.set MM_STATE, 0x80000008\n.set HAVE_MM_KEY, 1")
+        # 2.22: HAVE_PANEL_TRANSACTION (SYNTH MACHINE with SCALE QUANTIZER: the panel transaction,
+        # panel_transaction.inc.s) -- assembled without it and with it, as the remixes build it
         return ["\n".join((".ifndef FM_PASS1", ".set FM_PASS1, 1", f".set HAVE_SYDRUM, {flag}", mm[m],
-                           abi, ".else", *sources, ".endif")) for flag, m in ((0, 0), (1, 0), (1, 1))]
+                           f".set HAVE_PANEL_TRANSACTION, {pt}", abi, ".else", *sources, ".endif"))
+                for flag, m, pt in ((0, 0, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1))]
+    if path.parent.name == "quantizer" and path.name == "quantizer.s":
+        # 2.22: quantizer.s's remix.inc has two passes (quantizer/manifest.py _qz_include): the flags,
+        # then the panel transaction's source when HAVE_PANEL_TRANSACTION is 1
+        transaction = (path.parent / "panel_transaction.inc.s").read_text()
+        return ["\n".join((".ifndef QZ_PASS1", ".set QZ_PASS1, 1", f".set HAVE_SYDRUM, {flag}",
+                           f".set HAVE_PANEL_TRANSACTION, {pt}", ".else", transaction, ".endif"))
+                for flag, pt in ((0, 0), (0, 1), (1, 1))]
     if path.parent.name == "sy-drum":
         engine = (path.parent / "engine.inc.s").read_text()
         locks = [(path.parent / f"{n}.inc.s").read_text() for n in sydrum_locks(path.parent)]
