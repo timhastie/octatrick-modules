@@ -695,9 +695,10 @@ MODULE = Module(
         Linked("fmpage", os.path.join(_HERE, "page.s"), cpu="5475", dram=True,
                reference=(PAGE_REFERENCE_AT, PAGE_SHA256)),
     ),
-    # (2.23) The lock lanes (locks_store.inc.s): the index, the page stack and a pool of every
-    # lane, 303,616 B in place of 2.22's 2,394,624 (the 2 MiB step table, the 32 KiB scene
-    # table and the 256 KiB project-text buffer). A card build never refuses a lock.
+    # (2.23) The lock lanes (locks_store.inc.s): the index, the page stack, a pool of every
+    # lane and the migration checkpoints, 306,688 B in place of 2.22's 2,394,624 (the 2 MiB step
+    # table, the 32 KiB scene table, the 256 KiB project-text buffer and the same checkpoints).
+    # A card build never refuses a lock.
     # A package (FL_PACKAGE) keeps all four in its .bss instead.
     dram_regions=() if FL_PACKAGE else
                  (DramRegion("fl_lane_index", FL_LANES * 2),
