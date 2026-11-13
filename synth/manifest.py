@@ -388,8 +388,14 @@ SCENE_HOOKS = (
 
 # (2.23) The lock lanes a card build pools: every one of the 2,304 (2,048 step lanes, 256 scene
 # lanes); locks_store.inc.s reads the same number from remix.inc.
+# A module package for a loader base runs this file with runpy.run_path(..., init_globals=
+# {"FL_PACKAGE": 1, "FL_POOL_LANES": N}): the index, stack, pool and migration checkpoints are
+# then the unit's own .bss (no DRAM region), the pool holds N lanes, and a lock or a lock file
+# that needs more is refused with a toast (locks_io.c). A card build sets neither.
 FL_LANES = 2304
-FL_POOL_LANES = FL_LANES
+FL_PACKAGE = int(globals().get("FL_PACKAGE", 0))
+FL_POOL_LANES = int(globals().get("FL_POOL_LANES", FL_LANES))
+assert 1 <= FL_POOL_LANES <= FL_LANES, FL_POOL_LANES
 
 
 def poly_include(modules):
@@ -454,7 +460,8 @@ def remix_include(modules):
     mm = MUTE_MODES_KEY in modules
     return (f".set HAVE_SYDRUM, {int('SY DRUM' in modules)}\n"
             f".set FL_POOL_LANES, {FL_POOL_LANES}\n"
-            f".set HAVE_PANEL_TRANSACTION, {int('SYNTH MACHINE' in modules and 'SCALE QUANTIZER' in modules)}\n"
+            + (".set FL_PACKAGE, 1\n" if FL_PACKAGE else "")
+            + f".set HAVE_PANEL_TRANSACTION, {int('SYNTH MACHINE' in modules and 'SCALE QUANTIZER' in modules)}\n"
             f".set HAVE_MUTE_MODES, {int(mm)}\n"
             + (_mute_modes_equates(modules) if mm else ".set HAVE_MM_KEY, 0\n")
             + engine_abi())
@@ -691,7 +698,9 @@ MODULE = Module(
     # (2.23) The lock lanes (locks_store.inc.s): the index, the page stack and a pool of every
     # lane, 303,616 B in place of 2.22's 2,394,624 (the 2 MiB step table, the 32 KiB scene
     # table and the 256 KiB project-text buffer). A card build never refuses a lock.
-    dram_regions=(DramRegion("fl_lane_index", FL_LANES * 2),
+    # A package (FL_PACKAGE) keeps all four in its .bss instead.
+    dram_regions=() if FL_PACKAGE else
+                 (DramRegion("fl_lane_index", FL_LANES * 2),
                   DramRegion("fl_lane_stack", FL_POOL_LANES * 2),
                   DramRegion("fl_lane_pool", FL_POOL_LANES * 128),
                   DramRegion("fl_migration_table", 2560)),
