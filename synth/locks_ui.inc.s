@@ -599,6 +599,14 @@ fl_uw_draw:
         jsr     po_voic_dial:l           | VOIC: 1..4 spread over the dial's arc
 fl_uw_native:
         jsr     0x400479b4
+        .ifdef  FL_PACKAGE
+        .if     FL_PACKAGE
+| (2.23, a package only) the epilogue below is an idiom stock also has, so the package builder ships it as a copy of
+| the user's OS; this nop keeps the copy from sitting right behind the stock dial's address, which with the copy's
+| placeholder bytes would read as a 16-byte run of a stock table. A card build keeps 2.22's bytes.
+        nop
+        .endif
+        .endif
 fl_uw_out:
         movem.l 28(%sp),%d2-%d7/%a2-%a3
         lea     60(%sp),%sp
