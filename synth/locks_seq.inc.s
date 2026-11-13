@@ -263,6 +263,10 @@ fl_sc_out:
         lea     12(%sp),%sp
         .if HAVE_SYDRUM
         jmp sl_seq_consume:l
+        .else
+        movem.l (%a0),%d1-%d4/%d6-%d7/%a4-%a5
+        movem.l %d1-%d4/%d6-%d7/%a4-%a5,(%a2)
+        jmp     0x4000bb06
         .endif
 fl_sc_gate:                              | shut: the event's track asked (poly.s po_gate_chk) -- a switch inside this
         moveq   #24,%d1                  | frame can have made it a synth; d1..d4 are the displaced movem's
