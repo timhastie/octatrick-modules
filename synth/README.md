@@ -12,7 +12,7 @@ again has the stock **LFO 1 / LFO 2 / LFO 3 / DESIGN** rows. LFO 3 can modulate 
 such as INDX while the chord plays, and SPD3 / DEP3 are available in the destination list.
 The design values in this section are not runtime measurements.
 
-## The frame gate: a project without FM SYNTH or SY DRUM pays almost nothing (2.23 test build, 12 Nov 2026)
+## The frame gate: a project without FM SYNTH or SY DRUM pays almost nothing (2.23)
 
 Until 2.22 SYNTH MACHINE and SY DRUM ran their per-block code in every audio block whether or not a
 track was a synth: `sy_render` on every FLEX and STATIC voice twice a block, `po_fmsource` on every

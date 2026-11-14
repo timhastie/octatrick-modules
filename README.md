@@ -256,7 +256,13 @@ slot, an FM SYNTH track with FOLLOW OFF plays plain semitones beside a
 track that follows the scale, and a project saved on 2.21 with SCALE rows
 OFF loads with those tracks reading FOLLOW OFF. The FM SYNTH level, the
 TRACK and FOLLOW rows and TUNER's DC case were tested the same day on the
-Modwerk builds of the same code.
+Modwerk builds of the same code. 2.23 was flashed on the author's MKI (14 Nov
+2026) and works there: on a project of eight FLEX tracks with no synth
+track, PROCESSOR LOAD reads 25 / 31 / 45 / 66 % with 0 / 1 / 4 / 8 tracks
+playing, against 33 / 39 / 63 / 75 % on 2.22; a project saved on 2.22 with
+FM SYNTH locks loads with every lock, saves, and comes back after a
+power-off; and a STATIC track streams without a dropout while FM SYNTH
+locks are edited during play.
 Every feature was verified in an
 emulator before flashing (the companion repository
 [timhastie/octa-panel](https://github.com/timhastie/octa-panel) has a
@@ -280,6 +286,24 @@ Only tagged versions are releases; the numbered builds between two tags
 builds on the author's unit and were never tagged. 2.16 .. 2.20 were
 builds on the way to 2.21 and are not tagged here either; their entries
 below say what each brought, and 2.21 releases all of it.
+
+- 2.23 (tag `v2.23`, 14 Nov 2026): TWO CHANGES ON 2.22, BOTH IN SYNTH MACHINE
+  AND SY DRUM. (A) THE FRAME GATE (octatrick-modules#4): a project with no
+  FM SYNTH or SY DRUM track no longer pays the engine's per-block work.
+  Until 2.22 both modules ran their hooks on every audio track in every
+  block; now `po_gate` decides once a block, from the current Part's
+  machine and signature bytes, whether anything of the engine can act, and
+  every hook takes its shut path while nothing can; with a synth track
+  present, each idle sample track is shut on its own. FM SYNTH, SY DRUM and
+  sample-track slides render sample-equal to 2.22 in the emulator. On the
+  author's MKI, eight FLEX tracks on one sample with no synth track read
+  25 / 31 / 45 / 66 % in PROCESSOR LOAD with 0 / 1 / 4 / 8 tracks playing,
+  against 33 / 39 / 63 / 75 % on 2.22. (B) FM SYNTH's step and scene locks
+  are held in 128-byte lanes taken on demand from a pool, in rows of two
+  bytes (2.22's rows were sixteen bytes, fourteen of them 0xFF), and the
+  project text is streamed instead of held in a 256 KiB buffer. The lock
+  files on the card keep their format: a 2.22 project loads with its locks.
+  Details: `synth/README.md` (the frame gate).
 
 - 2.22 (tag `v2.22`, 1 Nov 2026): FIVE CHANGES ON 2.21. (A) SCALE QUANTIZER:
   the sixteen per-track SCALE rows become two SEQUENCER rows, TRACK (AUDIO
